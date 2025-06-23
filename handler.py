@@ -7,6 +7,7 @@ import numpy as np
 import replicate
 import os
 import logging
+import re
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -15,6 +16,100 @@ logger = logging.getLogger(__name__)
 REPLICATE_API_TOKEN = os.environ.get("REPLICATE_API_TOKEN")
 if REPLICATE_API_TOKEN:
     os.environ["REPLICATE_API_TOKEN"] = REPLICATE_API_TOKEN
+
+def find_image_data(job_input):
+    """
+    다양한 키에서 이미지 데이터 찾기
+    """
+    logger.info(f"Input keys: {list(job_input.keys())}")
+    
+    # 가능한 키들 체크
+    possible_keys = ['image', 'image_base64', 'enhanced_image', 'base64', 'img', 'data', 'imageData', 'image_url']
+    
+    # 1. 직접 키 체크
+    for key in possible_keys:
+        if key in job_input and job_input[key]:
+            logger.info(f"Found image in key: {key}")
+            return job_input[key]
+    
+    # 2. 중첩된 구조 체크
+    nested_paths = [
+        ['input', 'image'],
+        ['data', 'image'],
+        ['body', 'image'],
+        ['payload', 'image'],
+        ['input', 'enhanced_image'],
+        ['data', 'enhanced_image']
+    ]
+    
+    for path in nested_paths:
+        current = job_input
+        try:
+            for key in path:
+                current = current.get(key, {})
+            if current and isinstance(current, str):
+                logger.info(f"Found image in nested path: {'.'.join(path)}")
+                return current
+        except:
+            continue
+    
+    # 3. 모든 키 순회하며 base64 패턴 찾기
+    for key, value in job_input.items():
+        if isinstance(value, str) and len(value) > 1000:  # base64는 보통 길다
+            if value.startswith('data:image') or looks_like_base64(value):
+                logger.info(f"Found base64-like string in key: {key}")
+                return value
+        elif isinstance(value, dict):
+            # 재귀적으로 찾기
+            result = find_image_data(value)
+            if result:
+                return result
+    
+    return None
+
+def looks_like_base64(s):
+    """Base64 패턴인지 확인"""
+    # Base64 패턴 체크 - 문자열 제대로 닫기
+    base64_pattern = re.compile(r'^[A-Za-z0-9+/]*={0,2}$')
+    return bool(base64_pattern.match(s[:100]))  # 처음 100자만 체크
+
+def decode_image_data(image_data):
+    """
+    이미지 데이터 디코딩 (URL 또는 base64)
+    """
+    if image_data.startswith('http'):
+        # URL인 경우
+        logger.info(f"Fetching image from URL: {image_data}")
+        response = requests.get(image_data)
+        return response.content
+    else:
+        # Base64인 경우
+        # data:image/png;base64, 접두사 제거
+        if image_data.startswith('data:'):
+            image_data = image_data.split(',', 1)[1]
+        
+        # 4가지 디코딩 시도
+        for method in range(4):
+            try:
+                if method == 0:
+                    # Direct decode
+                    return base64.b64decode(image_data)
+                elif method == 1:
+                    # Add padding
+                    padded = image_data + '=' * (4 - len(image_data) % 4)
+                    return base64.b64decode(padded)
+                elif method == 2:
+                    # URL-safe decode
+                    return base64.urlsafe_b64decode(image_data)
+                elif method == 3:
+                    # Force padding
+                    padded = image_data + '==='
+                    return base64.b64decode(padded)
+            except Exception as e:
+                logger.debug(f"Decode method {method} failed: {str(e)}")
+                continue
+        
+        raise ValueError("Failed to decode base64 image")
 
 def detect_black_frame(img_array, threshold=30):
     """
@@ -210,165 +305,6 @@ def resize_to_thumbnail(img, target_width=1000, target_height=1300):
     
     logger.info(f"Final thumbnail created: {target_width}x{target_height} with rings at 90%")
     return final_img
-
-def find_image_data(job_input):
-    """
-    다양한 키에서 이미지 데이터 찾기
-    """
-    logger.info(f"Input keys: {list(job_input.keys())}")
-    
-    # 가능한 키들 체크
-    possible_keys = ['image', 'image_base64', 'enhanced_image', 'base64', 'img', 'data', 'imageData', 'image_url']
-    
-    # 1. 직접 키 체크
-    for key in possible_keys:
-        if key in job_input and job_input[key]:
-            logger.info(f"Found image in key: {key}")
-            return job_input[key]
-    
-    # 2. 중첩된 구조 체크
-    nested_paths = [
-        ['input', 'image'],
-        ['data', 'image'],
-        ['body', 'image'],
-        ['payload', 'image'],
-        ['input', 'enhanced_image'],
-        ['data', 'enhanced_image']
-    ]
-    
-    for path in nested_paths:
-        current = job_input
-        try:
-            for key in path:
-                current = current.get(key, {})
-            if current and isinstance(current, str):
-                logger.info(f"Found image in nested path: {'.'.join(path)}")
-                return current
-        except:
-            continue
-    
-    # 3. 모든 키 순회하며 base64 패턴 찾기
-    for key, value in job_input.items():
-        if isinstance(value, str) and len(value) > 1000:  # base64는 보통 길다
-            if value.startswith('data:image') or looks_like_base64(value):
-                logger.info(f"Found base64-like string in key: {key}")
-                return value
-        elif isinstance(value, dict):
-            # 재귀적으로 찾기
-            result = find_image_data(value)
-            if result:
-                return result
-    
-    return None
-
-def looks_like_base64(s):
-    """Base64 패턴인지 확인"""
-    import re
-    # Base64 패턴 체크
-    base64_pattern = re.compile(r'^[A-Za-z0-9+/]*={0,2}
-        
-        # 이미지 열기
-        img = Image.open(BytesIO(image_data))
-        if img.mode == 'RGBA':
-            background = Image.new('RGB', img.size, (255, 255, 255))
-            background.paste(img, mask=img.split()[3])
-            img = background
-        
-        # 원본 크기 저장
-        original_size = img.size
-        
-        # 검은색 프레임 감지
-        img_array = np.array(img)
-        frame_mask = detect_black_frame(img_array)
-        
-        if frame_mask is not None and frame_mask.any():
-            logger.info("Black frame detected, removing...")
-            
-            # Replicate API로 인페인팅 시도
-            if REPLICATE_API_TOKEN:
-                result_img = remove_black_frame_with_inpainting(img, frame_mask)
-            else:
-                logger.warning("Replicate API token not found, using simple removal")
-                result_img = simple_frame_removal(img, frame_mask)
-        else:
-            logger.info("No black frame detected")
-            result_img = img
-        
-        # enhance와 동일한 색감 보정 적용
-        result_img = apply_enhancement(result_img)
-        
-        # 웨딩링 영역 감지 및 크롭 (90% 꽉 차게)
-        result_img = crop_to_ring_area(result_img)
-        
-        # 1000x1300으로 리사이즈
-        result_img = resize_to_thumbnail(result_img)
-        
-        # 결과 인코딩 (padding 제거)
-        buffered = BytesIO()
-        result_img.save(buffered, format="PNG", quality=95)
-        img_base64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
-        
-        # Padding 제거
-        img_base64 = img_base64.rstrip('=')
-        
-        return {
-            "output": {
-                "thumbnail": img_base64,
-                "original_size": original_size,
-                "thumbnail_size": (1000, 1300),
-                "frame_removed": frame_mask is not None and frame_mask.any(),
-                "status": "success"
-            }
-        }
-        
-    except Exception as e:
-        logger.error(f"Handler error: {str(e)}")
-        return {
-            "output": {
-                "error": str(e),
-                "status": "failed"
-            }
-        }
-
-runpod.serverless.start({"handler": handler}))
-    return bool(base64_pattern.match(s[:100]))  # 처음 100자만 체크
-
-def decode_image_data(image_data):
-    """
-    이미지 데이터 디코딩 (URL 또는 base64)
-    """
-    if image_data.startswith('http'):
-        # URL인 경우
-        logger.info(f"Fetching image from URL: {image_data}")
-        response = requests.get(image_data)
-        return response.content
-    else:
-        # Base64인 경우
-        # data:image/png;base64, 접두사 제거
-        if image_data.startswith('data:'):
-            image_data = image_data.split(',', 1)[1]
-        
-        # 4가지 디코딩 시도
-        for method in range(4):
-            try:
-                if method == 0:
-                    # Direct decode
-                    return base64.b64decode(image_data)
-                elif method == 1:
-                    # Add padding
-                    padded = image_data + '=' * (4 - len(image_data) % 4)
-                    return base64.b64decode(padded)
-                elif method == 2:
-                    # URL-safe decode
-                    return base64.urlsafe_b64decode(image_data)
-                elif method == 3:
-                    # Force padding
-                    padded = image_data + '==='
-                    return base64.b64decode(padded)
-            except Exception as e:
-                continue
-        
-        raise ValueError("Failed to decode base64 image")
 
 def handler(job):
     """
