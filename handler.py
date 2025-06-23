@@ -11,6 +11,7 @@ import time
 # Version info
 VERSION = "v24-thumbnail"
 
+
 class ThumbnailProcessorV24:
     """v24 Thumbnail Processor - NumPy & PIL Methods for Black Box Removal"""
     
