@@ -1,7 +1,7 @@
 import runpod
 import base64
 import numpy as np
-from PIL import Image, ImageEnhance
+from PIL import Image, ImageEnhance, ImageOps
 import cv2
 import io
 import os
@@ -9,7 +9,7 @@ import traceback
 import time
 
 # Version info
-VERSION = "v21-thumbnail"
+VERSION = "v22-thumbnail"
 
 # Import Replicate when available
 try:
@@ -25,209 +25,96 @@ try:
 except ImportError:
     REQUESTS_AVAILABLE = False
 
-class ThumbnailProcessorV21:
-    """v21 Thumbnail Processor - Improved Black Box Removal"""
+class ThumbnailProcessorV22:
+    """v22 Thumbnail Processor - Aggressive Black Box Removal"""
     
     def __init__(self):
-        print(f"[{VERSION}] Initializing - Improved Black Box Detection & Removal")
+        print(f"[{VERSION}] Initializing - Aggressive Black Box Removal")
         self.replicate_client = None
     
-    def detect_black_box(self, image_np):
-        """검은 박스 감지 - 단순하지만 효과적"""
-        h, w = image_np.shape[:2]
-        print(f"[{VERSION}] Detecting black box in {w}x{h} image")
+    def detect_and_crop_black_box(self, image):
+        """검은 박스를 감지하고 즉시 크롭 - 단순하고 확실하게"""
+        img_np = np.array(image)
+        h, w = img_np.shape[:2]
+        print(f"[{VERSION}] Processing {w}x{h} image")
         
         # Grayscale 변환
-        gray = cv2.cvtColor(image_np, cv2.COLOR_RGB2GRAY)
+        gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
         
-        # Method 1: 큰 검은 영역 직접 찾기
-        # 여러 threshold 시도
-        for thresh_val in [30, 40, 50, 60, 70]:
-            _, binary = cv2.threshold(gray, thresh_val, 255, cv2.THRESH_BINARY_INV)
-            
-            # 모폴로지 연산으로 노이즈 제거 및 연결
-            kernel = np.ones((10, 10), np.uint8)
-            binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
-            binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel)
-            
-            # Contour 찾기
-            contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            
-            if not contours:
-                continue
-                
-            # 가장 큰 contour부터 확인
-            sorted_contours = sorted(contours, key=cv2.contourArea, reverse=True)
-            
-            for contour in sorted_contours[:5]:  # 상위 5개만 확인
-                x, y, cw, ch = cv2.boundingRect(contour)
-                area = cw * ch
-                
-                # 조건 확인
-                # 1. 충분히 큰 영역 (전체의 5% 이상)
-                # 2. 대략 정사각형 (비율 0.6~1.4) - 조금 더 느슨하게
-                if area > (w * h * 0.05):
-                    aspect_ratio = cw / ch
-                    
-                    if 0.6 < aspect_ratio < 1.4:  # 정사각형에 가까운 형태
-                        print(f"[{VERSION}] Black box found at ({x},{y}) size {cw}x{ch} with threshold {thresh_val}")
-                        
-                        # 정확한 마스크 생성
-                        mask = np.zeros((h, w), dtype=np.uint8)
-                        cv2.drawContours(mask, [contour], -1, 255, -1)
-                        
-                        # 마스크 확장 (인페인팅을 위해)
-                        kernel = np.ones((20, 20), np.uint8)
-                        mask = cv2.dilate(mask, kernel, iterations=3)
-                        
-                        return {
-                            'has_frame': True,
-                            'bbox': (x, y, cw, ch),
-                            'mask': mask,
-                            'method': f'threshold_{thresh_val}'
-                        }
+        # 검은 영역 찾기 - 매우 관대한 threshold
+        _, binary = cv2.threshold(gray, 80, 255, cv2.THRESH_BINARY)
         
-        # Method 2: 엣지 검사 (fallback)
-        edge_thickness = self._check_edges(gray)
-        if edge_thickness > 20:
-            print(f"[{VERSION}] Edge frame detected: {edge_thickness}px")
-            mask = self._create_edge_mask(h, w, edge_thickness)
-            return {
-                'has_frame': True,
-                'thickness': edge_thickness,
-                'mask': mask,
-                'method': 'edge'
-            }
+        # 노이즈 제거
+        kernel = np.ones((20, 20), np.uint8)
+        binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel)
+        binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
+        
+        # 흰색 영역(링이 있는 곳) 찾기
+        contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        if contours:
+            # 가장 큰 흰색 영역 찾기
+            largest_white = max(contours, key=cv2.contourArea)
+            x, y, cw, ch = cv2.boundingRect(largest_white)
+            
+            # 웨딩링이 있는 영역 확인
+            white_area = cw * ch
+            total_area = w * h
+            
+            if white_area < total_area * 0.8:  # 검은 프레임이 있다고 판단
+                print(f"[{VERSION}] Black box detected! White area at ({x},{y}) size {cw}x{ch}")
+                
+                # 즉시 크롭 - 여백 추가
+                margin = 30
+                x1 = max(0, x - margin)
+                y1 = max(0, y - margin)
+                x2 = min(w, x + cw + margin)
+                y2 = min(h, y + ch + margin)
+                
+                cropped = image.crop((x1, y1, x2, y2))
+                print(f"[{VERSION}] Cropped to remove black box: {cropped.size}")
+                return cropped, True
+        
+        # Method 2: 엣지에서 안쪽으로 스캔
+        # 각 방향에서 첫 번째 밝은 픽셀 찾기
+        threshold = 100
+        
+        # Top edge
+        top = 0
+        for i in range(h//2):
+            if np.max(gray[i, :]) > threshold:
+                top = max(0, i - 20)
+                break
+        
+        # Bottom edge
+        bottom = h
+        for i in range(h//2):
+            if np.max(gray[h-1-i, :]) > threshold:
+                bottom = min(h, h-i + 20)
+                break
+        
+        # Left edge
+        left = 0
+        for i in range(w//2):
+            if np.max(gray[:, i]) > threshold:
+                left = max(0, i - 20)
+                break
+        
+        # Right edge
+        right = w
+        for i in range(w//2):
+            if np.max(gray[:, w-1-i]) > threshold:
+                right = min(w, w-i + 20)
+                break
+        
+        # 크롭이 필요한지 확인
+        if top > 50 or (h - bottom) > 50 or left > 50 or (w - right) > 50:
+            print(f"[{VERSION}] Edge black frame detected: T:{top} B:{bottom} L:{left} R:{right}")
+            cropped = image.crop((left, top, right, bottom))
+            return cropped, True
         
         print(f"[{VERSION}] No black box detected")
-        return {'has_frame': False, 'mask': None}
-    
-    def _check_edges(self, gray):
-        """가장자리 검은 프레임 확인"""
-        h, w = gray.shape
-        threshold = 50
-        
-        # 각 가장자리 확인
-        edges = {'top': 0, 'bottom': 0, 'left': 0, 'right': 0}
-        
-        # Top
-        for i in range(min(300, h//3)):
-            if np.mean(gray[i, :]) < threshold:
-                edges['top'] = i + 1
-            else:
-                break
-        
-        # Bottom
-        for i in range(min(300, h//3)):
-            if np.mean(gray[h-1-i, :]) < threshold:
-                edges['bottom'] = i + 1
-            else:
-                break
-        
-        # Left
-        for i in range(min(300, w//3)):
-            if np.mean(gray[:, i]) < threshold:
-                edges['left'] = i + 1
-            else:
-                break
-        
-        # Right
-        for i in range(min(300, w//3)):
-            if np.mean(gray[:, w-1-i]) < threshold:
-                edges['right'] = i + 1
-            else:
-                break
-        
-        # 평균 두께
-        avg_thickness = np.mean(list(edges.values()))
-        return int(avg_thickness) if avg_thickness > 20 else 0
-    
-    def _create_edge_mask(self, h, w, thickness):
-        """엣지 마스크 생성"""
-        mask = np.zeros((h, w), dtype=np.uint8)
-        mask[:thickness, :] = 255  # Top
-        mask[-thickness:, :] = 255  # Bottom
-        mask[:, :thickness] = 255  # Left
-        mask[:, -thickness:] = 255  # Right
-        
-        # 마스크 확장
-        kernel = np.ones((20, 20), np.uint8)
-        mask = cv2.dilate(mask, kernel, iterations=2)
-        return mask
-    
-    def remove_black_frame_replicate(self, image, frame_info):
-        """Replicate API로 검은 프레임 제거 - 개선된 버전"""
-        if not frame_info['has_frame']:
-            return image
-            
-        # 먼저 fallback 크롭 시도
-        if 'bbox' in frame_info:
-            x, y, w, h = frame_info['bbox']
-            # 검은 박스 안쪽만 크롭 (여백 추가)
-            margin = 20
-            cropped = image.crop((x+margin, y+margin, x+w-margin, y+h-margin))
-            
-            # Replicate 사용 불가능하면 크롭만 반환
-            if not REPLICATE_AVAILABLE:
-                print(f"[{VERSION}] Replicate not available, returning cropped image")
-                return cropped
-                
-            # Replicate 사용 가능하면 인페인팅 시도
-            try:
-                print(f"[{VERSION}] Attempting Replicate inpainting")
-                
-                # 원본 이미지와 마스크 준비
-                mask_np = frame_info['mask']
-                mask_img = Image.fromarray(mask_np)
-                
-                # Base64 인코딩
-                img_buffer = io.BytesIO()
-                image.save(img_buffer, format='PNG')
-                img_base64 = base64.b64encode(img_buffer.getvalue()).decode('utf-8')
-                
-                mask_buffer = io.BytesIO()
-                mask_img.save(mask_buffer, format='PNG')
-                mask_base64 = base64.b64encode(mask_buffer.getvalue()).decode('utf-8')
-                
-                # Replicate 클라이언트
-                if not self.replicate_client:
-                    api_token = os.environ.get('REPLICATE_API_TOKEN')
-                    if not api_token:
-                        print(f"[{VERSION}] No REPLICATE_API_TOKEN found")
-                        return cropped
-                    self.replicate_client = replicate.Client(api_token=api_token)
-                
-                # 인페인팅 실행 - 개선된 파라미터
-                output = self.replicate_client.run(
-                    "stability-ai/stable-diffusion-inpainting",
-                    input={
-                        "image": f"data:image/png;base64,{img_base64}",
-                        "mask": f"data:image/png;base64,{mask_base64}",
-                        "prompt": "clean pure white background, professional product photography, seamless white studio backdrop",
-                        "negative_prompt": "black, dark, frame, border, box, shadow, gray, gradient",
-                        "num_inference_steps": 40,  # 증가
-                        "guidance_scale": 10.0,  # 증가
-                        "strength": 0.9  # 추가
-                    }
-                )
-                
-                if output and len(output) > 0:
-                    response = requests.get(output[0])
-                    result = Image.open(io.BytesIO(response.content))
-                    print(f"[{VERSION}] Inpainting successful")
-                    return result
-                else:
-                    print(f"[{VERSION}] Inpainting returned no output")
-                    
-            except Exception as e:
-                print(f"[{VERSION}] Replicate failed: {e}")
-                traceback.print_exc()
-            
-            # 인페인팅 실패 시 크롭 반환
-            return cropped
-            
-        # bbox 없으면 원본 반환
-        return image
+        return image, False
     
     def apply_simple_enhancement(self, image):
         """Enhancement와 동일한 간단한 색감 보정"""
@@ -257,253 +144,189 @@ class ThumbnailProcessorV21:
         
         return Image.fromarray(img_np.astype(np.uint8))
     
-    def create_thumbnail_with_detail(self, image, target_size=(1000, 1300)):
-        """웨딩링 중심으로 썸네일 생성 + 디테일 보정"""
-        img_np = np.array(image)
-        h, w = img_np.shape[:2]
+    def create_thumbnail_1000x1300(self, image):
+        """정확히 1000x1300 썸네일 생성 - 웨딩링 중심"""
+        target_size = (1000, 1300)
         
-        # 웨딩링 영역 찾기
-        gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
-        
-        # 밝은 영역(링) 찾기 - threshold 조정
-        _, bright = cv2.threshold(gray, 100, 255, cv2.THRESH_BINARY)
-        
-        # 엣지 검출
-        edges = cv2.Canny(gray, 30, 100)
-        combined = cv2.bitwise_or(bright, edges)
-        
-        # 노이즈 제거
-        kernel = np.ones((5, 5), np.uint8)
-        combined = cv2.morphologyEx(combined, cv2.MORPH_CLOSE, kernel)
-        
-        # Contour 찾기
-        contours, _ = cv2.findContours(combined, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        
-        if contours and len(contours) > 0:
-            # 모든 contour를 포함하는 바운딩 박스
-            all_points = np.concatenate(contours)
-            x, y, w_box, h_box = cv2.boundingRect(all_points)
+        # 이미 작은 이미지면 패딩 추가
+        if image.size[0] < 1000 or image.size[1] < 1300:
+            # 캔버스 생성
+            canvas = Image.new('RGB', target_size, (245, 243, 240))
             
-            # 20% 패딩 추가 (더 여유있게)
-            padding_x = int(w_box * 0.20)
-            padding_y = int(h_box * 0.20)
+            # 이미지를 중앙에 배치
+            paste_x = (1000 - image.size[0]) // 2
+            paste_y = (1300 - image.size[1]) // 2
+            canvas.paste(image, (paste_x, paste_y))
             
-            x = max(0, x - padding_x)
-            y = max(0, y - padding_y)
-            w_box = min(w - x, w_box + 2 * padding_x)
-            h_box = min(h - y, h_box + 2 * padding_y)
-            
-            # 크롭
-            cropped = img_np[y:y+h_box, x:x+w_box]
+            image = canvas
         else:
-            # Fallback: 중앙 80% 크롭
-            margin_x = int(w * 0.1)
-            margin_y = int(h * 0.1)
-            cropped = img_np[margin_y:h-margin_y, margin_x:w-margin_x]
+            # 큰 이미지는 웨딩링 찾아서 크롭
+            img_np = np.array(image)
+            gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
+            
+            # 엣지 검출로 웨딩링 위치 찾기
+            edges = cv2.Canny(gray, 50, 150)
+            
+            # 엣지가 있는 영역의 바운딩 박스
+            coords = np.column_stack(np.where(edges > 0))
+            if len(coords) > 0:
+                y_min, x_min = coords.min(axis=0)
+                y_max, x_max = coords.max(axis=0)
+                
+                # 20% 패딩
+                pad_x = int((x_max - x_min) * 0.2)
+                pad_y = int((y_max - y_min) * 0.2)
+                
+                x_min = max(0, x_min - pad_x)
+                y_min = max(0, y_min - pad_y)
+                x_max = min(img_np.shape[1], x_max + pad_x)
+                y_max = min(img_np.shape[0], y_max + pad_y)
+                
+                # 크롭
+                cropped = image.crop((x_min, y_min, x_max, y_max))
+            else:
+                # 엣지 못찾으면 중앙 크롭
+                cropped = image
+            
+            # 1000x1300 비율로 맞추기
+            cropped.thumbnail((1000, 1300), Image.Resampling.LANCZOS)
+            
+            # 정확히 1000x1300 캔버스에 배치
+            canvas = Image.new('RGB', target_size, (245, 243, 240))
+            paste_x = (1000 - cropped.size[0]) // 2
+            paste_y = (1300 - cropped.size[1]) // 2
+            canvas.paste(cropped, (paste_x, paste_y))
+            
+            image = canvas
         
-        # 타겟 크기로 리사이즈
-        target_w, target_h = target_size
-        h_crop, w_crop = cropped.shape[:2]
+        # 최종 선명도 증가
+        enhancer = ImageEnhance.Sharpness(image)
+        image = enhancer.enhance(1.5)
         
-        # 비율 유지하며 fit
-        scale = min(target_w / w_crop, target_h / h_crop)
-        new_w = int(w_crop * scale)
-        new_h = int(h_crop * scale)
-        
-        # 고품질 리사이즈
-        resized = cv2.resize(cropped, (new_w, new_h), interpolation=cv2.INTER_LANCZOS4)
-        
-        # 캔버스 생성 및 중앙 배치
-        canvas = np.full((target_h, target_w, 3), (245, 243, 240), dtype=np.uint8)
-        y_offset = (target_h - new_h) // 2
-        x_offset = (target_w - new_w) // 2
-        canvas[y_offset:y_offset+new_h, x_offset:x_offset+new_w] = resized
-        
-        # PIL로 변환 후 디테일 보정
-        thumb_img = Image.fromarray(canvas)
-        
-        # 선명도 증가
-        enhancer = ImageEnhance.Sharpness(thumb_img)
-        thumb_img = enhancer.enhance(1.5)  # 더 강하게
-        
-        # 엣지 강화
-        thumb_np = np.array(thumb_img)
-        kernel = np.array([[-1,-1,-1],
-                          [-1, 9,-1],
-                          [-1,-1,-1]]) / 9.0
-        
-        sharpened = cv2.filter2D(thumb_np, -1, kernel)
-        
-        # 원본과 블렌딩
-        result = cv2.addWeighted(thumb_np, 0.6, sharpened, 0.4, 0)
-        
-        print(f"[{VERSION}] Created {target_w}x{target_h} thumbnail")
-        
-        return Image.fromarray(result.astype(np.uint8))
-
-# 전역 인스턴스
-processor_instance = None
-
-def get_processor():
-    global processor_instance
-    if processor_instance is None:
-        processor_instance = ThumbnailProcessorV21()
-    return processor_instance
-
-def find_base64_in_dict(data, depth=0, max_depth=10):
-    """중첩된 딕셔너리에서 base64 이미지 찾기"""
-    if depth > max_depth:
-        return None
-    
-    if isinstance(data, str) and len(data) > 100:
-        return data
-    
-    if isinstance(data, dict):
-        for key in ['image', 'base64', 'data', 'input', 'file']:
-            if key in data and isinstance(data[key], str) and len(data[key]) > 100:
-                return data[key]
-        
-        for value in data.values():
-            result = find_base64_in_dict(value, depth + 1, max_depth)
-            if result:
-                return result
-    
-    elif isinstance(data, list):
-        for item in data:
-            result = find_base64_in_dict(item, depth + 1, max_depth)
-            if result:
-                return result
-    
-    return None
-
-def decode_base64_image(base64_str):
-    """Base64 문자열을 PIL Image로 디코드"""
-    try:
-        if ',' in base64_str:
-            base64_str = base64_str.split(',')[1]
-        
-        base64_str = base64_str.strip()
-        
-        padding = 4 - len(base64_str) % 4
-        if padding != 4:
-            base64_str += '=' * padding
-        
-        img_data = base64.b64decode(base64_str)
-        img = Image.open(io.BytesIO(img_data))
-        
-        if img.mode != 'RGB':
-            img = img.convert('RGB')
-        
-        return img
-        
-    except Exception as e:
-        print(f"[{VERSION}] Error decoding base64: {e}")
-        raise
-
-def encode_image_to_base64(image, format='PNG'):
-    """이미지를 base64로 인코딩"""
-    try:
-        if isinstance(image, np.ndarray):
-            image = Image.fromarray(image)
-        
-        buffer = io.BytesIO()
-        image.save(buffer, format=format, quality=95 if format == 'JPEG' else None)
-        buffer.seek(0)
-        
-        # Base64 인코딩 - Make.com을 위해 padding 제거
-        base64_str = base64.b64encode(buffer.getvalue()).decode('utf-8')
-        base64_str = base64_str.rstrip('=')
-        
-        return base64_str
-        
-    except Exception as e:
-        print(f"[{VERSION}] Error encoding image: {e}")
-        raise
+        print(f"[{VERSION}] Created exact 1000x1300 thumbnail")
+        return image
 
 def handler(job):
-    """RunPod 썸네일 핸들러"""
+    """RunPod handler - Aggressive approach"""
+    print(f"[{VERSION}] ====== Thumbnail Handler Started ======")
+    
     try:
-        start_time = time.time()
-        job_input = job["input"]
+        job_input = job.get("input", {})
         
-        print(f"[{VERSION}] Thumbnail processing started")
-        print(f"[{VERSION}] REPLICATE_AVAILABLE: {REPLICATE_AVAILABLE}")
+        # Find base64 image - same logic as enhancement
+        base64_image = None
         
-        # Base64 이미지 찾기
-        base64_image = find_base64_in_dict(job_input)
+        if isinstance(job_input, dict):
+            for key in ['image', 'base64', 'data', 'input', 'file', 'imageData']:
+                if key in job_input:
+                    value = job_input[key]
+                    if isinstance(value, str) and len(value) > 100:
+                        base64_image = value
+                        print(f"[{VERSION}] Found image in key: {key}")
+                        break
+        
+        if not base64_image and isinstance(job_input, dict):
+            for key, value in job_input.items():
+                if isinstance(value, dict):
+                    for sub_key in ['image', 'base64', 'data']:
+                        if sub_key in value and isinstance(value[sub_key], str) and len(value[sub_key]) > 100:
+                            base64_image = value[sub_key]
+                            print(f"[{VERSION}] Found image in nested: {key}.{sub_key}")
+                            break
+        
+        if not base64_image and isinstance(job_input, str) and len(job_input) > 100:
+            base64_image = job_input
+        
         if not base64_image:
             return {
                 "output": {
+                    "thumbnail": None,
                     "error": "No image data found",
-                    "version": VERSION,
-                    "success": False
+                    "success": False,
+                    "version": VERSION
                 }
             }
         
-        # 이미지 디코드
-        image = decode_base64_image(base64_image)
+        # Process image
+        if ',' in base64_image and base64_image.startswith('data:'):
+            base64_image = base64_image.split(',')[1]
+        
+        base64_image = base64_image.strip()
+        
+        # Add padding for decoding
+        padding = 4 - len(base64_image) % 4
+        if padding != 4:
+            base64_image += '=' * padding
+        
+        # Decode
+        img_data = base64.b64decode(base64_image)
+        image = Image.open(io.BytesIO(img_data))
+        
+        if image.mode != 'RGB':
+            image = image.convert('RGB')
+        
         print(f"[{VERSION}] Image decoded: {image.size}")
         
-        # numpy 변환
-        image_np = np.array(image)
+        # Create processor
+        processor = ThumbnailProcessorV22()
         
-        # 1. 검은색 박스 감지
-        processor = get_processor()
-        frame_info = processor.detect_black_box(image_np)
+        # 1. AGGRESSIVE BLACK BOX REMOVAL - 크롭 우선
+        image, had_black_box = processor.detect_and_crop_black_box(image)
         
-        # 2. 프레임 제거 (개선된 로직)
-        if frame_info['has_frame']:
-            print(f"[{VERSION}] Removing black box")
-            image = processor.remove_black_frame_replicate(image, frame_info)
-            print(f"[{VERSION}] Black box removal completed")
-        
-        # 3. 색감 보정
+        # 2. Apply color enhancement
         image = processor.apply_simple_enhancement(image)
         
-        # 4. 썸네일 생성 + 디테일 보정
-        thumbnail = processor.create_thumbnail_with_detail(image, (1000, 1300))
+        # 3. Create exact 1000x1300 thumbnail
+        thumbnail = processor.create_thumbnail_1000x1300(image)
         
-        # 결과 인코딩
-        thumbnail_base64 = encode_image_to_base64(thumbnail)
+        # Convert to base64
+        buffer = io.BytesIO()
+        thumbnail.save(buffer, format='PNG', quality=95)
+        buffer.seek(0)
         
-        # 처리 시간
-        processing_time = time.time() - start_time
-        print(f"[{VERSION}] Processing completed in {processing_time:.2f}s")
+        thumbnail_base64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
         
-        # Return 구조
-        return {
+        # Remove padding for Make.com
+        thumbnail_base64 = thumbnail_base64.rstrip('=')
+        
+        print(f"[{VERSION}] Thumbnail base64 length: {len(thumbnail_base64)}")
+        
+        # Return proper structure
+        result = {
             "output": {
                 "thumbnail": thumbnail_base64,
-                "has_black_frame": frame_info['has_frame'],
+                "has_black_frame": had_black_box,
                 "success": True,
                 "version": VERSION,
-                "processing_time": round(processing_time, 2),
-                "original_size": list(image.size),
                 "thumbnail_size": [1000, 1300],
-                "detection_method": frame_info.get('method', 'none')
+                "processing_method": "aggressive_crop"
             }
         }
         
+        print(f"[{VERSION}] ====== Success - Returning Thumbnail ======")
+        return result
+        
     except Exception as e:
         error_msg = f"Error: {str(e)}"
-        print(f"[{VERSION}] {error_msg}")
+        print(f"[{VERSION}] ERROR: {error_msg}")
         traceback.print_exc()
         
         return {
             "output": {
+                "thumbnail": None,
                 "error": error_msg,
                 "success": False,
                 "version": VERSION
             }
         }
 
-# RunPod 시작
+# RunPod serverless start
 if __name__ == "__main__":
     print("="*70)
     print(f"Wedding Ring Thumbnail {VERSION}")
-    print("Thumbnail Handler (b_파일)")
-    print(f"Replicate Available: {REPLICATE_AVAILABLE}")
-    print("IMPORTANT: Set REPLICATE_API_TOKEN environment variable")
+    print("Aggressive Black Box Removal - Crop First Approach")
+    print("Output: Exact 1000x1300 thumbnail")
+    print("Make.com path: {{4.data.output.output.thumbnail}}")
     print("="*70)
     
     runpod.serverless.start({"handler": handler})
