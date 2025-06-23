@@ -11,7 +11,6 @@ import time
 # Version info
 VERSION = "v24-thumbnail"
 
-
 class ThumbnailProcessorV24:
     """v24 Thumbnail Processor - NumPy & PIL Methods for Black Box Removal"""
     
@@ -153,56 +152,81 @@ class ThumbnailProcessorV24:
         return Image.fromarray(img_np.astype(np.uint8))
     
     def create_thumbnail_1000x1300(self, image):
-        """정확히 1000x1300 썸네일 생성 - 웨딩링 중심"""
+        """정확히 1000x1300 썸네일 생성 - 웨딩링 중심으로 더 크게"""
         target_size = (1000, 1300)
         
-        # 이미지가 너무 작으면 패딩 추가
-        if image.size[0] < 500 or image.size[1] < 650:
-            # 캔버스 생성
-            canvas = Image.new('RGB', target_size, (245, 243, 240))
+        # 먼저 웨딩링 영역을 찾아서 타이트하게 크롭
+        img_np = np.array(image)
+        gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
+        
+        # 밝은 영역 찾기 (웨딩링)
+        _, bright = cv2.threshold(gray, 100, 255, cv2.THRESH_BINARY)
+        
+        # 엣지 검출
+        edges = cv2.Canny(gray, 50, 150)
+        combined = cv2.bitwise_or(bright, edges)
+        
+        # 노이즈 제거
+        kernel = np.ones((5, 5), np.uint8)
+        combined = cv2.morphologyEx(combined, cv2.MORPH_CLOSE, kernel)
+        
+        # Contour 찾기
+        contours, _ = cv2.findContours(combined, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        if contours:
+            # 모든 contour를 포함하는 바운딩 박스
+            all_points = np.concatenate(contours)
+            x, y, w_box, h_box = cv2.boundingRect(all_points)
             
-            # 이미지 스케일 업
-            scale = min(800 / image.size[0], 1040 / image.size[1])
-            new_size = (int(image.size[0] * scale), int(image.size[1] * scale))
-            image = image.resize(new_size, Image.Resampling.LANCZOS)
+            # 5% 패딩만 추가 (더 타이트하게)
+            padding_x = int(w_box * 0.05)
+            padding_y = int(h_box * 0.05)
             
-            # 중앙 배치
-            paste_x = (1000 - image.size[0]) // 2
-            paste_y = (1300 - image.size[1]) // 2
-            canvas.paste(image, (paste_x, paste_y))
+            x = max(0, x - padding_x)
+            y = max(0, y - padding_y)
+            w_box = min(img_np.shape[1] - x, w_box + 2 * padding_x)
+            h_box = min(img_np.shape[0] - y, h_box + 2 * padding_y)
             
-            image = canvas
+            # 크롭
+            cropped = image.crop((x, y, x + w_box, y + h_box))
         else:
-            # 큰 이미지는 비율 맞춰서 리사이즈
-            # 1000:1300 = 10:13 비율
-            img_ratio = image.size[0] / image.size[1]
-            target_ratio = 1000 / 1300
-            
-            if img_ratio > target_ratio:
-                # 이미지가 더 넓음 - 높이 기준
-                new_height = 1300
-                new_width = int(1300 * img_ratio)
-                image = image.resize((new_width, new_height), Image.Resampling.LANCZOS)
-                
-                # 중앙 크롭
-                left = (new_width - 1000) // 2
-                image = image.crop((left, 0, left + 1000, 1300))
-            else:
-                # 이미지가 더 높음 - 너비 기준
-                new_width = 1000
-                new_height = int(1000 / img_ratio)
-                image = image.resize((new_width, new_height), Image.Resampling.LANCZOS)
-                
-                # 중앙 크롭
-                top = (new_height - 1300) // 2
-                image = image.crop((0, top, 1000, top + 1300))
+            # Fallback: 중앙 60% 크롭 (더 타이트하게)
+            w, h = image.size
+            margin_x = int(w * 0.2)
+            margin_y = int(h * 0.2)
+            cropped = image.crop((margin_x, margin_y, w - margin_x, h - margin_y))
+        
+        # 이제 1000x1300으로 리사이즈
+        # 비율 유지하며 가득 채우기
+        cropped_w, cropped_h = cropped.size
+        scale = max(1000 / cropped_w, 1300 / cropped_h)
+        
+        # 스케일 적용
+        new_w = int(cropped_w * scale)
+        new_h = int(cropped_h * scale)
+        resized = cropped.resize((new_w, new_h), Image.Resampling.LANCZOS)
+        
+        # 1000x1300 캔버스에 중앙 배치
+        canvas = Image.new('RGB', target_size, (245, 243, 240))
+        paste_x = (1000 - new_w) // 2
+        paste_y = (1300 - new_h) // 2
+        
+        # 크롭이 필요한 경우
+        if new_w > 1000 or new_h > 1300:
+            # 중앙 크롭
+            left = (new_w - 1000) // 2
+            top = (new_h - 1300) // 2
+            resized = resized.crop((left, top, left + 1000, top + 1300))
+            canvas = resized
+        else:
+            canvas.paste(resized, (paste_x, paste_y))
         
         # 최종 선명도 증가
-        enhancer = ImageEnhance.Sharpness(image)
-        image = enhancer.enhance(1.5)
+        enhancer = ImageEnhance.Sharpness(canvas)
+        canvas = enhancer.enhance(1.8)  # 더 강하게
         
-        print(f"[{VERSION}] Created exact 1000x1300 thumbnail")
-        return image
+        print(f"[{VERSION}] Created exact 1000x1300 thumbnail with tight crop")
+        return canvas
 
 def handler(job):
     """RunPod handler - V24 with multiple removal methods"""
@@ -240,15 +264,13 @@ def handler(job):
         
         if not base64_image:
             return {
-                "output": {
-                    "thumbnail": None,
-                    "error": "No image data found",
-                    "success": False,
-                    "version": VERSION,
-                    "debug_info": {
-                        "input_keys": list(job_input.keys()) if isinstance(job_input, dict) else [],
-                        "first_key": list(job_input.keys())[0] if isinstance(job_input, dict) and job_input else None
-                    }
+                "thumbnail": None,
+                "error": "No image data found",
+                "success": False,
+                "version": VERSION,
+                "debug_info": {
+                    "input_keys": list(job_input.keys()) if isinstance(job_input, dict) else [],
+                    "first_key": list(job_input.keys())[0] if isinstance(job_input, dict) and job_input else None
                 }
             }
         
@@ -316,14 +338,12 @@ def handler(job):
         
         # Return proper structure
         result = {
-            "output": {
-                "thumbnail": thumbnail_base64,
-                "has_black_frame": had_black_box,
-                "success": True,
-                "version": VERSION,
-                "thumbnail_size": [1000, 1300],
-                "processing_method": "multi_method_v24"
-            }
+            "thumbnail": thumbnail_base64,
+            "has_black_frame": had_black_box,
+            "success": True,
+            "version": VERSION,
+            "thumbnail_size": [1000, 1300],
+            "processing_method": "multi_method_v24"
         }
         
         print(f"[{VERSION}] ====== Success - Returning Thumbnail ======")
@@ -335,12 +355,10 @@ def handler(job):
         traceback.print_exc()
         
         return {
-            "output": {
-                "thumbnail": None,
-                "error": error_msg,
-                "success": False,
-                "version": VERSION
-            }
+            "thumbnail": None,
+            "error": error_msg,
+            "success": False,
+            "version": VERSION
         }
 
 # RunPod serverless start
@@ -351,7 +369,7 @@ if __name__ == "__main__":
     print("1. NumPy nonzero (fastest)")
     print("2. PIL ImageChops (backup)")
     print("3. OpenCV threshold (fallback)")
-    print("Make.com path: {{4.data.output.output.thumbnail}}")
+    print("Make.com path: {{4.data.output.thumbnail}}")
     print("="*70)
     
     runpod.serverless.start({"handler": handler})
