@@ -1,7 +1,7 @@
 import runpod
 import base64
 import numpy as np
-from PIL import Image, ImageEnhance, ImageOps
+from PIL import Image, ImageEnhance, ImageChops
 import cv2
 import io
 import os
@@ -9,111 +9,118 @@ import traceback
 import time
 
 # Version info
-VERSION = "v22-thumbnail"
+VERSION = "v24-thumbnail"
 
-# Import Replicate when available
-try:
-    import replicate
-    REPLICATE_AVAILABLE = True
-except ImportError:
-    REPLICATE_AVAILABLE = False
-    print(f"[{VERSION}] Replicate not available")
-
-try:
-    import requests
-    REQUESTS_AVAILABLE = True
-except ImportError:
-    REQUESTS_AVAILABLE = False
-
-class ThumbnailProcessorV22:
-    """v22 Thumbnail Processor - Aggressive Black Box Removal"""
+class ThumbnailProcessorV24:
+    """v24 Thumbnail Processor - NumPy & PIL Methods for Black Box Removal"""
     
     def __init__(self):
-        print(f"[{VERSION}] Initializing - Aggressive Black Box Removal")
-        self.replicate_client = None
+        print(f"[{VERSION}] Initializing - NumPy/PIL Black Box Removal")
     
-    def detect_and_crop_black_box(self, image):
-        """검은 박스를 감지하고 즉시 크롭 - 단순하고 확실하게"""
+    def remove_black_box_numpy(self, image):
+        """NumPy nonzero 방법 - 가장 빠르고 효과적"""
         img_np = np.array(image)
         h, w = img_np.shape[:2]
-        print(f"[{VERSION}] Processing {w}x{h} image")
+        print(f"[{VERSION}] NumPy method - Processing {w}x{h} image")
         
-        # Grayscale 변환
+        # Convert to grayscale for detection
         gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
         
-        # 검은 영역 찾기 - 매우 관대한 threshold
-        _, binary = cv2.threshold(gray, 80, 255, cv2.THRESH_BINARY)
+        # Find non-black pixels (threshold > 30)
+        threshold = 30
+        non_black_pixels = gray > threshold
         
-        # 노이즈 제거
-        kernel = np.ones((20, 20), np.uint8)
-        binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel)
-        binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
+        # Find the bounding box of non-black pixels
+        rows = np.any(non_black_pixels, axis=1)
+        cols = np.any(non_black_pixels, axis=0)
         
-        # 흰색 영역(링이 있는 곳) 찾기
+        if np.any(rows) and np.any(cols):
+            ymin, ymax = np.where(rows)[0][[0, -1]]
+            xmin, xmax = np.where(cols)[0][[0, -1]]
+            
+            # Add small margin
+            margin = 10
+            ymin = max(0, ymin - margin)
+            ymax = min(h, ymax + margin + 1)
+            xmin = max(0, xmin - margin)
+            xmax = min(w, xmax + margin + 1)
+            
+            print(f"[{VERSION}] Black box detected: cropping to ({xmin},{ymin}) - ({xmax},{ymax})")
+            
+            # Crop the image
+            cropped = img_np[ymin:ymax, xmin:xmax]
+            return Image.fromarray(cropped), True
+        
+        return image, False
+    
+    def remove_black_box_pil(self, image):
+        """PIL ImageChops 방법 - 백업용"""
+        try:
+            print(f"[{VERSION}] PIL ImageChops method")
+            
+            # Get the background color (usually black at corners)
+            bg_color = image.getpixel((0, 0))
+            
+            # Create a background image with that color
+            bg = Image.new(image.mode, image.size, bg_color)
+            
+            # Calculate difference
+            diff = ImageChops.difference(image, bg)
+            
+            # Add the difference to itself to amplify
+            diff = ImageChops.add(diff, diff, 2.0, -100)
+            
+            # Get bounding box
+            bbox = diff.getbbox()
+            
+            if bbox:
+                # Add margin
+                x1, y1, x2, y2 = bbox
+                margin = 10
+                x1 = max(0, x1 - margin)
+                y1 = max(0, y1 - margin)
+                x2 = min(image.size[0], x2 + margin)
+                y2 = min(image.size[1], y2 + margin)
+                
+                print(f"[{VERSION}] PIL bbox found: ({x1},{y1}) - ({x2},{y2})")
+                return image.crop((x1, y1, x2, y2)), True
+                
+        except Exception as e:
+            print(f"[{VERSION}] PIL method failed: {e}")
+        
+        return image, False
+    
+    def remove_black_box_threshold(self, image):
+        """Threshold + Contour 방법 - 세 번째 옵션"""
+        img_np = np.array(image)
+        h, w = img_np.shape[:2]
+        print(f"[{VERSION}] Threshold method")
+        
+        # Convert to grayscale
+        gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
+        
+        # Apply threshold
+        _, binary = cv2.threshold(gray, 40, 255, cv2.THRESH_BINARY)
+        
+        # Find contours
         contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         
         if contours:
-            # 가장 큰 흰색 영역 찾기
-            largest_white = max(contours, key=cv2.contourArea)
-            x, y, cw, ch = cv2.boundingRect(largest_white)
+            # Get bounding rect of all contours
+            x, y, w, h = cv2.boundingRect(np.concatenate(contours))
             
-            # 웨딩링이 있는 영역 확인
-            white_area = cw * ch
-            total_area = w * h
+            # Add margin
+            margin = 10
+            x = max(0, x - margin)
+            y = max(0, y - margin)
+            w = min(img_np.shape[1] - x, w + 2 * margin)
+            h = min(img_np.shape[0] - y, h + 2 * margin)
             
-            if white_area < total_area * 0.8:  # 검은 프레임이 있다고 판단
-                print(f"[{VERSION}] Black box detected! White area at ({x},{y}) size {cw}x{ch}")
-                
-                # 즉시 크롭 - 여백 추가
-                margin = 30
-                x1 = max(0, x - margin)
-                y1 = max(0, y - margin)
-                x2 = min(w, x + cw + margin)
-                y2 = min(h, y + ch + margin)
-                
-                cropped = image.crop((x1, y1, x2, y2))
-                print(f"[{VERSION}] Cropped to remove black box: {cropped.size}")
-                return cropped, True
+            print(f"[{VERSION}] Contour bbox: ({x},{y}) size {w}x{h}")
+            
+            cropped = img_np[y:y+h, x:x+w]
+            return Image.fromarray(cropped), True
         
-        # Method 2: 엣지에서 안쪽으로 스캔
-        # 각 방향에서 첫 번째 밝은 픽셀 찾기
-        threshold = 100
-        
-        # Top edge
-        top = 0
-        for i in range(h//2):
-            if np.max(gray[i, :]) > threshold:
-                top = max(0, i - 20)
-                break
-        
-        # Bottom edge
-        bottom = h
-        for i in range(h//2):
-            if np.max(gray[h-1-i, :]) > threshold:
-                bottom = min(h, h-i + 20)
-                break
-        
-        # Left edge
-        left = 0
-        for i in range(w//2):
-            if np.max(gray[:, i]) > threshold:
-                left = max(0, i - 20)
-                break
-        
-        # Right edge
-        right = w
-        for i in range(w//2):
-            if np.max(gray[:, w-1-i]) > threshold:
-                right = min(w, w-i + 20)
-                break
-        
-        # 크롭이 필요한지 확인
-        if top > 50 or (h - bottom) > 50 or left > 50 or (w - right) > 50:
-            print(f"[{VERSION}] Edge black frame detected: T:{top} B:{bottom} L:{left} R:{right}")
-            cropped = image.crop((left, top, right, bottom))
-            return cropped, True
-        
-        print(f"[{VERSION}] No black box detected")
         return image, False
     
     def apply_simple_enhancement(self, image):
@@ -148,56 +155,46 @@ class ThumbnailProcessorV22:
         """정확히 1000x1300 썸네일 생성 - 웨딩링 중심"""
         target_size = (1000, 1300)
         
-        # 이미 작은 이미지면 패딩 추가
-        if image.size[0] < 1000 or image.size[1] < 1300:
+        # 이미지가 너무 작으면 패딩 추가
+        if image.size[0] < 500 or image.size[1] < 650:
             # 캔버스 생성
             canvas = Image.new('RGB', target_size, (245, 243, 240))
             
-            # 이미지를 중앙에 배치
+            # 이미지 스케일 업
+            scale = min(800 / image.size[0], 1040 / image.size[1])
+            new_size = (int(image.size[0] * scale), int(image.size[1] * scale))
+            image = image.resize(new_size, Image.Resampling.LANCZOS)
+            
+            # 중앙 배치
             paste_x = (1000 - image.size[0]) // 2
             paste_y = (1300 - image.size[1]) // 2
             canvas.paste(image, (paste_x, paste_y))
             
             image = canvas
         else:
-            # 큰 이미지는 웨딩링 찾아서 크롭
-            img_np = np.array(image)
-            gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
+            # 큰 이미지는 비율 맞춰서 리사이즈
+            # 1000:1300 = 10:13 비율
+            img_ratio = image.size[0] / image.size[1]
+            target_ratio = 1000 / 1300
             
-            # 엣지 검출로 웨딩링 위치 찾기
-            edges = cv2.Canny(gray, 50, 150)
-            
-            # 엣지가 있는 영역의 바운딩 박스
-            coords = np.column_stack(np.where(edges > 0))
-            if len(coords) > 0:
-                y_min, x_min = coords.min(axis=0)
-                y_max, x_max = coords.max(axis=0)
+            if img_ratio > target_ratio:
+                # 이미지가 더 넓음 - 높이 기준
+                new_height = 1300
+                new_width = int(1300 * img_ratio)
+                image = image.resize((new_width, new_height), Image.Resampling.LANCZOS)
                 
-                # 20% 패딩
-                pad_x = int((x_max - x_min) * 0.2)
-                pad_y = int((y_max - y_min) * 0.2)
-                
-                x_min = max(0, x_min - pad_x)
-                y_min = max(0, y_min - pad_y)
-                x_max = min(img_np.shape[1], x_max + pad_x)
-                y_max = min(img_np.shape[0], y_max + pad_y)
-                
-                # 크롭
-                cropped = image.crop((x_min, y_min, x_max, y_max))
+                # 중앙 크롭
+                left = (new_width - 1000) // 2
+                image = image.crop((left, 0, left + 1000, 1300))
             else:
-                # 엣지 못찾으면 중앙 크롭
-                cropped = image
-            
-            # 1000x1300 비율로 맞추기
-            cropped.thumbnail((1000, 1300), Image.Resampling.LANCZOS)
-            
-            # 정확히 1000x1300 캔버스에 배치
-            canvas = Image.new('RGB', target_size, (245, 243, 240))
-            paste_x = (1000 - cropped.size[0]) // 2
-            paste_y = (1300 - cropped.size[1]) // 2
-            canvas.paste(cropped, (paste_x, paste_y))
-            
-            image = canvas
+                # 이미지가 더 높음 - 너비 기준
+                new_width = 1000
+                new_height = int(1000 / img_ratio)
+                image = image.resize((new_width, new_height), Image.Resampling.LANCZOS)
+                
+                # 중앙 크롭
+                top = (new_height - 1300) // 2
+                image = image.crop((0, top, 1000, top + 1300))
         
         # 최종 선명도 증가
         enhancer = ImageEnhance.Sharpness(image)
@@ -207,17 +204,20 @@ class ThumbnailProcessorV22:
         return image
 
 def handler(job):
-    """RunPod handler - Aggressive approach"""
+    """RunPod handler - V24 with multiple removal methods"""
     print(f"[{VERSION}] ====== Thumbnail Handler Started ======")
     
     try:
         job_input = job.get("input", {})
+        print(f"[{VERSION}] Input type: {type(job_input)}")
+        print(f"[{VERSION}] Input keys: {list(job_input.keys()) if isinstance(job_input, dict) else 'Not a dict'}")
         
-        # Find base64 image - same logic as enhancement
+        # Find base64 image - FIXED with 'image_base64'
         base64_image = None
         
         if isinstance(job_input, dict):
-            for key in ['image', 'base64', 'data', 'input', 'file', 'imageData']:
+            # CRITICAL FIX: Added 'image_base64' as first key to check
+            for key in ['image_base64', 'image', 'base64', 'data', 'input', 'file', 'imageData']:
                 if key in job_input:
                     value = job_input[key]
                     if isinstance(value, str) and len(value) > 100:
@@ -228,7 +228,7 @@ def handler(job):
         if not base64_image and isinstance(job_input, dict):
             for key, value in job_input.items():
                 if isinstance(value, dict):
-                    for sub_key in ['image', 'base64', 'data']:
+                    for sub_key in ['image_base64', 'image', 'base64', 'data']:
                         if sub_key in value and isinstance(value[sub_key], str) and len(value[sub_key]) > 100:
                             base64_image = value[sub_key]
                             print(f"[{VERSION}] Found image in nested: {key}.{sub_key}")
@@ -243,7 +243,11 @@ def handler(job):
                     "thumbnail": None,
                     "error": "No image data found",
                     "success": False,
-                    "version": VERSION
+                    "version": VERSION,
+                    "debug_info": {
+                        "input_keys": list(job_input.keys()) if isinstance(job_input, dict) else [],
+                        "first_key": list(job_input.keys())[0] if isinstance(job_input, dict) and job_input else None
+                    }
                 }
             }
         
@@ -268,15 +272,33 @@ def handler(job):
         print(f"[{VERSION}] Image decoded: {image.size}")
         
         # Create processor
-        processor = ThumbnailProcessorV22()
+        processor = ThumbnailProcessorV24()
         
-        # 1. AGGRESSIVE BLACK BOX REMOVAL - 크롭 우선
-        image, had_black_box = processor.detect_and_crop_black_box(image)
+        # Try multiple methods for black box removal
+        had_black_box = False
         
-        # 2. Apply color enhancement
+        # Method 1: NumPy (fastest and most effective)
+        image, removed = processor.remove_black_box_numpy(image)
+        if removed:
+            had_black_box = True
+            print(f"[{VERSION}] Black box removed using NumPy method")
+        else:
+            # Method 2: PIL ImageChops
+            image, removed = processor.remove_black_box_pil(image)
+            if removed:
+                had_black_box = True
+                print(f"[{VERSION}] Black box removed using PIL method")
+            else:
+                # Method 3: Threshold + Contour
+                image, removed = processor.remove_black_box_threshold(image)
+                if removed:
+                    had_black_box = True
+                    print(f"[{VERSION}] Black box removed using threshold method")
+        
+        # Apply color enhancement
         image = processor.apply_simple_enhancement(image)
         
-        # 3. Create exact 1000x1300 thumbnail
+        # Create exact 1000x1300 thumbnail
         thumbnail = processor.create_thumbnail_1000x1300(image)
         
         # Convert to base64
@@ -299,7 +321,7 @@ def handler(job):
                 "success": True,
                 "version": VERSION,
                 "thumbnail_size": [1000, 1300],
-                "processing_method": "aggressive_crop"
+                "processing_method": "multi_method_v24"
             }
         }
         
@@ -324,8 +346,10 @@ def handler(job):
 if __name__ == "__main__":
     print("="*70)
     print(f"Wedding Ring Thumbnail {VERSION}")
-    print("Aggressive Black Box Removal - Crop First Approach")
-    print("Output: Exact 1000x1300 thumbnail")
+    print("V24 - Multiple Black Box Removal Methods")
+    print("1. NumPy nonzero (fastest)")
+    print("2. PIL ImageChops (backup)")
+    print("3. OpenCV threshold (fallback)")
     print("Make.com path: {{4.data.output.output.thumbnail}}")
     print("="*70)
     
