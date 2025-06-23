@@ -6,181 +6,420 @@ import cv2
 import io
 import os
 import traceback
+import requests
 import time
 
 # Version info
-VERSION = "v16-thumbnail"
+VERSION = "v18-thumbnail"
 
-# Import Replicate when available
-try:
-    import replicate
-    REPLICATE_AVAILABLE = True
-except ImportError:
-    REPLICATE_AVAILABLE = False
-    print(f"[{VERSION}] Replicate not available")
+# Replicate API settings
+REPLICATE_API_TOKEN = os.environ.get('REPLICATE_API_TOKEN')
+if not REPLICATE_API_TOKEN:
+    raise ValueError("REPLICATE_API_TOKEN not set")
 
-try:
-    import requests
-    REQUESTS_AVAILABLE = True
-except ImportError:
-    REQUESTS_AVAILABLE = False
-
-class ThumbnailProcessorV16:
-    """v16 Thumbnail Processor - Improved Detection"""
+class BlackBoxDetectorV18:
+    """Enhanced black box detection for high-resolution images"""
     
     def __init__(self):
-        print(f"[{VERSION}] Initializing - Improved Black Frame Detection")
-        self.replicate_client = None
-    
-    def detect_black_frame_precise(self, image_np):
-        """정밀한 검은색 프레임 감지 - 50-80픽셀 두께 대응"""
-        h, w = image_np.shape[:2]
+        print(f"[{VERSION}] BlackBoxDetectorV18 initialized")
+        
+    def detect_black_frame_multi_stage(self, image):
+        """다단계 검증으로 검은 박스 감지 - 6720x4480 대응"""
+        img_np = np.array(image)
+        h, w = img_np.shape[:2]
         print(f"[{VERSION}] Detecting black frame in {w}x{h} image")
         
-        # Step 1: 가장자리부터 검사 (안쪽으로 진행)
-        edge_thickness = 0
-        threshold = 40  # 검은색 판단 기준
+        # Stage 1: Edge-based detection (가장자리부터 안쪽으로)
+        edge_results = self._detect_edges_inward(img_np)
         
-        # 상단 가장자리 검사
-        for i in range(min(200, h//2)):  # 최대 200픽셀까지 검사
-            top_row = image_np[i, :]
-            if np.mean(top_row) < threshold:
-                edge_thickness = i + 1
+        # Stage 2: Threshold-based detection (여러 임계값)
+        threshold_results = self._detect_with_thresholds(img_np)
+        
+        # Stage 3: Gradient-based detection (경계선 감지)
+        gradient_results = self._detect_with_gradients(img_np)
+        
+        # Stage 4: Color histogram analysis
+        histogram_results = self._analyze_color_histogram(img_np)
+        
+        # Stage 5: Connected components analysis
+        component_results = self._analyze_connected_components(img_np)
+        
+        # Combine all results
+        all_results = [edge_results, threshold_results, gradient_results, 
+                      histogram_results, component_results]
+        
+        # Vote on best detection
+        final_result = self._vote_on_detection(all_results)
+        
+        if final_result['detected']:
+            print(f"[{VERSION}] Black frame detected: thickness={final_result['thickness']}")
+        else:
+            print(f"[{VERSION}] No black frame detected")
+            
+        return final_result
+    
+    def _detect_edges_inward(self, img_np):
+        """가장자리부터 안쪽으로 검사 - v16 방식 개선"""
+        h, w = img_np.shape[:2]
+        gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
+        
+        # 최대 검사 깊이 (고해상도 대응)
+        max_depth = min(300, h//10, w//10)
+        
+        edges = {'top': 0, 'bottom': 0, 'left': 0, 'right': 0}
+        threshold = 40  # 검은색 임계값
+        
+        # Top edge
+        for y in range(max_depth):
+            row = gray[y, :]
+            if np.mean(row) < threshold:
+                edges['top'] = y + 1
             else:
                 break
         
-        if edge_thickness > 20:  # 20픽셀 이상이면 프레임으로 판단
-            print(f"[{VERSION}] Black frame detected: {edge_thickness}px thick")
-            
-            # 더 정확한 경계 찾기
-            # 하단, 좌측, 우측도 확인
-            bottom_thickness = 0
-            for i in range(min(200, h//2)):
-                bottom_row = image_np[h-1-i, :]
-                if np.mean(bottom_row) < threshold:
-                    bottom_thickness = i + 1
-                else:
-                    break
-            
-            left_thickness = 0
-            for i in range(min(200, w//2)):
-                left_col = image_np[:, i]
-                if np.mean(left_col) < threshold:
-                    left_thickness = i + 1
-                else:
-                    break
-            
-            right_thickness = 0
-            for i in range(min(200, w//2)):
-                right_col = image_np[:, w-1-i]
-                if np.mean(right_col) < threshold:
-                    right_thickness = i + 1
-                else:
-                    break
-            
-            # 평균 두께 계산
-            avg_thickness = (edge_thickness + bottom_thickness + left_thickness + right_thickness) / 4
-            print(f"[{VERSION}] Frame thickness - T:{edge_thickness} B:{bottom_thickness} L:{left_thickness} R:{right_thickness}")
-            
-            # 마스크 생성
-            mask = np.zeros((h, w), dtype=bool)
-            mask[:edge_thickness, :] = True  # 상단
-            mask[-bottom_thickness:, :] = True  # 하단
-            mask[:, :left_thickness] = True  # 좌측
-            mask[:, -right_thickness:] = True  # 우측
-            
-            return {
-                'has_frame': True,
-                'thickness': int(avg_thickness),
-                'mask': mask,
-                'bounds': (left_thickness, edge_thickness, w-right_thickness, h-bottom_thickness)
-            }
+        # Bottom edge
+        for y in range(max_depth):
+            row = gray[h-1-y, :]
+            if np.mean(row) < threshold:
+                edges['bottom'] = y + 1
+            else:
+                break
         
-        # Step 2: 중앙 검은색 박스 검사
-        # 연속된 검은색 영역 찾기
-        gray = cv2.cvtColor(image_np, cv2.COLOR_RGB2GRAY)
-        _, binary = cv2.threshold(gray, threshold, 255, cv2.THRESH_BINARY)
+        # Left edge
+        for x in range(max_depth):
+            col = gray[:, x]
+            if np.mean(col) < threshold:
+                edges['left'] = x + 1
+            else:
+                break
         
-        # 윤곽선 찾기
-        contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        # Right edge
+        for x in range(max_depth):
+            col = gray[:, w-1-x]
+            if np.mean(col) < threshold:
+                edges['right'] = x + 1
+            else:
+                break
         
-        for contour in contours:
-            x, y, w_box, h_box = cv2.boundingRect(contour)
-            area = w_box * h_box
+        avg_thickness = np.mean(list(edges.values()))
+        detected = avg_thickness > 20  # 최소 20픽셀
+        
+        return {
+            'detected': detected,
+            'thickness': int(avg_thickness),
+            'edges': edges,
+            'method': 'edge_inward'
+        }
+    
+    def _detect_with_thresholds(self, img_np):
+        """여러 임계값으로 검사"""
+        gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
+        h, w = gray.shape
+        
+        best_result = {'detected': False, 'thickness': 0}
+        
+        # 다양한 임계값 시도
+        for thresh in [20, 30, 40, 50, 60]:
+            _, binary = cv2.threshold(gray, thresh, 255, cv2.THRESH_BINARY)
             
-            # 전체 면적의 5% 이상인 검은색 영역
-            if area > (w * h * 0.05):
-                print(f"[{VERSION}] Black box detected at ({x},{y}) size {w_box}x{h_box}")
+            # Find largest black region
+            contours, _ = cv2.findContours(255 - binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            
+            if contours:
+                largest = max(contours, key=cv2.contourArea)
+                x, y, cw, ch = cv2.boundingRect(largest)
                 
-                mask = np.zeros((h, w), dtype=bool)
-                mask[y:y+h_box, x:x+w_box] = True
+                # Check if it's a frame (touches edges)
+                if x <= 10 and y <= 10 and x + cw >= w - 10 and y + ch >= h - 10:
+                    # Calculate frame thickness
+                    thickness = min(x, y, w - (x + cw), h - (y + ch))
+                    if thickness > best_result['thickness']:
+                        best_result = {
+                            'detected': True,
+                            'thickness': thickness,
+                            'bbox': (x, y, cw, ch),
+                            'method': f'threshold_{thresh}'
+                        }
+        
+        return best_result
+    
+    def _detect_with_gradients(self, img_np):
+        """경계선 감지를 통한 박스 검출"""
+        gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
+        
+        # Sobel gradients
+        grad_x = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)
+        grad_y = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3)
+        grad_mag = np.sqrt(grad_x**2 + grad_y**2)
+        
+        # Find strong edges
+        _, edges = cv2.threshold(grad_mag.astype(np.uint8), 50, 255, cv2.THRESH_BINARY)
+        
+        # Hough lines to find box edges
+        lines = cv2.HoughLinesP(edges, 1, np.pi/180, 100, minLineLength=100, maxLineGap=10)
+        
+        if lines is not None:
+            # Analyze lines to find box structure
+            h, w = gray.shape
+            h_lines = []
+            v_lines = []
+            
+            for line in lines:
+                x1, y1, x2, y2 = line[0]
+                if abs(y2 - y1) < 10:  # Horizontal
+                    h_lines.append((y1 + y2) // 2)
+                elif abs(x2 - x1) < 10:  # Vertical
+                    v_lines.append((x1 + x2) // 2)
+            
+            # Find frame boundaries
+            if h_lines and v_lines:
+                top = min([y for y in h_lines if y < h//3])
+                bottom = max([y for y in h_lines if y > 2*h//3])
+                left = min([x for x in v_lines if x < w//3])
+                right = max([x for x in v_lines if x > 2*w//3])
                 
+                thickness = min(top, left, w - right, h - bottom)
+                
+                if thickness > 20:
+                    return {
+                        'detected': True,
+                        'thickness': thickness,
+                        'method': 'gradient'
+                    }
+        
+        return {'detected': False, 'thickness': 0}
+    
+    def _analyze_color_histogram(self, img_np):
+        """색상 히스토그램 분석"""
+        gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
+        hist = cv2.calcHist([gray], [0], None, [256], [0, 256])
+        
+        # Check for peak in dark values
+        dark_pixels = np.sum(hist[:50])
+        total_pixels = img_np.shape[0] * img_np.shape[1]
+        dark_ratio = dark_pixels / total_pixels
+        
+        if dark_ratio > 0.15:  # 15% 이상이 어두운 픽셀
+            # Estimate frame thickness based on dark pixel distribution
+            h, w = gray.shape
+            mask = gray < 50
+            
+            # Check edges
+            top_dark = np.mean(mask[:100, :])
+            bottom_dark = np.mean(mask[-100:, :])
+            left_dark = np.mean(mask[:, :100])
+            right_dark = np.mean(mask[:, -100:])
+            
+            if min(top_dark, bottom_dark, left_dark, right_dark) > 0.8:
+                # Estimate thickness
+                thickness = int(dark_ratio * min(h, w) * 0.3)
                 return {
-                    'has_frame': True,
-                    'thickness': 0,
-                    'mask': mask,
-                    'bounds': (x, y, x+w_box, y+h_box)
+                    'detected': True,
+                    'thickness': thickness,
+                    'method': 'histogram'
                 }
         
-        print(f"[{VERSION}] No black frame detected")
-        return {'has_frame': False, 'thickness': 0, 'mask': None, 'bounds': (0, 0, w, h)}
+        return {'detected': False, 'thickness': 0}
     
-    def remove_black_frame_replicate(self, image, frame_info):
-        """Replicate API로 검은 프레임 제거"""
-        if not REPLICATE_AVAILABLE or not frame_info['has_frame']:
+    def _analyze_connected_components(self, img_np):
+        """연결된 구성 요소 분석"""
+        gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
+        _, binary = cv2.threshold(gray, 40, 255, cv2.THRESH_BINARY_INV)
+        
+        # Find connected components
+        num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(binary)
+        
+        h, w = gray.shape
+        frame_candidates = []
+        
+        for i in range(1, num_labels):
+            x, y, width, height, area = stats[i]
+            
+            # Check if component could be a frame
+            if (x <= 10 and y <= 10 and 
+                x + width >= w - 10 and y + height >= h - 10 and
+                area > 0.3 * w * h):  # Large area
+                
+                # This might be our black frame
+                # Calculate thickness
+                mask = (labels == i).astype(np.uint8)
+                thickness = self._calculate_frame_thickness(mask)
+                
+                if thickness > 20:
+                    frame_candidates.append({
+                        'detected': True,
+                        'thickness': thickness,
+                        'method': 'components'
+                    })
+        
+        if frame_candidates:
+            return max(frame_candidates, key=lambda x: x['thickness'])
+        
+        return {'detected': False, 'thickness': 0}
+    
+    def _calculate_frame_thickness(self, mask):
+        """프레임 두께 계산"""
+        h, w = mask.shape
+        
+        # Find inner rectangle
+        rows = np.any(mask, axis=1)
+        cols = np.any(mask, axis=0)
+        
+        ymin, ymax = np.where(rows)[0][[0, -1]]
+        xmin, xmax = np.where(cols)[0][[0, -1]]
+        
+        # Find inner hole
+        inner_mask = mask[ymin:ymax+1, xmin:xmax+1]
+        inner_inv = 1 - inner_mask
+        
+        if np.any(inner_inv):
+            inner_rows = np.any(inner_inv, axis=1)
+            inner_cols = np.any(inner_inv, axis=0)
+            
+            if np.any(inner_rows) and np.any(inner_cols):
+                iymin, iymax = np.where(inner_rows)[0][[0, -1]]
+                ixmin, ixmax = np.where(inner_cols)[0][[0, -1]]
+                
+                # Calculate thickness
+                thickness = min(
+                    iymin, ixmin,
+                    inner_mask.shape[0] - iymax - 1,
+                    inner_mask.shape[1] - ixmax - 1
+                )
+                
+                return thickness
+        
+        return 0
+    
+    def _vote_on_detection(self, results):
+        """모든 검출 결과를 종합하여 최종 결정"""
+        valid_results = [r for r in results if r['detected']]
+        
+        if not valid_results:
+            return {'detected': False, 'thickness': 0, 'has_black_frame': False}
+        
+        # Calculate average thickness
+        thicknesses = [r['thickness'] for r in valid_results]
+        avg_thickness = int(np.mean(thicknesses))
+        
+        # Need at least 2 methods to agree
+        if len(valid_results) >= 2:
+            return {
+                'detected': True,
+                'thickness': avg_thickness,
+                'has_black_frame': True,
+                'confidence': len(valid_results) / len(results),
+                'methods': [r['method'] for r in valid_results]
+            }
+        
+        return {'detected': False, 'thickness': 0, 'has_black_frame': False}
+
+
+class ThumbnailProcessorV18:
+    """Thumbnail processing with advanced black box removal"""
+    
+    def __init__(self):
+        self.detector = BlackBoxDetectorV18()
+        print(f"[{VERSION}] ThumbnailProcessorV18 initialized")
+    
+    def remove_black_frame_replicate(self, image, detection_result):
+        """Replicate API를 사용한 마스킹 제거"""
+        if not detection_result['detected']:
             return image
         
         try:
-            print(f"[{VERSION}] Removing black frame with Replicate")
+            import replicate
             
-            # 마스크 이미지 생성
-            mask_np = frame_info['mask'].astype(np.uint8) * 255
+            # Convert image to base64
+            buffered = io.BytesIO()
+            image.save(buffered, format="PNG")
+            img_str = base64.b64encode(buffered.getvalue()).decode()
             
-            # 마스크 확장 (더 자연스러운 결과)
-            kernel = np.ones((5, 5), np.uint8)
-            mask_np = cv2.dilate(mask_np, kernel, iterations=2)
+            # Prepare mask based on detection
+            mask = self._create_mask_from_detection(image, detection_result)
+            mask_buffered = io.BytesIO()
+            mask.save(mask_buffered, format="PNG")
+            mask_str = base64.b64encode(mask_buffered.getvalue()).decode()
             
-            mask_img = Image.fromarray(mask_np)
-            
-            # Base64 인코딩
-            img_buffer = io.BytesIO()
-            image.save(img_buffer, format='PNG')
-            img_base64 = base64.b64encode(img_buffer.getvalue()).decode('utf-8')
-            
-            mask_buffer = io.BytesIO()
-            mask_img.save(mask_buffer, format='PNG')
-            mask_base64 = base64.b64encode(mask_buffer.getvalue()).decode('utf-8')
-            
-            # Replicate 실행
-            if not self.replicate_client:
-                self.replicate_client = replicate.Client(api_token=os.environ.get('REPLICATE_API_TOKEN'))
-            
-            output = self.replicate_client.run(
-                "stability-ai/stable-diffusion-inpainting",
+            # Call Replicate API
+            output = replicate.run(
+                "andreasjansson/stable-diffusion-inpainting:8eb2da8345bee796efcd925573f077e36ed5fb4ea3ba240ef70c23cf33f0d848",
                 input={
-                    "image": f"data:image/png;base64,{img_base64}",
-                    "mask": f"data:image/png;base64,{mask_base64}",
-                    "prompt": "clean white background, professional product photography",
-                    "num_inference_steps": 30
+                    "image": f"data:image/png;base64,{img_str}",
+                    "mask": f"data:image/png;base64,{mask_str}",
+                    "prompt": "clean white background, product photography background",
+                    "negative_prompt": "black frame, black border, dark edges",
+                    "num_inference_steps": 25,
+                    "guidance_scale": 7.5
                 }
             )
             
+            # Process result
             if output and len(output) > 0:
                 response = requests.get(output[0])
                 return Image.open(io.BytesIO(response.content))
             
         except Exception as e:
-            print(f"[{VERSION}] Replicate failed: {e}")
+            print(f"[{VERSION}] Replicate API error: {e}")
         
-        # Fallback: 단순 크롭
-        if frame_info['bounds']:
-            x1, y1, x2, y2 = frame_info['bounds']
-            return image.crop((x1, y1, x2, y2))
+        # Fallback to local removal
+        return self._remove_frame_local(image, detection_result)
+    
+    def _create_mask_from_detection(self, image, detection_result):
+        """검출 결과를 바탕으로 마스크 생성"""
+        w, h = image.size
+        mask = Image.new('L', (w, h), 0)
         
-        return image
+        if 'edges' in detection_result:
+            edges = detection_result['edges']
+            # Draw white rectangles for frame areas
+            from PIL import ImageDraw
+            draw = ImageDraw.Draw(mask)
+            
+            # Top
+            if edges['top'] > 0:
+                draw.rectangle([0, 0, w, edges['top']], fill=255)
+            # Bottom
+            if edges['bottom'] > 0:
+                draw.rectangle([0, h - edges['bottom'], w, h], fill=255)
+            # Left
+            if edges['left'] > 0:
+                draw.rectangle([0, 0, edges['left'], h], fill=255)
+            # Right
+            if edges['right'] > 0:
+                draw.rectangle([w - edges['right'], 0, w, h], fill=255)
+        else:
+            # Use thickness for uniform frame
+            t = detection_result['thickness']
+            from PIL import ImageDraw
+            draw = ImageDraw.Draw(mask)
+            draw.rectangle([0, 0, w, t], fill=255)  # Top
+            draw.rectangle([0, h-t, w, h], fill=255)  # Bottom
+            draw.rectangle([0, 0, t, h], fill=255)  # Left
+            draw.rectangle([w-t, 0, w, h], fill=255)  # Right
+        
+        return mask
+    
+    def _remove_frame_local(self, image, detection_result):
+        """로컬 방식으로 프레임 제거"""
+        img_np = np.array(image)
+        
+        if 'edges' in detection_result:
+            edges = detection_result['edges']
+            # Crop out the frame
+            img_np = img_np[
+                edges['top']:img_np.shape[0]-edges['bottom'],
+                edges['left']:img_np.shape[1]-edges['right']
+            ]
+        else:
+            # Use uniform thickness
+            t = detection_result['thickness']
+            img_np = img_np[t:-t, t:-t]
+        
+        return Image.fromarray(img_np)
     
     def apply_simple_enhancement(self, image):
-        """Enhancement와 동일한 간단한 색감 보정"""
+        """색감 보정 - v16과 동일"""
         # 1. 밝기
         enhancer = ImageEnhance.Brightness(image)
         image = enhancer.enhance(1.1)
@@ -241,175 +480,90 @@ class ThumbnailProcessorV16:
         thumb_np = np.array(thumb_img)
         kernel = np.array([[-1,-1,-1],
                           [-1, 9,-1],
-                          [-1,-1,-1]]) / 10
+                          [-1,-1,-1]]) / 9.0
+        
         sharpened = cv2.filter2D(thumb_np, -1, kernel)
         
-        # 원본과 블렌딩
+        # 원본과 블렌딩 (너무 과하지 않게)
         result = cv2.addWeighted(thumb_np, 0.7, sharpened, 0.3, 0)
         
-        print(f"[{VERSION}] Created {target_w}x{target_h} thumbnail with detail enhancement")
-        
-        return Image.fromarray(result.astype(np.uint8))
+        return Image.fromarray(result)
 
-# 전역 인스턴스
-processor_instance = None
-
-def get_processor():
-    global processor_instance
-    if processor_instance is None:
-        processor_instance = ThumbnailProcessorV16()
-    return processor_instance
-
-def find_base64_in_dict(data, depth=0, max_depth=10):
-    """중첩된 딕셔너리에서 base64 이미지 찾기"""
-    if depth > max_depth:
-        return None
-    
-    if isinstance(data, str) and len(data) > 100:
-        return data
-    
-    if isinstance(data, dict):
-        for key in ['image', 'base64', 'data', 'input', 'file']:
-            if key in data and isinstance(data[key], str) and len(data[key]) > 100:
-                return data[key]
-        
-        for value in data.values():
-            result = find_base64_in_dict(value, depth + 1, max_depth)
-            if result:
-                return result
-    
-    elif isinstance(data, list):
-        for item in data:
-            result = find_base64_in_dict(item, depth + 1, max_depth)
-            if result:
-                return result
-    
-    return None
-
-def decode_base64_image(base64_str):
-    """Base64 문자열을 PIL Image로 디코드"""
-    try:
-        if ',' in base64_str:
-            base64_str = base64_str.split(',')[1]
-        
-        base64_str = base64_str.strip()
-        
-        padding = 4 - len(base64_str) % 4
-        if padding != 4:
-            base64_str += '=' * padding
-        
-        img_data = base64.b64decode(base64_str)
-        img = Image.open(io.BytesIO(img_data))
-        
-        if img.mode != 'RGB':
-            img = img.convert('RGB')
-        
-        return img
-        
-    except Exception as e:
-        print(f"[{VERSION}] Error decoding base64: {e}")
-        raise
-
-def encode_image_to_base64(image, format='PNG'):
-    """이미지를 base64로 인코딩"""
-    try:
-        if isinstance(image, np.ndarray):
-            image = Image.fromarray(image)
-        
-        buffer = io.BytesIO()
-        image.save(buffer, format=format, quality=95 if format == 'JPEG' else None)
-        buffer.seek(0)
-        
-        # Google Script 호환을 위해 padding 유지
-        base64_str = base64.b64encode(buffer.getvalue()).decode('utf-8')
-        
-        return base64_str
-        
-    except Exception as e:
-        print(f"[{VERSION}] Error encoding image: {e}")
-        raise
 
 def handler(job):
-    """RunPod 썸네일 핸들러"""
+    """RunPod handler function - Thumbnail processing"""
+    print(f"[{VERSION}] Handler started")
+    job_input = job['input']
+    
     try:
-        start_time = time.time()
-        job_input = job["input"]
+        # Get image data
+        if 'image' not in job_input:
+            raise ValueError("No 'image' field in input")
         
-        print(f"[{VERSION}] Thumbnail processing started")
+        image_data = job_input['image']
         
-        # Base64 이미지 찾기
-        base64_image = find_base64_in_dict(job_input)
-        if not base64_image:
-            return {
-                "output": {
-                    "error": "No image data found",
-                    "version": VERSION,
-                    "success": False
-                }
-            }
+        # Decode base64 image
+        if image_data.startswith('data:'):
+            image_data = image_data.split(',')[1]
         
-        # 이미지 디코드
-        image = decode_base64_image(base64_image)
-        print(f"[{VERSION}] Image decoded: {image.size}")
+        image_bytes = base64.b64decode(image_data)
+        image = Image.open(io.BytesIO(image_bytes))
         
-        # numpy 변환
-        image_np = np.array(image)
+        if image.mode != 'RGB':
+            image = image.convert('RGB')
         
-        # 1. 검은색 프레임 감지
-        processor = get_processor()
-        frame_info = processor.detect_black_frame_precise(image_np)
+        print(f"[{VERSION}] Image loaded: {image.size}")
         
-        # 2. 프레임 제거
-        if frame_info['has_frame']:
-            print(f"[{VERSION}] Removing black frame (thickness: {frame_info['thickness']}px)")
-            image = processor.remove_black_frame_replicate(image, frame_info)
+        # Create processor instance
+        processor = ThumbnailProcessorV18()
         
-        # 3. 색감 보정 (Enhancement와 동일)
+        # 1. Detect black frame with multi-stage validation
+        detection_result = processor.detector.detect_black_frame_multi_stage(image)
+        
+        # 2. Remove black frame if detected
+        if detection_result['detected']:
+            image = processor.remove_black_frame_replicate(image, detection_result)
+            print(f"[{VERSION}] Black frame removed")
+        
+        # 3. Apply color enhancement
         image = processor.apply_simple_enhancement(image)
         
-        # 4. 썸네일 생성 + 디테일 보정
-        thumbnail = processor.create_thumbnail_with_detail(image, (1000, 1300))
+        # 4. Create thumbnail with detail enhancement
+        thumbnail = processor.create_thumbnail_with_detail(image)
         
-        # 결과 인코딩
-        thumbnail_base64 = encode_image_to_base64(thumbnail)
+        # Convert to base64
+        buffered = io.BytesIO()
+        thumbnail.save(buffered, format="JPEG", quality=95)
+        thumbnail_base64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
         
-        # 처리 시간
-        processing_time = time.time() - start_time
-        print(f"[{VERSION}] Processing completed in {processing_time:.2f}s")
+        # IMPORTANT: Remove padding for Make.com
+        thumbnail_base64 = thumbnail_base64.rstrip('=')
         
-        # Return 구조
+        # Return with proper structure for Make.com
         return {
             "output": {
-                "thumbnail": thumbnail_base64,
-                "has_black_frame": frame_info['has_frame'],
-                "frame_thickness": frame_info['thickness'],
-                "success": True,
+                "thumbnail": f"data:image/jpeg;base64,{thumbnail_base64}",
+                "has_black_frame": detection_result.get('has_black_frame', False),
+                "frame_thickness": detection_result.get('thickness', 0),
+                "detection_confidence": detection_result.get('confidence', 0),
+                "detection_methods": detection_result.get('methods', []),
+                "status": "success",
                 "version": VERSION,
-                "processing_time": round(processing_time, 2),
-                "original_size": list(image.size),
-                "thumbnail_size": [1000, 1300]
+                "processing_time": time.time() - job.get('start_time', time.time())
             }
         }
         
     except Exception as e:
-        error_msg = f"Error: {str(e)}"
+        error_msg = f"Error in thumbnail processing: {str(e)}\n{traceback.format_exc()}"
         print(f"[{VERSION}] {error_msg}")
-        traceback.print_exc()
         
         return {
             "output": {
                 "error": error_msg,
-                "success": False,
+                "status": "error",
                 "version": VERSION
             }
         }
 
-# RunPod 시작
-if __name__ == "__main__":
-    print("="*70)
-    print(f"Wedding Ring Thumbnail {VERSION}")
-    print("Thumbnail Handler (b_파일)")
-    print(f"Replicate Available: {REPLICATE_AVAILABLE}")
-    print("="*70)
-    
-    runpod.serverless.start({"handler": handler})
+# RunPod serverless handler
+runpod.serverless.start({"handler": handler})
