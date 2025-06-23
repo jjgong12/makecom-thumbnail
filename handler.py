@@ -13,7 +13,7 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-VERSION = "v8"
+VERSION = "v9"
 
 # Import availability checks
 NUMPY_AVAILABLE = False
@@ -71,7 +71,7 @@ def convert_numpy_types(obj):
         return int(obj)
     elif NUMPY_AVAILABLE and isinstance(obj, (np.floating, np.float64, np.float32)):
         return float(obj)
-    elif NUMPY_AVAILABLE and isinstance(obj, (np.bool_, np.bool)):
+    elif NUMPY_AVAILABLE and isinstance(obj, np.bool_):
         return bool(obj)
     elif NUMPY_AVAILABLE and isinstance(obj, np.ndarray):
         return obj.tolist()
@@ -551,7 +551,7 @@ def handler(job):
     
     try:
         logger.info(f"\n{'='*60}")
-        logger.info(f"Thumbnail Handler {VERSION} - Complete Full Version")
+        logger.info(f"Thumbnail Handler {VERSION} - NumPy Compatibility Fix")
         logger.info(f"Features: Black frame removal, Metal detection, Wedding ring enhancement, 1000x1300 thumbnail")
         logger.info(f"Training: 38 data pairs (28 + 10), 4 metal types")
         logger.info(f"{'='*60}")
@@ -565,7 +565,7 @@ def handler(job):
             return {
                 "output": {
                     "status": "debug_success",
-                    "message": f"{VERSION} handler working - Complete full version",
+                    "message": f"{VERSION} handler working - NumPy compatibility fix applied",
                     "version": VERSION,
                     "features": [
                         "Black frame detection & removal",
@@ -574,6 +574,7 @@ def handler(job):
                         "38 training data pairs",
                         "1000x1300 thumbnail generation",
                         "JSON serialization safe",
+                        "NumPy 1.24+ compatibility",
                         "Make.com compatible"
                     ]
                 }
