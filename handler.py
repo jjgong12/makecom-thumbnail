@@ -1,7 +1,7 @@
 import runpod
 import base64
 import numpy as np
-from PIL import Image, ImageEnhance, ImageFilter
+from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 import cv2
 import io
 import os
@@ -9,138 +9,267 @@ import traceback
 import time
 
 # Version info
-VERSION = "v30-thumbnail"
+VERSION = "v31-thumbnail"
 
-class ThumbnailProcessorV30:
-    """v30 Thumbnail Processor - Perfect Crop & Detection"""
+# Import Replicate when available
+try:
+    import replicate
+    REPLICATE_AVAILABLE = True
+except ImportError:
+    REPLICATE_AVAILABLE = False
+    print(f"[{VERSION}] Replicate not available")
+
+try:
+    import requests
+    REQUESTS_AVAILABLE = True
+except ImportError:
+    REQUESTS_AVAILABLE = False
+
+class ThumbnailProcessorV31:
+    """v31 Thumbnail Processor - Ultimate Black Box Detection"""
     
     def __init__(self):
-        print(f"[{VERSION}] Initializing - Perfect Crop & Detection")
+        print(f"[{VERSION}] Initializing - Ultimate Black Box Detection")
+        self.replicate_client = None
     
-    def detect_black_rectangle_complete(self, image):
-        """Complete black rectangle detection - FIXED for actual black boxes"""
+    def detect_black_box_ultimate(self, image):
+        """Ultimate black box detection with multiple advanced methods"""
         try:
             img_np = np.array(image)
             h, w = img_np.shape[:2]
-            print(f"[{VERSION}] Black box detection - Processing {w}x{h} image")
+            print(f"[{VERSION}] Ultimate black box detection - Processing {w}x{h} image")
             
             # Convert to grayscale
             gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
             
-            # Method 1: Direct black box detection
-            # The black box is VERY black, so use low threshold
-            threshold = 30  # Very low for black detection
+            # Method 1: Ultra-sensitive black detection
+            print(f"[{VERSION}] Method 1: Ultra-sensitive black detection")
             
-            # Create binary image where black pixels are white
-            _, black_mask = cv2.threshold(gray, threshold, 255, cv2.THRESH_BINARY_INV)
+            # Very low threshold for black
+            black_threshold = 25
             
-            # Find contours of black areas
-            contours, _ = cv2.findContours(black_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            # Create mask of black pixels
+            black_mask = gray < black_threshold
             
-            if contours:
-                # Sort by area to find largest black region
-                sorted_contours = sorted(contours, key=cv2.contourArea, reverse=True)
-                
-                # Check each large black area
-                for contour in sorted_contours[:3]:
-                    x, y, cw, ch = cv2.boundingRect(contour)
-                    area = cw * ch
-                    
-                    # Check if it's a significant rectangle
-                    if area > (w * h * 0.1):  # At least 10% of image
-                        # Check if it's roughly square (black box)
-                        aspect_ratio = cw / ch
-                        if 0.7 < aspect_ratio < 1.3:
-                            print(f"[{VERSION}] BLACK BOX FOUND! Position: ({x},{y}), Size: {cw}x{ch}")
-                            
-                            # The content is INSIDE the black box
-                            # So we need to crop to the inside of this box
-                            margin = 30  # Remove black edges
-                            
-                            crop_x1 = x + margin
-                            crop_y1 = y + margin
-                            crop_x2 = x + cw - margin
-                            crop_y2 = y + ch - margin
-                            
-                            # Ensure valid crop
-                            if crop_x2 > crop_x1 and crop_y2 > crop_y1:
-                                cropped = img_np[crop_y1:crop_y2, crop_x1:crop_x2]
-                                print(f"[{VERSION}] Cropped to inside of black box: ({crop_x1},{crop_y1}) to ({crop_x2},{crop_y2})")
-                                return Image.fromarray(cropped), True
+            # Find largest black rectangle
+            # Sum black pixels in each row and column
+            row_sums = np.sum(black_mask, axis=1)
+            col_sums = np.sum(black_mask, axis=0)
             
-            # Method 2: Find white content area inside black frame
-            print(f"[{VERSION}] Trying to find white content area...")
-            
-            # Use higher threshold to find bright content
-            _, bright_mask = cv2.threshold(gray, 100, 255, cv2.THRESH_BINARY)
-            
-            # Clean up the mask
-            kernel = np.ones((5, 5), np.uint8)
-            bright_mask = cv2.morphologyEx(bright_mask, cv2.MORPH_CLOSE, kernel)
-            
-            # Find contours of bright areas
-            contours, _ = cv2.findContours(bright_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            
-            if contours:
-                # Find the largest bright area
-                largest_bright = max(contours, key=cv2.contourArea)
-                x, y, cw, ch = cv2.boundingRect(largest_bright)
-                
-                # Add small margin
-                margin = 10
-                x = max(0, x - margin)
-                y = max(0, y - margin)
-                cw = min(w - x, cw + 2 * margin)
-                ch = min(h - y, ch + 2 * margin)
-                
-                # Check if this is significantly smaller than the whole image
-                if cw < w * 0.9 and ch < h * 0.9:
-                    print(f"[{VERSION}] Found content area: ({x},{y}) size {cw}x{ch}")
-                    cropped = img_np[y:y+ch, x:x+cw]
-                    return Image.fromarray(cropped), True
-            
-            # Method 3: Scan from center outward to find black box edges
-            print(f"[{VERSION}] Scanning from center outward...")
-            
-            center_x, center_y = w // 2, h // 2
-            
-            # Find black box boundaries from center
-            # Top boundary
+            # Find continuous black regions
+            # Top edge
             top = 0
-            for y in range(center_y, 0, -1):
-                if np.mean(gray[y, center_x-50:center_x+50]) < 40:
-                    top = y + 20
-                    break
+            for i in range(h//2):
+                if row_sums[i] > w * 0.7:  # 70% of row is black
+                    top = i
+                else:
+                    if i > 10:
+                        top = i
+                        break
             
-            # Bottom boundary
+            # Bottom edge
             bottom = h
-            for y in range(center_y, h):
-                if np.mean(gray[y, center_x-50:center_x+50]) < 40:
-                    bottom = y - 20
-                    break
+            for i in range(h//2):
+                if row_sums[h-1-i] > w * 0.7:
+                    bottom = h - i
+                else:
+                    if i > 10:
+                        bottom = h - i
+                        break
             
-            # Left boundary
+            # Left edge
             left = 0
-            for x in range(center_x, 0, -1):
-                if np.mean(gray[center_y-50:center_y+50, x]) < 40:
-                    left = x + 20
-                    break
+            for i in range(w//2):
+                if col_sums[i] > h * 0.7:
+                    left = i
+                else:
+                    if i > 10:
+                        left = i
+                        break
             
-            # Right boundary
+            # Right edge
             right = w
-            for x in range(center_x, w):
-                if np.mean(gray[center_y-50:center_y+50, x]) < 40:
-                    right = x - 20
-                    break
+            for i in range(w//2):
+                if col_sums[w-1-i] > h * 0.7:
+                    right = w - i
+                else:
+                    if i > 10:
+                        right = w - i
+                        break
             
-            # Check if we found a black frame
-            if top > 0 or bottom < h or left > 0 or right < w:
-                print(f"[{VERSION}] Black frame boundaries: T:{top}, B:{bottom}, L:{left}, R:{right}")
-                if right > left and bottom > top:
-                    cropped = img_np[top:bottom, left:right]
+            print(f"[{VERSION}] Initial detection - T:{top}, B:{bottom}, L:{left}, R:{right}")
+            
+            # Check if we found a significant black frame
+            if (top > 20 or (h - bottom) > 20 or left > 20 or (w - right) > 20):
+                print(f"[{VERSION}] Black frame detected by edge analysis!")
+                
+                # Add margin to remove all black
+                margin = 30
+                crop_box = (
+                    left + margin,
+                    top + margin,
+                    right - margin,
+                    bottom - margin
+                )
+                
+                if crop_box[2] > crop_box[0] and crop_box[3] > crop_box[1]:
+                    cropped = img_np[crop_box[1]:crop_box[3], crop_box[0]:crop_box[2]]
                     return Image.fromarray(cropped), True
             
-            print(f"[{VERSION}] No black rectangle frame detected")
+            # Method 2: Find black rectangles using contours
+            print(f"[{VERSION}] Method 2: Contour-based black rectangle detection")
+            
+            # Multiple thresholds
+            for thresh in [20, 30, 40, 50]:
+                _, binary = cv2.threshold(gray, thresh, 255, cv2.THRESH_BINARY_INV)
+                
+                # Clean up
+                kernel = np.ones((10, 10), np.uint8)
+                binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
+                
+                # Find contours
+                contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                
+                if contours:
+                    # Sort by area
+                    sorted_contours = sorted(contours, key=cv2.contourArea, reverse=True)
+                    
+                    for contour in sorted_contours[:3]:
+                        x, y, cw, ch = cv2.boundingRect(contour)
+                        area = cw * ch
+                        
+                        # Check if it's a significant black area
+                        if area > (w * h * 0.05):  # At least 5% of image
+                            # Check if it's rectangular
+                            rect_area = cv2.minAreaRect(contour)
+                            box = cv2.boxPoints(rect_area)
+                            box = np.int0(box)
+                            
+                            # Calculate rectangularity
+                            contour_area = cv2.contourArea(contour)
+                            rect_area_calc = cw * ch
+                            rectangularity = contour_area / rect_area_calc if rect_area_calc > 0 else 0
+                            
+                            if rectangularity > 0.8:  # It's quite rectangular
+                                print(f"[{VERSION}] Black rectangle found at ({x},{y}) size {cw}x{ch}")
+                                
+                                # Check if content is inside (brighter center)
+                                center_region = gray[y+ch//4:y+3*ch//4, x+cw//4:x+3*cw//4]
+                                
+                                if center_region.size > 0 and np.mean(center_region) > thresh + 20:
+                                    # Content is inside the black box
+                                    margin = 30
+                                    crop_x1 = x + margin
+                                    crop_y1 = y + margin
+                                    crop_x2 = x + cw - margin
+                                    crop_y2 = y + ch - margin
+                                    
+                                    if crop_x2 > crop_x1 and crop_y2 > crop_y1:
+                                        cropped = img_np[crop_y1:crop_y2, crop_x1:crop_x2]
+                                        return Image.fromarray(cropped), True
+            
+            # Method 3: Advanced scanning from all directions
+            print(f"[{VERSION}] Method 3: Advanced directional scanning")
+            
+            # Scan multiple lines from each edge
+            scan_lines = 10
+            black_threshold = 30
+            
+            # Top scan
+            top_values = []
+            for line in range(scan_lines):
+                x_pos = w // (scan_lines + 1) * (line + 1)
+                for y in range(h//2):
+                    if gray[y, x_pos] > black_threshold:
+                        top_values.append(y)
+                        break
+            
+            # Bottom scan
+            bottom_values = []
+            for line in range(scan_lines):
+                x_pos = w // (scan_lines + 1) * (line + 1)
+                for y in range(h//2):
+                    if gray[h-1-y, x_pos] > black_threshold:
+                        bottom_values.append(h - y)
+                        break
+            
+            # Left scan
+            left_values = []
+            for line in range(scan_lines):
+                y_pos = h // (scan_lines + 1) * (line + 1)
+                for x in range(w//2):
+                    if gray[y_pos, x] > black_threshold:
+                        left_values.append(x)
+                        break
+            
+            # Right scan
+            right_values = []
+            for line in range(scan_lines):
+                y_pos = h // (scan_lines + 1) * (line + 1)
+                for x in range(w//2):
+                    if gray[y_pos, w-1-x] > black_threshold:
+                        right_values.append(w - x)
+                        break
+            
+            if top_values and bottom_values and left_values and right_values:
+                # Use median values for robustness
+                top = int(np.median(top_values))
+                bottom = int(np.median(bottom_values))
+                left = int(np.median(left_values))
+                right = int(np.median(right_values))
+                
+                print(f"[{VERSION}] Multi-line scan - T:{top}, B:{bottom}, L:{left}, R:{right}")
+                
+                if (top > 20 or (h - bottom) > 20 or left > 20 or (w - right) > 20):
+                    margin = 20
+                    crop_box = (
+                        left + margin,
+                        top + margin,
+                        right - margin,
+                        bottom - margin
+                    )
+                    
+                    if crop_box[2] > crop_box[0] and crop_box[3] > crop_box[1]:
+                        cropped = img_np[crop_box[1]:crop_box[3], crop_box[0]:crop_box[2]]
+                        return Image.fromarray(cropped), True
+            
+            # Method 4: Histogram-based detection
+            print(f"[{VERSION}] Method 4: Histogram analysis")
+            
+            # Analyze color distribution
+            hist = cv2.calcHist([gray], [0], None, [256], [0, 256])
+            
+            # Check for bimodal distribution (black frame + content)
+            black_peak = np.sum(hist[:30])  # Very dark pixels
+            total_pixels = h * w
+            black_ratio = black_peak / total_pixels
+            
+            print(f"[{VERSION}] Black pixel ratio: {black_ratio:.2f}")
+            
+            if black_ratio > 0.1:  # More than 10% black pixels
+                # Use Otsu's method to find optimal threshold
+                _, otsu_binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+                
+                # Find the content area (white in binary)
+                contours, _ = cv2.findContours(otsu_binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                
+                if contours:
+                    largest = max(contours, key=cv2.contourArea)
+                    x, y, cw, ch = cv2.boundingRect(largest)
+                    
+                    # Add small margin
+                    margin = 20
+                    x = max(0, x - margin)
+                    y = max(0, y - margin)
+                    cw = min(w - x, cw + 2 * margin)
+                    ch = min(h - y, ch + 2 * margin)
+                    
+                    if cw < w * 0.9 and ch < h * 0.9:  # Content is smaller than image
+                        print(f"[{VERSION}] Content area found by Otsu: ({x},{y}) size {cw}x{ch}")
+                        cropped = img_np[y:y+ch, x:x+cw]
+                        return Image.fromarray(cropped), True
+            
+            print(f"[{VERSION}] No black box detected by any method")
             return image, False
             
         except Exception as e:
@@ -148,66 +277,90 @@ class ThumbnailProcessorV30:
             traceback.print_exc()
             return image, False
     
-    def apply_enhancement_matching_v30(self, image):
-        """Enhancement matching v30 enhancement handler"""
+    def remove_black_frame_replicate(self, image, had_frame):
+        """Use Replicate API for inpainting if needed"""
+        if not had_frame or not REPLICATE_AVAILABLE:
+            return image
+        
         try:
-            # Match v30 enhancement settings - prioritize sharpness
+            print(f"[{VERSION}] Using Replicate for additional cleanup")
+            
+            # Initialize client
+            if not self.replicate_client:
+                api_token = os.environ.get('REPLICATE_API_TOKEN')
+                if api_token:
+                    self.replicate_client = replicate.Client(api_token=api_token)
+                else:
+                    print(f"[{VERSION}] No REPLICATE_API_TOKEN found")
+                    return image
+            
+            # Convert to base64
+            buffer = io.BytesIO()
+            image.save(buffer, format='PNG')
+            buffer.seek(0)
+            img_base64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
+            
+            # Run inpainting to clean any remaining artifacts
+            output = self.replicate_client.run(
+                "stability-ai/stable-diffusion-inpainting",
+                input={
+                    "image": f"data:image/png;base64,{img_base64}",
+                    "prompt": "clean white background, professional product photography",
+                    "negative_prompt": "black edges, dark corners, shadows",
+                    "num_inference_steps": 20
+                }
+            )
+            
+            if output and len(output) > 0:
+                response = requests.get(output[0])
+                return Image.open(io.BytesIO(response.content))
+                
+        except Exception as e:
+            print(f"[{VERSION}] Replicate error: {e}")
+        
+        return image
+    
+    def apply_enhancement_matching_v31(self, image):
+        """Enhancement matching v31 enhancement handler"""
+        try:
+            # Simple enhancement like v31 enhancement
             # 1. Pre-sharpening
-            image = image.filter(ImageFilter.UnsharpMask(radius=2, percent=100, threshold=1))
+            image = image.filter(ImageFilter.UnsharpMask(radius=1.5, percent=80, threshold=2))
             
             # 2. Brightness
             enhancer = ImageEnhance.Brightness(image)
-            image = enhancer.enhance(1.15)  # Match v30
+            image = enhancer.enhance(1.18)
             
             # 3. Contrast
             enhancer = ImageEnhance.Contrast(image)
-            image = enhancer.enhance(1.22)  # Match v30
+            image = enhancer.enhance(1.15)
             
             # 4. Saturation
             enhancer = ImageEnhance.Color(image)
-            image = enhancer.enhance(0.94)  # Match v30
+            image = enhancer.enhance(0.95)
             
-            # 5. Convert to numpy for advanced processing
+            # 5. Simple white background
             img_np = np.array(image)
             h, w = img_np.shape[:2]
             
-            # 6. Apply CLAHE with v30 settings
-            img_lab = cv2.cvtColor(img_np, cv2.COLOR_RGB2LAB)
-            l_channel, a_channel, b_channel = cv2.split(img_lab)
-            
-            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
-            l_channel = clahe.apply(l_channel)
-            l_channel = cv2.add(l_channel, 8)
-            l_channel = np.clip(l_channel, 0, 255)
-            
-            img_lab = cv2.merge([l_channel, a_channel, b_channel])
-            img_np = cv2.cvtColor(img_lab, cv2.COLOR_LAB2RGB)
-            
-            # 7. Clean white background
-            background_color = (251, 250, 249)
+            white_color = (250, 250, 250)
             
             # Edge detection
-            edges = cv2.Canny(cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY), 50, 150)
-            edges_dilated = cv2.dilate(edges, np.ones((5,5), np.uint8), iterations=3)
+            gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
+            edges = cv2.Canny(gray, 50, 150)
+            edges_dilated = cv2.dilate(edges, np.ones((5,5), np.uint8), iterations=2)
             
             mask = np.ones((h, w), dtype=np.float32)
             mask[edges_dilated > 0] = 0
-            mask = cv2.GaussianBlur(mask, (31, 31), 15)
+            mask = cv2.GaussianBlur(mask, (51, 51), 25)
             
             for i in range(3):
-                img_np[:, :, i] = img_np[:, :, i] * (1 - mask * 0.12) + background_color[i] * mask * 0.12
+                img_np[:, :, i] = img_np[:, :, i] * (1 - mask * 0.15) + white_color[i] * mask * 0.15
             
-            # 8. Gamma correction
-            gamma = 0.92
+            # Gamma correction
+            gamma = 0.9
             img_np = np.power(img_np / 255.0, gamma) * 255
             img_np = np.clip(img_np, 0, 255).astype(np.uint8)
-            
-            # 9. Detail enhancement
-            img_float = img_np.astype(np.float32)
-            blurred = cv2.GaussianBlur(img_float, (0, 0), 3)
-            detail = img_float - blurred
-            img_float = img_float + detail * 0.5
-            img_np = np.clip(img_float, 0, 255).astype(np.uint8)
             
             return Image.fromarray(img_np)
             
@@ -215,77 +368,60 @@ class ThumbnailProcessorV30:
             print(f"[{VERSION}] Error in enhancement: {e}")
             return image
     
-    def create_super_tight_thumbnail_1000x1300(self, image):
-        """Create super tight 1000x1300 thumbnail like image 5"""
+    def create_perfect_thumbnail_1000x1300(self, image):
+        """Create perfect 1000x1300 thumbnail with ring focus"""
         try:
             target_size = (1000, 1300)
             
-            # Find wedding ring area with multiple methods
+            # Find wedding ring area
             img_np = np.array(image)
             gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
             
-            print(f"[{VERSION}] Finding rings for super tight crop...")
+            print(f"[{VERSION}] Finding rings for perfect thumbnail...")
             
-            # Method 1: Find metallic/bright areas (rings are usually bright)
-            # Use adaptive threshold for better ring detection
-            bright_thresh = cv2.adaptiveThreshold(gray, 255, 
-                                                cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-                                                cv2.THRESH_BINARY, 21, -2)
+            # Method 1: Find bright/metallic areas (rings)
+            # Apply CLAHE for better contrast
+            clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
+            enhanced_gray = clahe.apply(gray)
             
-            # Method 2: Edge detection with lower threshold for ring details
-            edges = cv2.Canny(gray, 30, 90)
+            # Find bright regions
+            _, bright_mask = cv2.threshold(enhanced_gray, 150, 255, cv2.THRESH_BINARY)
             
-            # Method 3: Find circular/elliptical shapes (rings)
-            # Apply Hough Circle detection
-            circles = cv2.HoughCircles(gray, cv2.HOUGH_GRADIENT, 1, 50,
-                                     param1=50, param2=30, minRadius=20, maxRadius=200)
+            # Find edges
+            edges = cv2.Canny(enhanced_gray, 30, 100)
             
-            # Combine all methods
-            combined = cv2.bitwise_or(bright_thresh, edges)
+            # Combine
+            combined = cv2.bitwise_or(bright_mask, edges)
             
-            # If circles found, add them to combined mask
-            if circles is not None:
-                circles = np.uint16(np.around(circles))
-                circle_mask = np.zeros_like(gray)
-                for circle in circles[0, :]:
-                    cv2.circle(circle_mask, (circle[0], circle[1]), circle[2], 255, -1)
-                combined = cv2.bitwise_or(combined, circle_mask)
-            
-            # Clean up with morphology
-            kernel = np.ones((3, 3), np.uint8)
+            # Clean up
+            kernel = np.ones((5, 5), np.uint8)
             combined = cv2.morphologyEx(combined, cv2.MORPH_CLOSE, kernel)
-            combined = cv2.dilate(combined, kernel, iterations=2)
+            combined = cv2.dilate(combined, kernel, iterations=1)
             
-            # Find all contours
+            # Find contours
             contours, _ = cv2.findContours(combined, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             
             ring_box = None
             if contours:
-                # Filter contours by properties
+                # Filter for ring-like shapes
                 valid_contours = []
                 for contour in contours:
                     area = cv2.contourArea(contour)
-                    if area > 300:  # Minimum area
-                        # Check shape characteristics
+                    if area > 500:  # Minimum area
+                        # Check circularity
                         perimeter = cv2.arcLength(contour, True)
                         if perimeter > 0:
                             circularity = 4 * np.pi * area / (perimeter * perimeter)
-                            
-                            # Also check aspect ratio
-                            x, y, w, h = cv2.boundingRect(contour)
-                            aspect_ratio = w / h if h > 0 else 0
-                            
-                            # Rings are somewhat circular and have reasonable aspect ratio
-                            if circularity > 0.2 or (0.5 < aspect_ratio < 2.0):
+                            if circularity > 0.3:  # Reasonably circular
                                 valid_contours.append(contour)
                 
                 if valid_contours:
-                    # Get tight bounding box of all rings
+                    # Get bounding box of all rings
                     all_points = np.concatenate(valid_contours)
                     x, y, w_box, h_box = cv2.boundingRect(all_points)
                     
-                    # SUPER TIGHT padding - only 2% like image 5
-                    padding_percent = 0.02  # Reduced from 8% to 2%
+                    # Minimal padding for maximum size
+                    padding_percent = 0.03  # Only 3% padding
                     padding_x = int(w_box * padding_percent)
                     padding_y = int(h_box * padding_percent)
                     
@@ -297,14 +433,13 @@ class ThumbnailProcessorV30:
                     ring_box = (x, y, w_box, h_box)
                     print(f"[{VERSION}] Rings found at ({x},{y}) size {w_box}x{h_box}")
             
-            # If no rings found by contours, try center crop
+            # If no rings found, use center area
             if ring_box is None:
                 print(f"[{VERSION}] Using center crop fallback")
                 h, w = image.size[1], image.size[0]
-                
-                # Assume rings are in center 40% (tighter than before)
-                margin_x = int(w * 0.3)  # 30% margin each side
-                margin_y = int(h * 0.3)
+                margin_percent = 0.2  # 20% margin
+                margin_x = int(w * margin_percent)
+                margin_y = int(h * margin_percent)
                 ring_box = (margin_x, margin_y, w - 2 * margin_x, h - 2 * margin_y)
             
             # Crop to ring area
@@ -313,73 +448,58 @@ class ThumbnailProcessorV30:
             
             print(f"[{VERSION}] Cropped to ring area: {cropped.size}")
             
-            # Calculate scale to FILL 1000x1300 completely
+            # Calculate scale to FILL entire thumbnail
             cropped_w, cropped_h = cropped.size
-            
-            # We want to fill the entire frame, so use max scale
             scale_w = target_size[0] / cropped_w
             scale_h = target_size[1] / cropped_h
-            scale = max(scale_w, scale_h)  # This ensures we fill the frame
-            
-            # Apply scale with some extra to ensure no borders
-            scale *= 1.05  # 5% extra to ensure full coverage
+            scale = max(scale_w, scale_h) * 1.1  # 10% extra to ensure full coverage
             
             new_w = int(cropped_w * scale)
             new_h = int(cropped_h * scale)
             
-            print(f"[{VERSION}] Scaling from {cropped.size} to ({new_w},{new_h})")
-            
             # High quality resize
             resized = cropped.resize((new_w, new_h), Image.Resampling.LANCZOS)
             
-            # Center crop to exact 1000x1300
-            if new_w > target_size[0] or new_h > target_size[1]:
-                # Center crop
-                left = (new_w - target_size[0]) // 2
-                top = (new_h - target_size[1]) // 2
-                final = resized.crop((left, top, left + target_size[0], top + target_size[1]))
-            else:
-                # This shouldn't happen with our scale calculation, but just in case
-                final = Image.new('RGB', target_size, (251, 250, 249))
-                paste_x = (target_size[0] - new_w) // 2
-                paste_y = (target_size[1] - new_h) // 2
-                final.paste(resized, (paste_x, paste_y))
+            # Center crop to exact size
+            left = (new_w - target_size[0]) // 2
+            top = (new_h - target_size[1]) // 2
+            final = resized.crop((left, top, left + target_size[0], top + target_size[1]))
             
-            # Strong detail enhancement for crisp look
+            # Strong detail enhancement
             # Multiple sharpening passes
             enhancer = ImageEnhance.Sharpness(final)
-            final = enhancer.enhance(1.5)
+            final = enhancer.enhance(1.6)
             
             # Additional detail enhancement
             final_np = np.array(final)
             
             # Unsharp mask
             gaussian = cv2.GaussianBlur(final_np, (0, 0), 2.0)
-            unsharp = cv2.addWeighted(final_np, 1.6, gaussian, -0.6, 0)
+            unsharp = cv2.addWeighted(final_np, 1.5, gaussian, -0.5, 0)
             
-            # Local contrast enhancement
+            # Edge enhancement
             kernel = np.array([[-1,-1,-1],
                               [-1, 9,-1],
-                              [-1,-1,-1]]) / 8.0
+                              [-1,-1,-1]]) / 9.0
             
             enhanced = cv2.filter2D(unsharp, -1, kernel)
             final_np = cv2.addWeighted(unsharp, 0.7, enhanced, 0.3, 0)
             
-            # Ensure no over-sharpening
+            # Ensure no artifacts
             final_np = np.clip(final_np, 0, 255).astype(np.uint8)
             
-            print(f"[{VERSION}] Created super tight 1000x1300 thumbnail")
+            print(f"[{VERSION}] Created perfect 1000x1300 thumbnail")
             return Image.fromarray(final_np)
             
         except Exception as e:
             print(f"[{VERSION}] Error creating thumbnail: {e}")
-            # Fallback to simple resize
+            traceback.print_exc()
             return image.resize((1000, 1300), Image.Resampling.LANCZOS)
 
 def handler(job):
-    """RunPod handler - V30 with perfect detection and super tight crop"""
+    """RunPod handler - V31 with ultimate black box detection"""
     print(f"[{VERSION}] ====== Thumbnail Handler Started ======")
-    print(f"[{VERSION}] Perfect Detection & Super Tight Crop")
+    print(f"[{VERSION}] Ultimate Black Box Detection & Perfect Thumbnail")
     
     start_time = time.time()
     
@@ -418,6 +538,7 @@ def handler(job):
             print(f"[{VERSION}] Input was direct base64 string")
         
         if not base64_image:
+            print(f"[{VERSION}] ERROR: No base64 image found!")
             return {
                 "output": {
                     "thumbnail": None,
@@ -458,6 +579,7 @@ def handler(job):
             
             print(f"[{VERSION}] Image decoded: {image.size}, mode: {image.mode}")
         except Exception as e:
+            print(f"[{VERSION}] DECODE ERROR: {e}")
             return {
                 "output": {
                     "thumbnail": None,
@@ -468,32 +590,40 @@ def handler(job):
             }
         
         # Create processor
-        processor = ThumbnailProcessorV30()
+        processor = ThumbnailProcessorV31()
         
         # Process image step by step
         had_black_frame = False
         
-        # 1. COMPLETE black rectangle detection (including bottom)
+        # 1. ULTIMATE black box detection
         try:
-            image, had_black_frame = processor.detect_black_rectangle_complete(image)
-            print(f"[{VERSION}] Black rectangle detection complete: {had_black_frame}")
+            image, had_black_frame = processor.detect_black_box_ultimate(image)
+            print(f"[{VERSION}] Black box detection complete: {had_black_frame}")
+            
+            # Additional cleanup with Replicate if available
+            if had_black_frame and REPLICATE_AVAILABLE:
+                image = processor.remove_black_frame_replicate(image, had_black_frame)
+                print(f"[{VERSION}] Additional cleanup with Replicate done")
+                
         except Exception as e:
             print(f"[{VERSION}] Error in black frame detection: {e}")
+            traceback.print_exc()
         
-        # 2. Apply color enhancement matching v30
+        # 2. Apply color enhancement matching v31
         try:
-            image = processor.apply_enhancement_matching_v30(image)
-            print(f"[{VERSION}] Color enhancement applied (v30 style)")
+            image = processor.apply_enhancement_matching_v31(image)
+            print(f"[{VERSION}] Color enhancement applied (v31 style)")
         except Exception as e:
             print(f"[{VERSION}] Error in color enhancement: {e}")
+            traceback.print_exc()
         
-        # 3. Create SUPER TIGHT 1000x1300 thumbnail
+        # 3. Create PERFECT 1000x1300 thumbnail
         try:
-            thumbnail = processor.create_super_tight_thumbnail_1000x1300(image)
-            print(f"[{VERSION}] Super tight thumbnail created: {thumbnail.size}")
+            thumbnail = processor.create_perfect_thumbnail_1000x1300(image)
+            print(f"[{VERSION}] Perfect thumbnail created: {thumbnail.size}")
         except Exception as e:
             print(f"[{VERSION}] Error creating thumbnail: {e}")
-            # Fallback to simple resize
+            traceback.print_exc()
             thumbnail = image.resize((1000, 1300), Image.Resampling.LANCZOS)
         
         # Convert to base64
@@ -509,6 +639,7 @@ def handler(job):
             
             print(f"[{VERSION}] Thumbnail base64 length: {len(thumbnail_base64)}")
         except Exception as e:
+            print(f"[{VERSION}] ENCODE ERROR: {e}")
             return {
                 "output": {
                     "thumbnail": None,
@@ -529,14 +660,17 @@ def handler(job):
                 "success": True,
                 "version": VERSION,
                 "thumbnail_size": [1000, 1300],
-                "processing_method": "complete_detection_super_tight_v30",
+                "processing_method": "ultimate_detection_v31",
                 "processing_time": round(processing_time, 2),
+                "replicate_available": REPLICATE_AVAILABLE,
                 "warning": "Google Script must add padding: while (base64Data.length % 4 !== 0) { base64Data += '='; }"
             }
         }
         
-        print(f"[{VERSION}] ====== Success - Returning Super Tight Thumbnail ======")
+        print(f"[{VERSION}] ====== Success - Returning Perfect Thumbnail ======")
         print(f"[{VERSION}] Total processing time: {processing_time:.2f}s")
+        print(f"[{VERSION}] Black frame detected and removed: {had_black_frame}")
+        
         return result
         
     except Exception as e:
@@ -558,14 +692,16 @@ def handler(job):
 if __name__ == "__main__":
     print("="*70)
     print(f"Wedding Ring Thumbnail {VERSION}")
-    print("V30 - Complete Detection & Super Tight Crop")
+    print("V31 - Ultimate Black Box Detection & Perfect Thumbnail")
     print("Features:")
-    print("- Complete edge scanning (especially bottom)")
-    print("- Content area detection")
-    print("- Morphological operations fallback")
-    print("- Super tight crop (2% padding)")
-    print("- Multiple ring detection methods")
+    print("- Ultra-sensitive black detection (threshold: 25)")
+    print("- Multi-line edge scanning")
+    print("- Contour-based rectangle detection")
+    print("- Histogram analysis")
+    print("- Replicate API cleanup")
+    print("- Super tight crop (3% padding)")
     print("- Strong detail enhancement")
+    print(f"Replicate Available: {REPLICATE_AVAILABLE}")
     print("CRITICAL: Padding is removed for Make.com")
     print("Google Apps Script MUST add padding back:")
     print("while (base64Data.length % 4 !== 0) { base64Data += '='; }")
