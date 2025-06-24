@@ -9,197 +9,216 @@ import traceback
 import time
 
 # Version info
-VERSION = "v25-thumbnail"
+VERSION = "v26-thumbnail"
 
-class ThumbnailProcessorV25:
-    """v25 Thumbnail Processor - Google Script Compatible"""
+class ThumbnailProcessorV26:
+    """v26 Thumbnail Processor - Aggressive Black Box Removal"""
     
     def __init__(self):
-        print(f"[{VERSION}] Initializing - Google Script Compatible Version")
+        print(f"[{VERSION}] Initializing - Aggressive Black Box Removal")
     
-    def remove_black_box_numpy(self, image):
-        """NumPy nonzero method - fastest and most effective"""
+    def remove_black_box_aggressive(self, image):
+        """Aggressive black box removal - multiple methods combined"""
         img_np = np.array(image)
         h, w = img_np.shape[:2]
-        print(f"[{VERSION}] NumPy method - Processing {w}x{h} image")
+        print(f"[{VERSION}] Aggressive removal - Processing {w}x{h} image")
         
-        # Convert to grayscale for detection
+        # Convert to grayscale
         gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
         
-        # Find non-black pixels (threshold > 30)
-        threshold = 30
-        non_black_pixels = gray > threshold
+        # Method 1: Find content area using multiple thresholds
+        best_crop = None
+        best_area = 0
         
-        # Find the bounding box of non-black pixels
-        rows = np.any(non_black_pixels, axis=1)
-        cols = np.any(non_black_pixels, axis=0)
+        for threshold in [20, 30, 40, 50, 60, 70, 80]:
+            # Find non-black pixels
+            non_black = gray > threshold
+            
+            # Find bounding box
+            rows = np.any(non_black, axis=1)
+            cols = np.any(non_black, axis=0)
+            
+            if np.any(rows) and np.any(cols):
+                ymin, ymax = np.where(rows)[0][[0, -1]]
+                xmin, xmax = np.where(cols)[0][[0, -1]]
+                
+                # Calculate area
+                area = (xmax - xmin) * (ymax - ymin)
+                
+                # Keep the smallest valid area (tightest crop)
+                if area > 0 and (best_area == 0 or area < best_area * 0.95):
+                    best_area = area
+                    best_crop = (xmin, ymin, xmax, ymax)
+                    print(f"[{VERSION}] Threshold {threshold}: Found crop {xmin},{ymin} to {xmax},{ymax}")
         
-        if np.any(rows) and np.any(cols):
-            ymin, ymax = np.where(rows)[0][[0, -1]]
-            xmin, xmax = np.where(cols)[0][[0, -1]]
+        # Method 2: Edge detection for black box
+        if best_crop is None:
+            # Use Canny edge detection
+            edges = cv2.Canny(gray, 50, 150)
+            
+            # Find contours
+            contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            
+            if contours:
+                # Get bounding rect of all contours
+                all_points = np.concatenate(contours)
+                x, y, w_box, h_box = cv2.boundingRect(all_points)
+                best_crop = (x, y, x + w_box, y + h_box)
+                print(f"[{VERSION}] Edge detection: Found crop {x},{y} to {x+w_box},{y+h_box}")
+        
+        # Method 3: Scan from edges inward
+        if best_crop is None:
+            # Scan from each edge
+            threshold = 50
+            
+            # Top
+            top = 0
+            for i in range(h//2):
+                if np.mean(gray[i, :]) > threshold:
+                    top = i
+                    break
+            
+            # Bottom
+            bottom = h
+            for i in range(h//2):
+                if np.mean(gray[h-1-i, :]) > threshold:
+                    bottom = h - i
+                    break
+            
+            # Left
+            left = 0
+            for i in range(w//2):
+                if np.mean(gray[:, i]) > threshold:
+                    left = i
+                    break
+            
+            # Right
+            right = w
+            for i in range(w//2):
+                if np.mean(gray[:, w-1-i]) > threshold:
+                    right = w - i
+                    break
+            
+            if top > 0 or bottom < h or left > 0 or right < w:
+                best_crop = (left, top, right, bottom)
+                print(f"[{VERSION}] Edge scan: Found crop {left},{top} to {right},{bottom}")
+        
+        # Apply crop if found
+        if best_crop:
+            xmin, ymin, xmax, ymax = best_crop
             
             # Add small margin
-            margin = 10
-            ymin = max(0, ymin - margin)
-            ymax = min(h, ymax + margin + 1)
+            margin = 5  # Smaller margin for tighter crop
             xmin = max(0, xmin - margin)
-            xmax = min(w, xmax + margin + 1)
+            ymin = max(0, ymin - margin)
+            xmax = min(w, xmax + margin)
+            ymax = min(h, ymax + margin)
             
-            print(f"[{VERSION}] Black box detected: cropping to ({xmin},{ymin}) - ({xmax},{ymax})")
+            print(f"[{VERSION}] Final crop: ({xmin},{ymin}) to ({xmax},{ymax})")
             
             # Crop the image
             cropped = img_np[ymin:ymax, xmin:xmax]
             return Image.fromarray(cropped), True
         
-        return image, False
-    
-    def remove_black_box_pil(self, image):
-        """PIL ImageChops method - backup"""
-        try:
-            print(f"[{VERSION}] PIL ImageChops method")
-            
-            # Get the background color (usually black at corners)
-            bg_color = image.getpixel((0, 0))
-            
-            # Create a background image with that color
-            bg = Image.new(image.mode, image.size, bg_color)
-            
-            # Calculate difference
-            diff = ImageChops.difference(image, bg)
-            
-            # Add the difference to itself to amplify
-            diff = ImageChops.add(diff, diff, 2.0, -100)
-            
-            # Get bounding box
-            bbox = diff.getbbox()
-            
-            if bbox:
-                # Add margin
-                x1, y1, x2, y2 = bbox
-                margin = 10
-                x1 = max(0, x1 - margin)
-                y1 = max(0, y1 - margin)
-                x2 = min(image.size[0], x2 + margin)
-                y2 = min(image.size[1], y2 + margin)
-                
-                print(f"[{VERSION}] PIL bbox found: ({x1},{y1}) - ({x2},{y2})")
-                return image.crop((x1, y1, x2, y2)), True
-                
-        except Exception as e:
-            print(f"[{VERSION}] PIL method failed: {e}")
-        
-        return image, False
-    
-    def remove_black_box_threshold(self, image):
-        """Threshold + Contour method - third option"""
-        img_np = np.array(image)
-        h, w = img_np.shape[:2]
-        print(f"[{VERSION}] Threshold method")
-        
-        # Convert to grayscale
-        gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
-        
-        # Apply threshold
-        _, binary = cv2.threshold(gray, 40, 255, cv2.THRESH_BINARY)
-        
-        # Find contours
-        contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        
-        if contours:
-            # Get bounding rect of all contours
-            x, y, w, h = cv2.boundingRect(np.concatenate(contours))
-            
-            # Add margin
-            margin = 10
-            x = max(0, x - margin)
-            y = max(0, y - margin)
-            w = min(img_np.shape[1] - x, w + 2 * margin)
-            h = min(img_np.shape[0] - y, h + 2 * margin)
-            
-            print(f"[{VERSION}] Contour bbox: ({x},{y}) size {w}x{h}")
-            
-            cropped = img_np[y:y+h, x:x+w]
-            return Image.fromarray(cropped), True
-        
+        print(f"[{VERSION}] No black box detected")
         return image, False
     
     def apply_simple_enhancement(self, image):
-        """Enhancement similar to v25 enhancement handler"""
+        """Enhancement matching v26 enhancement handler"""
         # 1. Brightness
         enhancer = ImageEnhance.Brightness(image)
-        image = enhancer.enhance(1.15)  # Match v25 enhancement
+        image = enhancer.enhance(1.25)  # Match v26
         
         # 2. Contrast
         enhancer = ImageEnhance.Contrast(image)
-        image = enhancer.enhance(1.08)  # Match v25 enhancement
+        image = enhancer.enhance(1.12)  # Match v26
         
         # 3. Saturation
         enhancer = ImageEnhance.Color(image)
-        image = enhancer.enhance(1.03)  # Match v25 enhancement
+        image = enhancer.enhance(0.98)  # Match v26
         
-        # 4. Background color without shadow
+        # 4. Background whitening
         img_np = np.array(image)
         h, w = img_np.shape[:2]
         
-        background_color = (250, 248, 245)
+        background_color = (252, 251, 250)
         brightness_overlay = np.full((h, w, 3), background_color, dtype=np.float32)
         
         # Uniform blending
         for i in range(3):
-            img_np[:, :, i] = img_np[:, :, i] * 0.9 + brightness_overlay[:, :, i] * 0.1
+            img_np[:, :, i] = img_np[:, :, i] * 0.85 + brightness_overlay[:, :, i] * 0.15
         
         # Additional brightness
-        img_np = np.clip(img_np * 1.02, 0, 255)
+        img_np = np.clip(img_np * 1.05, 0, 255)
+        
+        # Gamma correction
+        gamma = 0.9
+        img_np = np.power(img_np / 255.0, gamma) * 255
+        img_np = np.clip(img_np, 0, 255)
         
         return Image.fromarray(img_np.astype(np.uint8))
     
     def create_thumbnail_1000x1300(self, image):
-        """Create exact 1000x1300 thumbnail - wedding ring centered and large"""
+        """Create exact 1000x1300 thumbnail - extra tight crop on rings"""
         target_size = (1000, 1300)
         
-        # First find wedding ring area for tight crop
+        # Find wedding ring area
         img_np = np.array(image)
         gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
         
-        # Find bright areas (rings)
-        _, bright = cv2.threshold(gray, 100, 255, cv2.THRESH_BINARY)
+        # Multiple methods to find ring
+        # Method 1: Bright areas (rings are usually bright)
+        _, bright = cv2.threshold(gray, 120, 255, cv2.THRESH_BINARY)
         
-        # Edge detection
-        edges = cv2.Canny(gray, 50, 150)
+        # Method 2: Edge detection
+        edges = cv2.Canny(gray, 30, 100)
+        
+        # Combine methods
         combined = cv2.bitwise_or(bright, edges)
         
-        # Noise removal
-        kernel = np.ones((5, 5), np.uint8)
+        # Clean up noise
+        kernel = np.ones((3, 3), np.uint8)
         combined = cv2.morphologyEx(combined, cv2.MORPH_CLOSE, kernel)
+        combined = cv2.morphologyEx(combined, cv2.MORPH_OPEN, kernel)
         
         # Find contours
         contours, _ = cv2.findContours(combined, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         
         if contours:
-            # Get bounding box of all contours
-            all_points = np.concatenate(contours)
-            x, y, w_box, h_box = cv2.boundingRect(all_points)
+            # Filter small contours
+            min_area = 100
+            valid_contours = [c for c in contours if cv2.contourArea(c) > min_area]
             
-            # Only 5% padding for tighter crop
-            padding_x = int(w_box * 0.05)
-            padding_y = int(h_box * 0.05)
-            
-            x = max(0, x - padding_x)
-            y = max(0, y - padding_y)
-            w_box = min(img_np.shape[1] - x, w_box + 2 * padding_x)
-            h_box = min(img_np.shape[0] - y, h_box + 2 * padding_y)
-            
-            # Crop
-            cropped = image.crop((x, y, x + w_box, y + h_box))
+            if valid_contours:
+                # Get bounding box of all valid contours
+                all_points = np.concatenate(valid_contours)
+                x, y, w_box, h_box = cv2.boundingRect(all_points)
+                
+                # Very tight padding (2% only)
+                padding_x = int(w_box * 0.02)
+                padding_y = int(h_box * 0.02)
+                
+                x = max(0, x - padding_x)
+                y = max(0, y - padding_y)
+                w_box = min(img_np.shape[1] - x, w_box + 2 * padding_x)
+                h_box = min(img_np.shape[0] - y, h_box + 2 * padding_y)
+                
+                # Crop
+                cropped = image.crop((x, y, x + w_box, y + h_box))
+            else:
+                # Fallback: center 50% crop (tighter)
+                w, h = image.size
+                margin_x = int(w * 0.25)
+                margin_y = int(h * 0.25)
+                cropped = image.crop((margin_x, margin_y, w - margin_x, h - margin_y))
         else:
-            # Fallback: center 60% crop
+            # Fallback: aggressive center crop
             w, h = image.size
-            margin_x = int(w * 0.2)
-            margin_y = int(h * 0.2)
+            margin_x = int(w * 0.3)
+            margin_y = int(h * 0.3)
             cropped = image.crop((margin_x, margin_y, w - margin_x, h - margin_y))
         
-        # Now resize to 1000x1300
-        # Keep aspect ratio and fill
+        # Resize to fill 1000x1300
         cropped_w, cropped_h = cropped.size
         scale = max(1000 / cropped_w, 1300 / cropped_h)
         
@@ -209,11 +228,9 @@ class ThumbnailProcessorV25:
         resized = cropped.resize((new_w, new_h), Image.Resampling.LANCZOS)
         
         # Create 1000x1300 canvas
-        canvas = Image.new('RGB', target_size, (250, 248, 245))
-        paste_x = (1000 - new_w) // 2
-        paste_y = (1300 - new_h) // 2
+        canvas = Image.new('RGB', target_size, (252, 251, 250))
         
-        # Crop if needed
+        # Center crop if needed
         if new_w > 1000 or new_h > 1300:
             # Center crop
             left = (new_w - 1000) // 2
@@ -221,33 +238,34 @@ class ThumbnailProcessorV25:
             resized = resized.crop((left, top, left + 1000, top + 1300))
             canvas = resized
         else:
+            # Center paste
+            paste_x = (1000 - new_w) // 2
+            paste_y = (1300 - new_h) // 2
             canvas.paste(resized, (paste_x, paste_y))
         
-        # Final sharpness increase
+        # Strong sharpness increase
         enhancer = ImageEnhance.Sharpness(canvas)
-        canvas = enhancer.enhance(1.8)  # Strong sharpening
+        canvas = enhancer.enhance(2.0)  # Very strong sharpening
         
-        print(f"[{VERSION}] Created exact 1000x1300 thumbnail with tight crop")
+        print(f"[{VERSION}] Created exact 1000x1300 thumbnail with extra tight crop")
         return canvas
 
 def handler(job):
-    """RunPod handler - V25 with Google Script compatibility"""
+    """RunPod handler - V26 with aggressive black box removal"""
     print(f"[{VERSION}] ====== Thumbnail Handler Started ======")
     print(f"[{VERSION}] CRITICAL: Google Apps Script requires padding!")
     print(f"[{VERSION}] Make.com forbids padding - we remove it here")
-    print(f"[{VERSION}] Google Script must add it back with:")
-    print(f"[{VERSION}] while (base64Data.length % 4 !== 0) {{ base64Data += '='; }}")
     
     try:
         job_input = job.get("input", {})
         print(f"[{VERSION}] Input type: {type(job_input)}")
         print(f"[{VERSION}] Input keys: {list(job_input.keys()) if isinstance(job_input, dict) else 'Not a dict'}")
         
-        # Find base64 image - FIXED with 'image_base64'
+        # Find base64 image
         base64_image = None
         
         if isinstance(job_input, dict):
-            # CRITICAL: 'image_base64' as first key to check
+            # Check for image in various keys
             for key in ['image_base64', 'image', 'base64', 'data', 'input', 'file', 'imageData']:
                 if key in job_input:
                     value = job_input[key]
@@ -303,28 +321,15 @@ def handler(job):
         print(f"[{VERSION}] Image decoded: {image.size}")
         
         # Create processor
-        processor = ThumbnailProcessorV25()
+        processor = ThumbnailProcessorV26()
         
-        # Try multiple methods for black box removal
-        had_black_box = False
+        # AGGRESSIVE black box removal
+        image, had_black_box = processor.remove_black_box_aggressive(image)
         
-        # Method 1: NumPy (fastest and most effective)
-        image, removed = processor.remove_black_box_numpy(image)
-        if removed:
-            had_black_box = True
-            print(f"[{VERSION}] Black box removed using NumPy method")
+        if had_black_box:
+            print(f"[{VERSION}] Black box removed successfully")
         else:
-            # Method 2: PIL ImageChops
-            image, removed = processor.remove_black_box_pil(image)
-            if removed:
-                had_black_box = True
-                print(f"[{VERSION}] Black box removed using PIL method")
-            else:
-                # Method 3: Threshold + Contour
-                image, removed = processor.remove_black_box_threshold(image)
-                if removed:
-                    had_black_box = True
-                    print(f"[{VERSION}] Black box removed using threshold method")
+            print(f"[{VERSION}] No black box found")
         
         # Apply color enhancement
         image = processor.apply_simple_enhancement(image)
@@ -340,19 +345,13 @@ def handler(job):
         thumbnail_base64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
         
         # CRITICAL FOR MAKE.COM: Remove padding
-        # But Google Apps Script NEEDS padding!
-        # Google Script must add it back with:
-        # while (base64Data.length % 4 !== 0) { base64Data += '='; }
         print(f"[{VERSION}] WARNING: Removing padding for Make.com")
         print(f"[{VERSION}] Google Apps Script MUST add padding back!")
         thumbnail_base64 = thumbnail_base64.rstrip('=')
         
         print(f"[{VERSION}] Thumbnail base64 length: {len(thumbnail_base64)}")
-        print(f"[{VERSION}] Padding removed - Google Script must restore it!")
         
         # Return proper structure
-        # RunPod wraps this in {"data": {"output": ...}}
-        # Make.com path: {{4.data.output.output.thumbnail}}
         result = {
             "output": {
                 "thumbnail": thumbnail_base64,
@@ -360,7 +359,7 @@ def handler(job):
                 "success": True,
                 "version": VERSION,
                 "thumbnail_size": [1000, 1300],
-                "processing_method": "multi_method_v25",
+                "processing_method": "aggressive_multi_method_v26",
                 "warning": "Google Script must add padding: while (base64Data.length % 4 !== 0) { base64Data += '='; }"
             }
         }
@@ -386,7 +385,7 @@ def handler(job):
 if __name__ == "__main__":
     print("="*70)
     print(f"Wedding Ring Thumbnail {VERSION}")
-    print("V25 - Google Script Compatible Version")
+    print("V26 - Aggressive Black Box Removal")
     print("CRITICAL: Padding is removed for Make.com")
     print("Google Apps Script MUST add padding back:")
     print("while (base64Data.length % 4 !== 0) { base64Data += '='; }")
