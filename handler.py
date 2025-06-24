@@ -4,7 +4,7 @@ import logging
 import traceback
 import cv2
 import numpy as np
-from PIL import Image, ImageEnhance, ImageFilter, ImageOps
+from PIL import Image, ImageEnhance, ImageFilter, ImageOps, ImageDraw
 import requests
 import base64
 import io
@@ -26,7 +26,7 @@ except ImportError:
 
 class ThumbnailHandler:
     def __init__(self):
-        self.version = "v41-fixed-url"
+        self.version = "v42-perfect-recursive"
         logger.info(f"Initializing {self.version}")
         self.headers_list = [
             {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'},
@@ -35,66 +35,74 @@ class ThumbnailHandler:
         ]
     
     def find_input_url(self, event: Dict[str, Any]) -> Optional[str]:
-        """Find image URL from various possible locations"""
-        # Most common paths first
-        simple_paths = [
-            ['input', 'enhanced_image'],
-            ['input', 'url'],
-            ['input', 'image_url'],
-            ['input', 'image'],
-            ['enhanced_image'],
-            ['url'],
-            ['image_url'],
-            ['image']
-        ]
+        """Find image URL/data using recursive search - FOOLPROOF VERSION"""
         
-        # Check simple paths
-        for path in simple_paths:
-            try:
-                data = event
-                for key in path:
-                    if isinstance(data, dict) and key in data:
-                        data = data[key]
-                    else:
-                        break
-                else:
-                    if isinstance(data, str) and (data.startswith('http') or data.startswith('data:') or len(data) > 100):
-                        logger.info(f"Found URL/data at path: {'.'.join(path)}")
-                        return data
-            except:
-                continue
-        
-        # Check numbered paths (like 4.data.output.output.enhanced_image)
-        if 'input' in event:
-            for i in range(10):
-                key = str(i)
-                if key in event['input']:
-                    try:
-                        if isinstance(event['input'][key], dict):
-                            paths = [
-                                ['data', 'output', 'output', 'enhanced_image'],
-                                ['data', 'output', 'enhanced_image'],
-                                ['output', 'enhanced_image'],
-                                ['enhanced_image']
-                            ]
+        def find_url_recursive(obj, path="", depth=0, max_depth=10):
+            """Recursively find URL or base64 image data"""
+            if depth > max_depth:
+                return None
+                
+            if isinstance(obj, str):
+                # Check if it's a URL
+                if obj.startswith('http'):
+                    logger.info(f"Found URL at path: {path}")
+                    return obj
+                # Check if it's a data URL
+                elif obj.startswith('data:image'):
+                    logger.info(f"Found data URL at path: {path}")
+                    return obj
+                # Check if it's likely base64 (long string)
+                elif len(obj) > 1000:
+                    logger.info(f"Found potential base64 at path: {path}")
+                    return obj
+                    
+            elif isinstance(obj, dict):
+                # Priority keys to check first
+                priority_keys = ['enhanced_image', 'url', 'image_url', 'image', 'data', 'imageData', 'file', 'thumbnail', 'base64']
+                
+                # Check priority keys first
+                for key in priority_keys:
+                    if key in obj:
+                        result = find_url_recursive(obj[key], f"{path}.{key}" if path else key, depth + 1, max_depth)
+                        if result:
+                            return result
+                
+                # Check numbered keys (0-9)
+                for i in range(10):
+                    key = str(i)
+                    if key in obj:
+                        result = find_url_recursive(obj[key], f"{path}.{key}" if path else key, depth + 1, max_depth)
+                        if result:
+                            return result
+                
+                # Check all other keys
+                for key, value in obj.items():
+                    if key not in priority_keys and not key.isdigit():
+                        result = find_url_recursive(value, f"{path}.{key}" if path else key, depth + 1, max_depth)
+                        if result:
+                            return result
                             
-                            for path in paths:
-                                data = event['input'][key]
-                                for subkey in path:
-                                    if isinstance(data, dict) and subkey in data:
-                                        data = data[subkey]
-                                    else:
-                                        break
-                                else:
-                                    if isinstance(data, str) and (data.startswith('http') or data.startswith('data:') or len(data) > 100):
-                                        logger.info(f"Found URL/data at numbered path: {key}.{'.'.join(path)}")
-                                        return data
-                    except:
-                        continue
+            elif isinstance(obj, list):
+                for i, item in enumerate(obj):
+                    result = find_url_recursive(item, f"{path}[{i}]", depth + 1, max_depth)
+                    if result:
+                        return result
+                        
+            return None
         
-        logger.error(f"No valid image URL found in event")
-        logger.error(f"Event structure: {json.dumps(event, indent=2)[:500]}...")
-        return None
+        # Log the event structure for debugging
+        logger.info(f"Event keys at top level: {list(event.keys()) if isinstance(event, dict) else 'Not a dict'}")
+        if 'input' in event:
+            logger.info(f"Input keys: {list(event['input'].keys()) if isinstance(event['input'], dict) else 'Not a dict'}")
+        
+        # Start recursive search
+        result = find_url_recursive(event)
+        
+        if not result:
+            logger.error("No valid image URL/data found in event")
+            logger.error(f"Full event structure: {json.dumps(event, indent=2)}")
+            
+        return result
     
     def load_image_from_source(self, source: str) -> Optional[Image.Image]:
         """Load image from URL or base64 data"""
@@ -597,7 +605,7 @@ class ThumbnailHandler:
             'crop_coords': None,
             'final_size': None,
             'detected_color': None,
-            'version': 'v41_fixed_url'
+            'version': 'v42_perfect_recursive'
         }
         
         try:
@@ -658,17 +666,18 @@ def handler(event):
     """RunPod handler function"""
     try:
         logger.info("="*50)
-        logger.info(f"Thumbnail handler started with event keys: {list(event.keys())}")
+        logger.info(f"Thumbnail handler started - v42")
+        logger.info(f"Event type: {type(event)}")
         
         handler_instance = ThumbnailHandler()
         
-        # Find input URL
+        # Find input URL with perfect recursive logic
         input_url = handler_instance.find_input_url(event)
         
         if not input_url:
             raise ValueError("No input URL found. Please check the input structure.")
         
-        logger.info(f"Processing image from: {input_url[:100]}...")
+        logger.info(f"Found input successfully")
         
         # Process thumbnail
         thumbnail_data_url, detected_color, processing_info = handler_instance.process_thumbnail(input_url)
@@ -702,6 +711,3 @@ def handler(event):
 if __name__ == "__main__":
     import runpod
     runpod.serverless.start({"handler": handler})
-
-# Add import for ImageDraw
-from PIL import ImageDraw
