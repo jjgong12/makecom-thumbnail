@@ -9,7 +9,7 @@ import traceback
 import time
 
 # Version info
-VERSION = "v36-thumbnail"
+VERSION = "v37-thumbnail"
 
 # Import Replicate when available
 try:
@@ -25,17 +25,17 @@ try:
 except ImportError:
     REQUESTS_AVAILABLE = False
 
-class ThumbnailProcessorV36:
-    """v36 Thumbnail Processor - Color-Aware with Enhanced Black Box Detection"""
+class ThumbnailProcessorV37:
+    """v37 Thumbnail Processor - Better Black Detection + Stricter Color"""
     
     def __init__(self):
-        print(f"[{VERSION}] Initializing - Color-Aware Detail Enhancement")
+        print(f"[{VERSION}] Initializing - Improved Black Detection & Color Classification")
         self.replicate_client = None
         if REPLICATE_AVAILABLE and os.environ.get('REPLICATE_API_TOKEN'):
             self.replicate_client = replicate.Client(api_token=os.environ['REPLICATE_API_TOKEN'])
     
-    def detect_metal_color(self, image):
-        """Detect metal color with priority: Plain White > Rose Gold > White Gold > Yellow Gold"""
+    def detect_metal_color_v37(self, image):
+        """v37: Much stricter color detection - yellow gold only for TRUE yellow"""
         try:
             img_np = np.array(image)
             h, w = img_np.shape[:2]
@@ -61,142 +61,179 @@ class ThumbnailProcessorV36:
             min_channel = min(r_mean, g_mean, b_mean)
             saturation = max_channel - min_channel
             
-            # Detection priority
-            if r_mean - b_mean > 30 and r_mean > g_mean > b_mean:
+            # Calculate yellowness - how yellow is it really?
+            yellowness = (r_mean + g_mean) / 2 - b_mean
+            
+            print(f"[{VERSION}] Color analysis - R:{r_mean:.1f} G:{g_mean:.1f} B:{b_mean:.1f}")
+            print(f"[{VERSION}] Brightness:{brightness:.1f} Saturation:{saturation:.1f} Yellowness:{yellowness:.1f}")
+            
+            # Very strict detection - prioritize non-yellow colors
+            # 1. Rose Gold - clear pinkish tone
+            if r_mean - b_mean > 25 and r_mean > g_mean > b_mean and r_mean - g_mean > 10:
+                print(f"[{VERSION}] Detected: Rose Gold")
                 return "rose_gold"
-            elif brightness > 230 and saturation < 10:
-                return "plain_white"
-            elif brightness > 180 and saturation < 30:
-                return "white_gold"
-            else:
+            # 2. Yellow Gold - ONLY if clearly yellow (very strict)
+            elif yellowness > 40 and g_mean > 180 and saturation > 30 and r_mean > 200 and g_mean > 190:
+                print(f"[{VERSION}] Detected: Yellow Gold (true yellow)")
                 return "yellow_gold"
+            # 3. Plain White - very bright and colorless
+            elif brightness > 235 and saturation < 8:
+                print(f"[{VERSION}] Detected: Plain White")
+                return "plain_white"
+            # 4. White Gold - bright metallic but not pure white
+            elif brightness > 190 and saturation < 25:
+                print(f"[{VERSION}] Detected: White Gold")
+                return "white_gold"
+            # 5. Default to plain white (not yellow gold!)
+            else:
+                print(f"[{VERSION}] Detected: Plain White (default)")
+                return "plain_white"
                 
         except Exception as e:
             print(f"[{VERSION}] Error in metal detection: {e}")
-            return "white_gold"
+            return "plain_white"  # Safe default
     
-    def detect_and_remove_black_box_advanced(self, image):
-        """Advanced black box detection with multiple methods"""
+    def detect_and_remove_black_box_v37(self, image):
+        """v37: Enhanced black box detection with multiple strategies"""
         try:
             img_np = np.array(image)
             h, w = img_np.shape[:2]
-            print(f"[{VERSION}] Detecting black box in {w}x{h} image - advanced algorithm")
+            print(f"[{VERSION}] Detecting black box in {w}x{h} image - v37 enhanced algorithm")
             
             # Convert to grayscale
             gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
             
-            # Method 1: Multi-threshold edge detection
-            black_thresholds = [20, 25, 30, 35, 40, 45, 50]
-            edge_results = []
+            # Strategy 1: Progressive threshold scanning
+            black_detected = False
+            final_edges = {'top': 0, 'bottom': h, 'left': 0, 'right': w}
             
-            for threshold in black_thresholds:
+            # Use very low thresholds to catch any dark areas
+            for threshold in [15, 20, 25, 30, 35, 40, 45, 50]:
                 edges = {'top': 0, 'bottom': h, 'left': 0, 'right': w}
                 
-                # Scan from edges
-                # Top edge
-                for y in range(min(h//2, 800)):
+                # Top edge - scan more rows
+                for y in range(min(h//2, 1000)):
                     row = gray[y, w//4:3*w//4]
-                    if np.mean(row) > threshold + 10:
-                        edges['top'] = max(edges['top'], y - 5)
+                    if len(row) > 0 and np.mean(row) > threshold:
+                        edges['top'] = y
+                        break
+                    # Also check if mostly black pixels
+                    black_pixels = np.sum(row < threshold)
+                    if black_pixels < len(row) * 0.8:
+                        edges['top'] = y
                         break
                 
-                # Bottom edge - extra careful
-                for y in range(min(h//2, 800)):
+                # Bottom edge - scan more rows
+                for y in range(min(h//2, 1000)):
                     row = gray[h-1-y, w//4:3*w//4]
-                    if np.mean(row) > threshold + 10:
-                        edges['bottom'] = min(edges['bottom'], h - y + 5)
+                    if len(row) > 0 and np.mean(row) > threshold:
+                        edges['bottom'] = h - y
+                        break
+                    black_pixels = np.sum(row < threshold)
+                    if black_pixels < len(row) * 0.8:
+                        edges['bottom'] = h - y
                         break
                 
                 # Left edge
-                for x in range(min(w//2, 800)):
+                for x in range(min(w//2, 1000)):
                     col = gray[h//4:3*h//4, x]
-                    if np.mean(col) > threshold + 10:
-                        edges['left'] = max(edges['left'], x - 5)
+                    if len(col) > 0 and np.mean(col) > threshold:
+                        edges['left'] = x
+                        break
+                    black_pixels = np.sum(col < threshold)
+                    if black_pixels < len(col) * 0.8:
+                        edges['left'] = x
                         break
                 
                 # Right edge
-                for x in range(min(w//2, 800)):
+                for x in range(min(w//2, 1000)):
                     col = gray[h//4:3*h//4, w-1-x]
-                    if np.mean(col) > threshold + 10:
-                        edges['right'] = min(edges['right'], w - x + 5)
+                    if len(col) > 0 and np.mean(col) > threshold:
+                        edges['right'] = w - x
+                        break
+                    black_pixels = np.sum(col < threshold)
+                    if black_pixels < len(col) * 0.8:
+                        edges['right'] = w - x
                         break
                 
-                edge_results.append(edges)
+                # Update final edges with most aggressive detection
+                if edges['top'] > final_edges['top']:
+                    final_edges['top'] = edges['top']
+                if edges['bottom'] < final_edges['bottom']:
+                    final_edges['bottom'] = edges['bottom']
+                if edges['left'] > final_edges['left']:
+                    final_edges['left'] = edges['left']
+                if edges['right'] < final_edges['right']:
+                    final_edges['right'] = edges['right']
             
-            # Method 2: Contour-based detection
-            _, binary = cv2.threshold(gray, 40, 255, cv2.THRESH_BINARY)
-            contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            # Strategy 2: Check image borders directly
+            border_size = 50
             
-            # Find large black regions
-            black_box_contour = None
-            for contour in contours:
-                x, y, cw, ch = cv2.boundingRect(contour)
-                area = cw * ch
-                if area > 0.1 * w * h:  # Large enough
-                    # Check if it's actually black
-                    roi = gray[y:y+ch, x:x+cw]
-                    if np.mean(roi) < 50:
-                        black_box_contour = (x, y, x+cw, y+ch)
-                        break
+            # Check if borders are mostly black
+            top_border = gray[:border_size, :]
+            if np.mean(top_border) < 30:
+                black_detected = True
+                final_edges['top'] = max(final_edges['top'], border_size)
             
-            # Method 3: Histogram analysis
+            bottom_border = gray[-border_size:, :]
+            if np.mean(bottom_border) < 30:
+                black_detected = True
+                final_edges['bottom'] = min(final_edges['bottom'], h - border_size)
+            
+            left_border = gray[:, :border_size]
+            if np.mean(left_border) < 30:
+                black_detected = True
+                final_edges['left'] = max(final_edges['left'], border_size)
+            
+            right_border = gray[:, -border_size:]
+            if np.mean(right_border) < 30:
+                black_detected = True
+                final_edges['right'] = min(final_edges['right'], w - border_size)
+            
+            # Strategy 3: Global histogram check
             hist = cv2.calcHist([gray], [0], None, [256], [0, 256])
-            dark_pixels = np.sum(hist[:50])
+            dark_pixels = np.sum(hist[:40])  # Pixels with value < 40
             total_pixels = w * h
             dark_ratio = dark_pixels / total_pixels
             
-            # Combine results
-            final_edges = {'top': 0, 'bottom': h, 'left': 0, 'right': w}
+            if dark_ratio > 0.1:  # If more than 10% dark pixels
+                black_detected = True
             
-            # Use majority voting from edge detection
-            for edge in ['top', 'bottom', 'left', 'right']:
-                values = [r[edge] for r in edge_results]
-                if edge in ['top', 'left']:
-                    final_edges[edge] = max(values)
-                else:
-                    final_edges[edge] = min(values)
-            
-            # Verify with contour if found
-            if black_box_contour:
-                x1, y1, x2, y2 = black_box_contour
-                final_edges['left'] = max(final_edges['left'], x1)
-                final_edges['top'] = max(final_edges['top'], y1)
-                final_edges['right'] = min(final_edges['right'], x2)
-                final_edges['bottom'] = min(final_edges['bottom'], y2)
-            
-            # Check if we found a black frame
-            frame_found = (final_edges['top'] > 10 or 
-                          final_edges['bottom'] < h - 10 or 
-                          final_edges['left'] > 10 or 
-                          final_edges['right'] < w - 10 or
-                          dark_ratio > 0.15)
+            # Check if we found any black frame
+            frame_found = (final_edges['top'] > 20 or 
+                          final_edges['bottom'] < h - 20 or 
+                          final_edges['left'] > 20 or 
+                          final_edges['right'] < w - 20 or
+                          black_detected)
             
             if frame_found:
-                print(f"[{VERSION}] Black frame detected - T:{final_edges['top']}, B:{final_edges['bottom']}, L:{final_edges['left']}, R:{final_edges['right']}")
+                print(f"[{VERSION}] Black frame DETECTED! T:{final_edges['top']}, B:{final_edges['bottom']}, L:{final_edges['left']}, R:{final_edges['right']}")
                 
-                # Add safety margin
-                final_edges['top'] = max(0, final_edges['top'] - 20)
-                final_edges['bottom'] = min(h, final_edges['bottom'] + 20)
-                final_edges['left'] = max(0, final_edges['left'] - 20)
-                final_edges['right'] = min(w, final_edges['right'] + 20)
+                # Add safety margin and ensure minimum crop
+                margin = 30
+                final_edges['top'] = max(0, final_edges['top'] - margin)
+                final_edges['bottom'] = min(h, final_edges['bottom'] + margin)
+                final_edges['left'] = max(0, final_edges['left'] - margin)
+                final_edges['right'] = min(w, final_edges['right'] + margin)
                 
-                # Crop out the black frame
-                if final_edges['right'] > final_edges['left'] and final_edges['bottom'] > final_edges['top']:
+                # Ensure we have something to crop
+                if final_edges['right'] - final_edges['left'] > 100 and final_edges['bottom'] - final_edges['top'] > 100:
                     cropped = img_np[final_edges['top']:final_edges['bottom'], 
                                    final_edges['left']:final_edges['right']]
                     
-                    # If Replicate is available, use it for inpainting
-                    if self.replicate_client and dark_ratio > 0.2:
+                    # If Replicate is available and significant black area, use it
+                    if self.replicate_client and dark_ratio > 0.15:
                         print(f"[{VERSION}] Using Replicate for black box removal")
                         return self.remove_black_box_replicate(image, final_edges), True
                     else:
                         return Image.fromarray(cropped), True
             
-            print(f"[{VERSION}] No black frame detected")
+            print(f"[{VERSION}] No black frame detected (dark_ratio: {dark_ratio:.2f})")
             return image, False
             
         except Exception as e:
             print(f"[{VERSION}] Error in black frame detection: {e}")
+            traceback.print_exc()
             return image, False
     
     def remove_black_box_replicate(self, image, edges):
@@ -207,15 +244,16 @@ class ThumbnailProcessorV36:
             h, w = img_np.shape[:2]
             mask = np.zeros((h, w), dtype=np.uint8)
             
-            # Mark black areas
+            # Mark black areas with some expansion
+            expansion = 20
             if edges['top'] > 0:
-                mask[:edges['top'], :] = 255
+                mask[:min(edges['top'] + expansion, h), :] = 255
             if edges['bottom'] < h:
-                mask[edges['bottom']:, :] = 255
+                mask[max(edges['bottom'] - expansion, 0):, :] = 255
             if edges['left'] > 0:
-                mask[:, :edges['left']] = 255
+                mask[:, :min(edges['left'] + expansion, w)] = 255
             if edges['right'] < w:
-                mask[:, edges['right']:] = 255
+                mask[:, max(edges['right'] - expansion, 0):] = 255
             
             # Convert to PIL
             mask_img = Image.fromarray(mask)
@@ -235,10 +273,10 @@ class ThumbnailProcessorV36:
                 input={
                     "image": img_buffer,
                     "mask": mask_buffer,
-                    "prompt": "clean white background, product photography background, seamless white",
-                    "negative_prompt": "black frame, black border, dark edges, shadows",
-                    "num_inference_steps": 30,
-                    "guidance_scale": 10
+                    "prompt": "clean white background, product photography background, seamless white, no shadows",
+                    "negative_prompt": "black frame, black border, dark edges, shadows, dark areas",
+                    "num_inference_steps": 35,
+                    "guidance_scale": 12
                 }
             )
             
@@ -272,7 +310,7 @@ class ThumbnailProcessorV36:
             # 2. Dust removal
             dust_removed = cv2.medianBlur(denoised, 3)
             
-            # 3. Bilateral filter for edge-preserving smoothing
+            # 3. Bilateral filter
             smooth = cv2.bilateralFilter(dust_removed, 5, 30, 30)
             
             # 4. Scratch detection and removal
@@ -302,45 +340,58 @@ class ThumbnailProcessorV36:
             print(f"[{VERSION}] Error in noise/defect removal: {e}")
             return image
     
-    def apply_color_aware_enhancement(self, image, metal_type):
-        """Apply enhancement based on detected metal color"""
+    def apply_color_aware_enhancement_v37(self, image, metal_type):
+        """v37: Apply enhancement based on detected metal color"""
         try:
             # First apply noise and defect removal
             image = self.remove_noise_and_defects(image)
             
             # Metal-specific enhancement parameters
-            if metal_type == "plain_white":
-                sharpness_radius = 1.8
-                sharpness_percent = 120
-                brightness = 1.20
-                contrast = 1.12
-                saturation = 0.92
-                gamma = 0.85
-                detail_boost = 60
-            elif metal_type == "rose_gold":
+            if metal_type == "yellow_gold":
+                # True yellow gold - moderate enhancement
                 sharpness_radius = 1.5
-                sharpness_percent = 100
-                brightness = 1.15
+                sharpness_percent = 95
+                brightness = 1.14
                 contrast = 1.10
                 saturation = 1.05
-                gamma = 0.90
-                detail_boost = 50
-            elif metal_type == "white_gold":
-                sharpness_radius = 1.6
-                sharpness_percent = 110
-                brightness = 1.18
-                contrast = 1.12
-                saturation = 0.95
-                gamma = 0.88
-                detail_boost = 55
-            else:  # yellow_gold
-                sharpness_radius = 1.4
-                sharpness_percent = 90
-                brightness = 1.12
-                contrast = 1.08
-                saturation = 1.00
                 gamma = 0.92
                 detail_boost = 45
+            elif metal_type == "plain_white":
+                # Extra bright for plain white
+                sharpness_radius = 1.8
+                sharpness_percent = 125
+                brightness = 1.25
+                contrast = 1.12
+                saturation = 0.90
+                gamma = 0.83
+                detail_boost = 65
+            elif metal_type == "rose_gold":
+                # Warm enhancement for rose gold
+                sharpness_radius = 1.5
+                sharpness_percent = 105
+                brightness = 1.16
+                contrast = 1.10
+                saturation = 1.06
+                gamma = 0.89
+                detail_boost = 52
+            elif metal_type == "white_gold":
+                # Cool enhancement for white gold
+                sharpness_radius = 1.6
+                sharpness_percent = 115
+                brightness = 1.20
+                contrast = 1.12
+                saturation = 0.93
+                gamma = 0.86
+                detail_boost = 58
+            else:
+                # Default to plain white settings
+                sharpness_radius = 1.8
+                sharpness_percent = 125
+                brightness = 1.25
+                contrast = 1.12
+                saturation = 0.90
+                gamma = 0.83
+                detail_boost = 65
             
             # 1. Strong sharpening for detail
             image = image.filter(ImageFilter.UnsharpMask(
@@ -410,16 +461,16 @@ class ThumbnailProcessorV36:
             img_np = np.array(image)
             h, w = img_np.shape[:2]
             
-            print(f"[{VERSION}] Creating color-aware thumbnail...")
+            print(f"[{VERSION}] Creating tight crop thumbnail...")
             
-            # Tight crop - 30% for extra tight framing
+            # Tight crop - 28% for extra tight framing (even tighter than v36)
             crop_ratio = 1.3
             
             if w / h > 1 / crop_ratio:
-                crop_h = int(h * 0.30)
+                crop_h = int(h * 0.28)
                 crop_w = int(crop_h / crop_ratio)
             else:
-                crop_w = int(w * 0.30)
+                crop_w = int(w * 0.28)
                 crop_h = int(crop_w * crop_ratio)
             
             # Center the crop
@@ -432,7 +483,7 @@ class ThumbnailProcessorV36:
             crop_w = min(crop_w, w - x)
             crop_h = min(crop_h, h - y)
             
-            print(f"[{VERSION}] Tight crop: ({x},{y}) size {crop_w}x{crop_h}")
+            print(f"[{VERSION}] Extra tight crop: ({x},{y}) size {crop_w}x{crop_h}")
             
             # Crop the image
             cropped = image.crop((x, y, x + crop_w, y + crop_h))
@@ -443,7 +494,7 @@ class ThumbnailProcessorV36:
             # Apply super-resolution-like enhancement
             final = self.super_resolution_enhance(final)
             
-            print(f"[{VERSION}] Created 1000x1300 color-aware thumbnail")
+            print(f"[{VERSION}] Created 1000x1300 thumbnail")
             return final
             
         except Exception as e:
@@ -574,9 +625,9 @@ def encode_image_to_base64(image, format='PNG'):
         raise
 
 def handler(job):
-    """RunPod handler - V36 with color-aware processing"""
+    """RunPod handler - V37 with better black detection"""
     print(f"[{VERSION}] ====== Thumbnail Handler Started ======")
-    print(f"[{VERSION}] Color-Aware Detail Enhancement & Advanced Black Box Detection")
+    print(f"[{VERSION}] Enhanced Black Detection & Stricter Color Classification")
     
     start_time = time.time()
     
@@ -623,30 +674,30 @@ def handler(job):
             }
         
         # Create processor
-        processor = ThumbnailProcessorV36()
+        processor = ThumbnailProcessorV37()
         
         # Process image step by step
         had_black_frame = False
         
-        # 1. Detect and remove black box with ADVANCED algorithm
+        # 1. Detect and remove black box with v37 algorithm
         try:
-            image, had_black_frame = processor.detect_and_remove_black_box_advanced(image)
-            print(f"[{VERSION}] Advanced black box detection complete: {had_black_frame}")
+            image, had_black_frame = processor.detect_and_remove_black_box_v37(image)
+            print(f"[{VERSION}] v37 black box detection complete: {had_black_frame}")
         except Exception as e:
             print(f"[{VERSION}] Error in black frame detection: {e}")
             traceback.print_exc()
         
-        # 2. Detect metal color
+        # 2. Detect metal color with stricter algorithm
         try:
-            metal_type = processor.detect_metal_color(image)
+            metal_type = processor.detect_metal_color_v37(image)
             print(f"[{VERSION}] Detected metal type: {metal_type}")
         except Exception as e:
             print(f"[{VERSION}] Error in metal detection: {e}")
-            metal_type = "white_gold"
+            metal_type = "plain_white"
         
         # 3. Apply color-aware enhancement - AFTER black box removal
         try:
-            image = processor.apply_color_aware_enhancement(image, metal_type)
+            image = processor.apply_color_aware_enhancement_v37(image, metal_type)
             print(f"[{VERSION}] Color-aware enhancement applied for {metal_type}")
         except Exception as e:
             print(f"[{VERSION}] Error in enhancement: {e}")
@@ -655,7 +706,7 @@ def handler(job):
         # 4. Create PERFECT 1000x1300 thumbnail with tight crop
         try:
             thumbnail = processor.create_perfect_thumbnail_1000x1300(image)
-            print(f"[{VERSION}] Perfect color-aware thumbnail created: {thumbnail.size}")
+            print(f"[{VERSION}] Perfect thumbnail created: {thumbnail.size}")
         except Exception as e:
             print(f"[{VERSION}] Error creating thumbnail: {e}")
             traceback.print_exc()
@@ -686,18 +737,18 @@ def handler(job):
                 "success": True,
                 "version": VERSION,
                 "thumbnail_size": [1000, 1300],
-                "processing_method": "color_aware_v36",
+                "processing_method": "v37_enhanced_detection",
                 "detected_metal": metal_type,
                 "processing_time": round(processing_time, 2),
                 "replicate_available": REPLICATE_AVAILABLE,
                 "replicate_used": REPLICATE_AVAILABLE and had_black_frame,
                 "enhancements_applied": [
-                    "advanced_black_box_detection",
-                    "metal_color_detection",
+                    "v37_black_box_detection",
+                    "stricter_metal_color_detection",
                     "noise_removal",
                     "dust_scratch_removal",
                     f"{metal_type}_specific_enhancement",
-                    "tight_crop_30_percent",
+                    "tight_crop_28_percent",
                     "super_resolution_simulation",
                     "clahe_micro_contrast"
                 ],
@@ -706,7 +757,7 @@ def handler(job):
             }
         }
         
-        print(f"[{VERSION}] ====== Success - Returning Color-Aware Thumbnail ======")
+        print(f"[{VERSION}] ====== Success - Returning v37 Thumbnail ======")
         print(f"[{VERSION}] Total processing time: {processing_time:.2f}s")
         print(f"[{VERSION}] Black frame detected and removed: {had_black_frame}")
         print(f"[{VERSION}] Metal type: {metal_type}")
@@ -732,13 +783,15 @@ def handler(job):
 if __name__ == "__main__":
     print("="*70)
     print(f"Wedding Ring Thumbnail {VERSION}")
-    print("V36 - Color-Aware Detail Enhancement")
+    print("V37 - Enhanced Black Detection & Stricter Color")
     print("Features:")
-    print("- Metal color detection (Plain White > Rose Gold > White Gold > Yellow)")
-    print("- Advanced black box detection (multi-method)")
-    print("- Replicate API integration for inpainting")
+    print("- Much stricter yellow gold detection")
+    print("- Default to plain white (not yellow gold)")
+    print("- Enhanced black box detection (multiple strategies)")
+    print("- Lower thresholds for black detection")
+    print("- Border checking for black frames")
+    print("- Tighter crop (28%)")
     print("- Metal-specific enhancement parameters")
-    print("- Tight crop (30%)")
     print("- Advanced noise and defect removal")
     print("- Super-resolution-like enhancement")
     print("- CLAHE for local contrast")
