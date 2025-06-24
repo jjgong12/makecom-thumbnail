@@ -1,586 +1,527 @@
-import os
-import json
-import numpy as np
-import cv2
-from PIL import Image, ImageEnhance, ImageFilter
-import logging
-import traceback
-import base64
-from io import BytesIO
+import runpod
 import requests
-from typing import Dict, Any, Tuple, List, Optional
-import time
+import numpy as np
+from PIL import Image, ImageEnhance, ImageFilter
+import io
+import base64
+import traceback
+from typing import Dict, Any, Tuple, Optional
 import replicate
-from datetime import datetime
-import colorsys
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+import os
+import time
+import cv2
+from scipy import ndimage
+import json
 
 class ThumbnailHandler:
     def __init__(self):
-        """Initialize the Thumbnail Handler"""
-        self.setup_environment()
-        
-    def setup_environment(self):
-        """Set up environment and API keys"""
-        replicate_api_token = os.environ.get('REPLICATE_API_TOKEN')
-        if replicate_api_token:
-            os.environ['REPLICATE_API_TOKEN'] = replicate_api_token
-            self.replicate_available = True
-            logger.info("Replicate API token found and set")
-        else:
-            self.replicate_available = False
-            logger.warning("Replicate API token not found")
-
-    def detect_black_frame_enhanced(self, image: np.ndarray) -> Dict[str, Any]:
-        """Enhanced black frame detection with multiple validation steps"""
-        height, width = image.shape[:2]
-        edge_thickness = min(width, height) // 10  # 10% of smaller dimension
-        
-        # Convert to grayscale
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        
-        # Multi-step detection
-        detection_results = {
-            'edge_analysis': self._analyze_edges(gray, edge_thickness),
-            'corner_analysis': self._analyze_corners(gray, edge_thickness),
-            'gradient_analysis': self._analyze_gradients(gray),
-            'connectivity_analysis': self._analyze_connectivity(gray, edge_thickness)
-        }
-        
-        # Weighted scoring
-        score = (
-            detection_results['edge_analysis']['score'] * 0.3 +
-            detection_results['corner_analysis']['score'] * 0.3 +
-            detection_results['gradient_analysis']['score'] * 0.2 +
-            detection_results['connectivity_analysis']['score'] * 0.2
-        )
-        
-        has_frame = score > 0.6
-        
-        # Find frame boundaries if detected
-        if has_frame:
-            boundaries = self._find_frame_boundaries(gray, edge_thickness)
-        else:
-            boundaries = None
-            
-        logger.info(f"Black frame detection - Score: {score:.2f}, Has frame: {has_frame}")
-        
-        return {
-            'has_black_frame': has_frame,
-            'confidence_score': float(score),
-            'detection_details': detection_results,
-            'frame_boundaries': boundaries
-        }
-    
-    def _analyze_edges(self, gray: np.ndarray, thickness: int) -> Dict[str, Any]:
-        """Analyze edges for black pixels"""
-        height, width = gray.shape
-        
-        # Sample edges with some margin
-        edges = {
-            'top': gray[0:thickness, :],
-            'bottom': gray[height-thickness:, :],
-            'left': gray[:, 0:thickness],
-            'right': gray[:, width-thickness:]
-        }
-        
-        scores = {}
-        for edge_name, edge_region in edges.items():
-            # Multiple threshold checks
-            black_pixels_strict = np.sum(edge_region < 30)
-            black_pixels_medium = np.sum(edge_region < 50)
-            black_pixels_loose = np.sum(edge_region < 70)
-            
-            total_pixels = edge_region.size
-            
-            # Weighted score
-            score = (
-                (black_pixels_strict / total_pixels) * 0.5 +
-                (black_pixels_medium / total_pixels) * 0.3 +
-                (black_pixels_loose / total_pixels) * 0.2
-            )
-            scores[edge_name] = score
-        
-        avg_score = np.mean(list(scores.values()))
-        
-        return {
-            'score': avg_score,
-            'edge_scores': scores
-        }
-    
-    def _analyze_corners(self, gray: np.ndarray, thickness: int) -> Dict[str, Any]:
-        """Analyze corners for black frame continuity"""
-        height, width = gray.shape
-        corner_size = thickness * 2
-        
-        corners = {
-            'top_left': gray[0:corner_size, 0:corner_size],
-            'top_right': gray[0:corner_size, width-corner_size:],
-            'bottom_left': gray[height-corner_size:, 0:corner_size],
-            'bottom_right': gray[height-corner_size:, width-corner_size:]
-        }
-        
-        scores = {}
-        for corner_name, corner_region in corners.items():
-            black_ratio = np.sum(corner_region < 50) / corner_region.size
-            scores[corner_name] = black_ratio
-        
-        avg_score = np.mean(list(scores.values()))
-        
-        return {
-            'score': avg_score,
-            'corner_scores': scores
-        }
-    
-    def _analyze_gradients(self, gray: np.ndarray) -> Dict[str, Any]:
-        """Analyze gradients to detect sharp transitions"""
-        # Sobel edge detection
-        grad_x = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)
-        grad_y = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3)
-        gradient_magnitude = np.sqrt(grad_x**2 + grad_y**2)
-        
-        # Look for strong gradients near edges
-        height, width = gray.shape
-        edge_width = min(width, height) // 8
-        
-        edge_gradients = []
-        
-        # Top edge
-        edge_gradients.append(gradient_magnitude[edge_width:edge_width*2, :].mean())
-        # Bottom edge
-        edge_gradients.append(gradient_magnitude[height-edge_width*2:height-edge_width, :].mean())
-        # Left edge
-        edge_gradients.append(gradient_magnitude[:, edge_width:edge_width*2].mean())
-        # Right edge
-        edge_gradients.append(gradient_magnitude[:, width-edge_width*2:width-edge_width].mean())
-        
-        avg_gradient = np.mean(edge_gradients)
-        score = min(avg_gradient / 100, 1.0)  # Normalize
-        
-        return {
-            'score': score,
-            'average_gradient': avg_gradient
-        }
-    
-    def _analyze_connectivity(self, gray: np.ndarray, thickness: int) -> Dict[str, Any]:
-        """Check if black regions are connected (forming a frame)"""
-        # Binary threshold
-        _, binary = cv2.threshold(gray, 50, 255, cv2.THRESH_BINARY)
-        
-        # Invert so black becomes white
-        binary_inv = 255 - binary
-        
-        # Find connected components
-        num_labels, labels = cv2.connectedComponents(binary_inv)
-        
-        # Check if there's a large connected component near edges
-        height, width = gray.shape
-        edge_mask = np.zeros_like(labels, dtype=bool)
-        edge_mask[0:thickness, :] = True
-        edge_mask[height-thickness:, :] = True
-        edge_mask[:, 0:thickness] = True
-        edge_mask[:, width-thickness:] = True
-        
-        # Count pixels in edge regions for each component
-        edge_component_sizes = []
-        for label in range(1, num_labels):  # Skip background
-            component_mask = labels == label
-            edge_pixels = np.sum(component_mask & edge_mask)
-            if edge_pixels > 0:
-                total_pixels = np.sum(component_mask)
-                edge_component_sizes.append(total_pixels)
-        
-        if edge_component_sizes:
-            largest_component = max(edge_component_sizes)
-            total_edge_area = np.sum(edge_mask)
-            score = min(largest_component / total_edge_area, 1.0)
-        else:
-            score = 0.0
-        
-        return {
-            'score': score,
-            'num_edge_components': len(edge_component_sizes)
-        }
-    
-    def _find_frame_boundaries(self, gray: np.ndarray, initial_thickness: int) -> Optional[Dict[str, int]]:
-        """Find exact boundaries of the black frame"""
-        height, width = gray.shape
-        threshold = 70  # Slightly loose threshold
-        
-        # Find boundaries from each edge
-        boundaries = {
-            'top': 0,
-            'bottom': height,
-            'left': 0,
-            'right': width
-        }
-        
-        # Scan from top
-        for y in range(min(height//3, initial_thickness*2)):
-            if np.mean(gray[y, :]) > threshold:
-                boundaries['top'] = y
-                break
-        
-        # Scan from bottom
-        for y in range(height-1, max(height*2//3, height-initial_thickness*2), -1):
-            if np.mean(gray[y, :]) > threshold:
-                boundaries['bottom'] = y + 1
-                break
-        
-        # Scan from left
-        for x in range(min(width//3, initial_thickness*2)):
-            if np.mean(gray[:, x]) > threshold:
-                boundaries['left'] = x
-                break
-        
-        # Scan from right
-        for x in range(width-1, max(width*2//3, width-initial_thickness*2), -1):
-            if np.mean(gray[:, x]) > threshold:
-                boundaries['right'] = x + 1
-                break
-        
-        return boundaries
-
-    def remove_black_masking_with_replicate(self, image: np.ndarray, boundaries: Dict[str, int]) -> np.ndarray:
-        """Remove black masking using Replicate API with better prompting"""
-        try:
-            # Create a more aggressive mask
-            height, width = image.shape[:2]
-            
-            # Expand boundaries slightly for better inpainting
-            expand_pixels = 10
-            mask_boundaries = {
-                'top': max(0, boundaries['top'] - expand_pixels),
-                'bottom': min(height, boundaries['bottom'] + expand_pixels),
-                'left': max(0, boundaries['left'] - expand_pixels),
-                'right': min(width, boundaries['right'] + expand_pixels)
+        """Initialize thumbnail handler with Replicate client"""
+        self.replicate_client = replicate.Client(api_token=os.environ.get("REPLICATE_API_TOKEN"))
+        self.ring_colors = {
+            'yellow_gold': {
+                'ranges': [
+                    ((15, 30, 100), (35, 255, 255)),
+                    ((20, 40, 120), (40, 255, 255))
+                ],
+                'display': 'Yellow Gold'
+            },
+            'rose_gold': {
+                'ranges': [
+                    ((0, 20, 100), (15, 255, 255)),
+                    ((340, 20, 100), (359, 255, 255))
+                ],
+                'display': 'Rose Gold'
+            },
+            'white_gold': {
+                'ranges': [
+                    ((0, 0, 180), (180, 10, 255)),
+                    ((0, 0, 200), (180, 5, 255))
+                ],
+                'display': 'White Gold'
+            },
+            'unplated_white': {
+                'ranges': [
+                    ((0, 0, 120), (180, 15, 180))
+                ],
+                'display': 'Unplated White'
             }
-            
-            # Create mask
-            mask = np.ones((height, width), dtype=np.uint8) * 255
-            
-            # Mark frame areas as black (to be inpainted)
-            mask[mask_boundaries['top']:mask_boundaries['top']+boundaries['top']+expand_pixels, :] = 0
-            mask[mask_boundaries['bottom']-boundaries['bottom']-expand_pixels:mask_boundaries['bottom'], :] = 0
-            mask[:, mask_boundaries['left']:mask_boundaries['left']+boundaries['left']+expand_pixels] = 0
-            mask[:, mask_boundaries['right']-boundaries['right']-expand_pixels:mask_boundaries['right']] = 0
-            
-            # Convert images to base64
-            img_pil = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
-            mask_pil = Image.fromarray(mask)
-            
-            # Convert to base64
-            img_buffer = BytesIO()
-            mask_buffer = BytesIO()
-            
-            img_pil.save(img_buffer, format='PNG')
-            mask_pil.save(mask_buffer, format='PNG')
-            
-            img_base64 = base64.b64encode(img_buffer.getvalue()).decode('utf-8')
-            mask_base64 = base64.b64encode(mask_buffer.getvalue()).decode('utf-8')
-            
-            # Use Replicate API
-            output = replicate.run(
-                "stability-ai/stable-diffusion-inpainting",
-                input={
-                    "image": f"data:image/png;base64,{img_base64}",
-                    "mask": f"data:image/png;base64,{mask_base64}",
-                    "prompt": "clean white background, product photography background, seamless studio background",
-                    "negative_prompt": "black frame, black border, dark edges, shadows",
-                    "num_inference_steps": 30,
-                    "guidance_scale": 7.5,
-                }
-            )
-            
-            # Process result
-            if output and len(output) > 0:
-                result_url = output[0] if isinstance(output, list) else output
-                response = requests.get(result_url)
-                result_image = Image.open(BytesIO(response.content))
-                result_array = cv2.cvtColor(np.array(result_image), cv2.COLOR_RGB2BGR)
+        }
+
+    def load_image_from_source(self, source: str) -> Optional[Image.Image]:
+        """Load image from URL or base64 string with improved error handling"""
+        try:
+            # URL case
+            if source.startswith(('http://', 'https://')):
+                print(f"Loading image from URL: {source[:100]}...")
                 
-                logger.info("Successfully removed black masking with Replicate")
-                return result_array
+                # Multiple retry attempts with different headers
+                headers_list = [
+                    {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'},
+                    {'User-Agent': 'Python-Requests/2.31.0'},
+                    {}  # No headers
+                ]
+                
+                for headers in headers_list:
+                    try:
+                        response = requests.get(source, headers=headers, timeout=30, stream=True)
+                        if response.status_code == 200:
+                            image_data = io.BytesIO(response.content)
+                            img = Image.open(image_data)
+                            
+                            # Convert to RGB if necessary
+                            if img.mode not in ('RGB', 'RGBA'):
+                                img = img.convert('RGB')
+                            
+                            print(f"Successfully loaded image: {img.size}, mode: {img.mode}")
+                            return img
+                    except Exception as e:
+                        print(f"Attempt with headers {headers} failed: {str(e)}")
+                        continue
+                
+                print(f"All URL loading attempts failed")
+                return None
+                
+            # Base64 case
+            elif source.startswith('data:image'):
+                print("Loading image from base64 data URL")
+                base64_str = source.split(',')[1]
+                image_data = base64.b64decode(base64_str)
+                img = Image.open(io.BytesIO(image_data))
+                if img.mode not in ('RGB', 'RGBA'):
+                    img = img.convert('RGB')
+                return img
+                
+            # Raw base64 case
             else:
-                logger.warning("No output from Replicate, returning original")
-                return image
+                print("Loading image from raw base64")
+                # Handle potential padding issues
+                padding = 4 - len(source) % 4
+                if padding != 4:
+                    source += '=' * padding
+                    
+                image_data = base64.b64decode(source)
+                img = Image.open(io.BytesIO(image_data))
+                if img.mode not in ('RGB', 'RGBA'):
+                    img = img.convert('RGB')
+                return img
                 
         except Exception as e:
-            logger.error(f"Error in Replicate inpainting: {str(e)}")
-            return image
+            print(f"Error loading image: {str(e)}")
+            traceback.print_exc()
+            return None
 
-    def detect_ring_color_in_thumbnail(self, image: np.ndarray) -> str:
-        """Detect ring color with improved logic for white gold"""
-        # Convert to RGB for better color analysis
-        rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        height, width = rgb_image.shape[:2]
+    def create_multi_stage_mask(self, image: Image.Image) -> np.ndarray:
+        """Create detailed multi-stage mask for black area detection"""
+        img_array = np.array(image)
         
-        # Focus on center area where ring is likely to be
-        center_y, center_x = height // 2, width // 2
-        roi_size = min(width, height) // 3
+        # Convert to multiple color spaces for comprehensive detection
+        hsv = cv2.cvtColor(img_array, cv2.COLOR_RGB2HSV)
+        lab = cv2.cvtColor(img_array, cv2.COLOR_RGB2LAB)
+        gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
         
-        roi = rgb_image[
-            max(0, center_y - roi_size):min(height, center_y + roi_size),
-            max(0, center_x - roi_size):min(width, center_x + roi_size)
-        ]
+        # Stage 1: HSV-based detection with multiple thresholds
+        black_masks_hsv = []
         
-        # Convert to HSV for better color detection
-        hsv_roi = cv2.cvtColor(roi, cv2.COLOR_RGB2HSV)
+        # Very dark areas
+        black_masks_hsv.append(cv2.inRange(hsv, (0, 0, 0), (180, 255, 30)))
         
-        # Get average values
-        avg_hue = np.mean(hsv_roi[:, :, 0])
-        avg_sat = np.mean(hsv_roi[:, :, 1])
-        avg_val = np.mean(hsv_roi[:, :, 2])
+        # Dark areas with some saturation
+        black_masks_hsv.append(cv2.inRange(hsv, (0, 0, 0), (180, 50, 50)))
         
-        # Also check RGB values
-        avg_r = np.mean(roi[:, :, 0])
-        avg_g = np.mean(roi[:, :, 1])
-        avg_b = np.mean(roi[:, :, 2])
+        # Low value areas
+        black_masks_hsv.append(cv2.inRange(hsv, (0, 0, 0), (180, 30, 70)))
         
-        # Color detection logic with stricter yellow detection
-        color = "white_gold"  # Default to white gold
+        # Stage 2: LAB-based detection
+        black_masks_lab = []
         
-        # Yellow gold - must be clearly yellow
-        if (15 <= avg_hue <= 35 and avg_sat > 50 and avg_val > 100 and
-            avg_r > avg_b + 30 and avg_g > avg_b + 20):
-            color = "yellow_gold"
+        # Low lightness
+        black_masks_lab.append(cv2.inRange(lab[:,:,0], 0, 30))
+        black_masks_lab.append(cv2.inRange(lab[:,:,0], 0, 40))
         
-        # Rose gold - pinkish hue
-        elif ((0 <= avg_hue <= 15 or 340 <= avg_hue <= 360) and 
-              avg_sat > 30 and avg_r > avg_g + 10 and avg_r > avg_b + 20):
-            color = "rose_gold"
+        # Stage 3: Grayscale detection
+        black_masks_gray = []
+        black_masks_gray.append(cv2.inRange(gray, 0, 30))
+        black_masks_gray.append(cv2.inRange(gray, 0, 45))
         
-        # Unplated white - very low saturation, high brightness
-        elif avg_sat < 20 and avg_val > 180 and abs(avg_r - avg_g) < 10 and abs(avg_g - avg_b) < 10:
-            color = "unplated_white"
+        # Stage 4: Edge-based detection for boundaries
+        edges = cv2.Canny(gray, 50, 150)
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+        edges_dilated = cv2.dilate(edges, kernel, iterations=2)
         
-        logger.info(f"Thumbnail color detection - HSV: ({avg_hue:.1f}, {avg_sat:.1f}, {avg_val:.1f}), "
-                   f"RGB: ({avg_r:.1f}, {avg_g:.1f}, {avg_b:.1f}) -> {color}")
+        # Combine all masks with weights
+        combined_mask = np.zeros_like(black_masks_hsv[0], dtype=np.float32)
         
-        return color
+        # HSV masks (highest weight)
+        for mask in black_masks_hsv:
+            combined_mask += mask.astype(np.float32) * 0.3
+            
+        # LAB masks
+        for mask in black_masks_lab:
+            combined_mask += mask.astype(np.float32) * 0.25
+            
+        # Gray masks
+        for mask in black_masks_gray:
+            combined_mask += mask.astype(np.float32) * 0.2
+            
+        # Edge information
+        combined_mask += edges_dilated.astype(np.float32) * 0.1
+        
+        # Normalize and threshold
+        combined_mask = np.clip(combined_mask, 0, 255).astype(np.uint8)
+        _, final_mask = cv2.threshold(combined_mask, 50, 255, cv2.THRESH_BINARY)
+        
+        # Multi-stage morphological operations
+        # Stage 1: Remove noise
+        kernel_small = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+        final_mask = cv2.morphologyEx(final_mask, cv2.MORPH_OPEN, kernel_small)
+        
+        # Stage 2: Fill small gaps
+        kernel_medium = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
+        final_mask = cv2.morphologyEx(final_mask, cv2.MORPH_CLOSE, kernel_medium)
+        
+        # Stage 3: Smooth boundaries
+        final_mask = cv2.dilate(final_mask, kernel_medium, iterations=2)
+        final_mask = cv2.erode(final_mask, kernel_medium, iterations=2)
+        
+        # Stage 4: Final refinement
+        final_mask = cv2.medianBlur(final_mask, 5)
+        
+        return final_mask
 
-    def apply_color_specific_enhancement(self, image: np.ndarray, color: str) -> np.ndarray:
-        """Apply color-specific enhancements with focus on white gold clarity"""
-        enhanced = image.copy()
-        
-        if color == "unplated_white":
-            # Strong enhancement for pure white appearance
-            # Increase brightness significantly
-            enhanced = cv2.convertScaleAbs(enhanced, alpha=1.3, beta=30)
+    def remove_masking_with_replicate(self, image: Image.Image, mask: np.ndarray, max_retries: int = 3) -> Image.Image:
+        """Remove black masking using Replicate API with retry logic"""
+        try:
+            # Convert mask to PIL Image
+            mask_image = Image.fromarray(mask)
             
-            # Cool down the tone (remove yellow cast)
-            enhanced[:, :, 0] = np.clip(enhanced[:, :, 0] * 1.05, 0, 255)  # Boost blue
-            enhanced[:, :, 1] = np.clip(enhanced[:, :, 1] * 0.98, 0, 255)  # Slight green reduction
-            enhanced[:, :, 2] = np.clip(enhanced[:, :, 2] * 0.95, 0, 255)  # Reduce red
+            # Prepare images for Replicate
+            img_buffer = io.BytesIO()
+            image.save(img_buffer, format='PNG')
+            img_buffer.seek(0)
             
-            # Increase contrast
-            pil_img = Image.fromarray(cv2.cvtColor(enhanced, cv2.COLOR_BGR2RGB))
-            enhancer = ImageEnhance.Contrast(pil_img)
-            pil_img = enhancer.enhance(1.4)
+            mask_buffer = io.BytesIO()
+            mask_image.save(mask_buffer, format='PNG')
+            mask_buffer.seek(0)
             
-            # Remove noise for cleaner surface
-            pil_img = pil_img.filter(ImageFilter.MedianFilter(size=3))
+            # Try different Replicate models
+            models = [
+                "stability-ai/stable-diffusion-inpainting:95b7223104132402a9ae91cc677285bc5eb997834bd2349fa486f53910fd68b3",
+                "andreasjansson/stable-diffusion-inpainting:0063e4b2f59027f463e5f163a44b8f24968c6f2e8287f7e2e344570e6669f16f"
+            ]
             
-            enhanced = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
+            for model in models:
+                for attempt in range(max_retries):
+                    try:
+                        print(f"Attempting inpainting with model {model.split('/')[1]}, attempt {attempt + 1}")
+                        
+                        output = self.replicate_client.run(
+                            model,
+                            input={
+                                "image": img_buffer,
+                                "mask": mask_buffer,
+                                "prompt": "high quality wedding ring, professional jewelry photography, clean background, detailed metal surface",
+                                "negative_prompt": "black areas, shadows, dark spots, masking tape, blur, low quality",
+                                "num_inference_steps": 50,
+                                "guidance_scale": 7.5
+                            }
+                        )
+                        
+                        if output and len(output) > 0:
+                            inpainted_url = output[0] if isinstance(output, list) else output
+                            response = requests.get(inpainted_url)
+                            if response.status_code == 200:
+                                return Image.open(io.BytesIO(response.content))
+                                
+                    except Exception as e:
+                        print(f"Inpainting attempt {attempt + 1} failed: {str(e)}")
+                        if attempt < max_retries - 1:
+                            time.sleep(2)
+                        continue
             
-        elif color == "white_gold":
-            # Moderate enhancement for white gold
-            enhanced = cv2.convertScaleAbs(enhanced, alpha=1.2, beta=20)
+            # If all attempts fail, apply fallback enhancement
+            print("All inpainting attempts failed, using fallback enhancement")
+            return self.apply_fallback_enhancement(image, mask)
             
-            # Slight cool tone
-            enhanced[:, :, 0] = np.clip(enhanced[:, :, 0] * 1.02, 0, 255)
-            enhanced[:, :, 2] = np.clip(enhanced[:, :, 2] * 0.98, 0, 255)
-            
-            # Moderate contrast boost
-            pil_img = Image.fromarray(cv2.cvtColor(enhanced, cv2.COLOR_BGR2RGB))
-            enhancer = ImageEnhance.Contrast(pil_img)
-            pil_img = enhancer.enhance(1.3)
-            enhanced = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
-            
-        elif color == "yellow_gold":
-            # Warm enhancement for yellow gold
-            enhanced = cv2.convertScaleAbs(enhanced, alpha=1.15, beta=15)
-            
-            # Enhance yellow tones
-            enhanced[:, :, 1] = np.clip(enhanced[:, :, 1] * 1.05, 0, 255)  # Green
-            enhanced[:, :, 2] = np.clip(enhanced[:, :, 2] * 1.08, 0, 255)  # Red
-            
-        elif color == "rose_gold":
-            # Pink/rose enhancement
-            enhanced = cv2.convertScaleAbs(enhanced, alpha=1.15, beta=15)
-            
-            # Enhance pink tones
-            enhanced[:, :, 2] = np.clip(enhanced[:, :, 2] * 1.1, 0, 255)  # Red
-            enhanced[:, :, 0] = np.clip(enhanced[:, :, 0] * 0.95, 0, 255)  # Reduce blue
-        
-        return enhanced
+        except Exception as e:
+            print(f"Error in remove_masking_with_replicate: {str(e)}")
+            return self.apply_fallback_enhancement(image, mask)
 
-    def enhance_details(self, image: np.ndarray, color: str) -> np.ndarray:
-        """Enhanced detail processing with special handling for white metals"""
-        # Denoise first
-        denoised = cv2.fastNlMeansDenoisingColored(image, None, 10, 10, 7, 21)
+    def apply_fallback_enhancement(self, image: Image.Image, mask: np.ndarray) -> Image.Image:
+        """Apply fallback enhancement when inpainting fails"""
+        img_array = np.array(image)
         
-        # Different sharpening for different colors
-        if color in ["unplated_white", "white_gold"]:
-            # Stronger sharpening for white metals
-            kernel = np.array([[-1, -1, -1],
-                               [-1, 9.5, -1],
-                               [-1, -1, -1]])
-            sharpened = cv2.filter2D(denoised, -1, kernel)
+        # Invert mask to get areas to keep
+        keep_mask = cv2.bitwise_not(mask)
+        
+        # Create a bright background
+        bright_bg = np.full_like(img_array, 245)
+        
+        # Apply mask
+        result = np.where(keep_mask[..., np.newaxis], img_array, bright_bg)
+        
+        # Apply slight blur to blend edges
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+        mask_blurred = cv2.GaussianBlur(mask.astype(np.float32), (5, 5), 0) / 255.0
+        
+        result = (img_array * (1 - mask_blurred[..., np.newaxis]) + 
+                 bright_bg * mask_blurred[..., np.newaxis]).astype(np.uint8)
+        
+        return Image.fromarray(result)
+
+    def detect_ring_color(self, image: Image.Image) -> str:
+        """Detect ring color from the image"""
+        try:
+            img_array = np.array(image)
+            hsv = cv2.cvtColor(img_array, cv2.COLOR_RGB2HSV)
             
-            # Additional clarity enhancement
-            pil_img = Image.fromarray(cv2.cvtColor(sharpened, cv2.COLOR_BGR2RGB))
+            # Create mask for non-background areas
+            gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
+            _, ring_mask = cv2.threshold(gray, 30, 255, cv2.THRESH_BINARY)
             
-            # Unsharp mask for fine details
-            blurred = pil_img.filter(ImageFilter.GaussianBlur(radius=2))
-            sharpened_pil = Image.blend(blurred, pil_img, 1.5)
+            # Erode mask to focus on ring center
+            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+            ring_mask = cv2.erode(ring_mask, kernel, iterations=2)
             
-            result = cv2.cvtColor(np.array(sharpened_pil), cv2.COLOR_RGB2BGR)
+            best_color = 'white_gold'
+            max_score = 0
             
+            for color_name, color_info in self.ring_colors.items():
+                total_pixels = 0
+                
+                for hsv_range in color_info['ranges']:
+                    mask = cv2.inRange(hsv, hsv_range[0], hsv_range[1])
+                    mask = cv2.bitwise_and(mask, ring_mask)
+                    total_pixels += cv2.countNonZero(mask)
+                
+                if total_pixels > max_score:
+                    max_score = total_pixels
+                    best_color = color_name
+            
+            # Additional brightness check for white metals
+            if best_color in ['white_gold', 'unplated_white']:
+                bright_pixels = cv2.inRange(img_array, (180, 180, 180), (255, 255, 255))
+                bright_pixels = cv2.bitwise_and(bright_pixels, ring_mask)
+                bright_count = cv2.countNonZero(bright_pixels)
+                
+                if bright_count > cv2.countNonZero(ring_mask) * 0.3:
+                    avg_brightness = np.mean(img_array[ring_mask > 0])
+                    best_color = 'white_gold' if avg_brightness > 200 else 'unplated_white'
+            
+            return self.ring_colors[best_color]['display']
+            
+        except Exception as e:
+            print(f"Error in color detection: {str(e)}")
+            return 'White Gold'
+
+    def find_optimal_crop(self, image: Image.Image, mask: np.ndarray) -> Tuple[int, int, int, int]:
+        """Find optimal crop area focusing on the ring"""
+        h, w = mask.shape
+        
+        # Invert mask to get ring area
+        ring_mask = cv2.bitwise_not(mask)
+        
+        # Find contours
+        contours, _ = cv2.findContours(ring_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        if not contours:
+            # Fallback to center crop
+            return self.calculate_center_crop(w, h)
+        
+        # Find largest contour (main ring)
+        largest_contour = max(contours, key=cv2.contourArea)
+        x, y, cw, ch = cv2.boundingRect(largest_contour)
+        
+        # Calculate center of ring
+        cx = x + cw // 2
+        cy = y + ch // 2
+        
+        # Calculate crop dimensions (1000x1300)
+        crop_w, crop_h = 1000, 1300
+        
+        # Calculate crop boundaries with ring centered
+        left = max(0, cx - crop_w // 2)
+        top = max(0, cy - crop_h // 2)
+        right = min(w, left + crop_w)
+        bottom = min(h, top + crop_h)
+        
+        # Adjust if crop goes out of bounds
+        if right - left < crop_w:
+            if left == 0:
+                right = min(w, crop_w)
+            else:
+                left = max(0, right - crop_w)
+        
+        if bottom - top < crop_h:
+            if top == 0:
+                bottom = min(h, crop_h)
+            else:
+                top = max(0, bottom - crop_h)
+        
+        return left, top, right, bottom
+
+    def calculate_center_crop(self, width: int, height: int) -> Tuple[int, int, int, int]:
+        """Calculate center crop coordinates"""
+        crop_w, crop_h = 1000, 1300
+        left = max(0, (width - crop_w) // 2)
+        top = max(0, (height - crop_h) // 2)
+        right = min(width, left + crop_w)
+        bottom = min(height, top + crop_h)
+        return left, top, right, bottom
+
+    def enhance_ring_details(self, image: Image.Image) -> Image.Image:
+        """Enhance ring details with advanced processing"""
+        # Apply unsharp mask for detail enhancement
+        gaussian = image.filter(ImageFilter.GaussianBlur(radius=2))
+        img_array = np.array(image).astype(np.float32)
+        gaussian_array = np.array(gaussian).astype(np.float32)
+        
+        # Unsharp mask
+        enhanced = img_array + 1.5 * (img_array - gaussian_array)
+        enhanced = np.clip(enhanced, 0, 255).astype(np.uint8)
+        enhanced_img = Image.fromarray(enhanced)
+        
+        # Adjust brightness and contrast
+        brightness_enhancer = ImageEnhance.Brightness(enhanced_img)
+        enhanced_img = brightness_enhancer.enhance(1.1)
+        
+        contrast_enhancer = ImageEnhance.Contrast(enhanced_img)
+        enhanced_img = contrast_enhancer.enhance(1.2)
+        
+        # Slight sharpening
+        enhanced_img = enhanced_img.filter(ImageFilter.SHARPEN)
+        
+        return enhanced_img
+
+    def image_to_base64_no_padding(self, image: Image.Image, format: str = 'JPEG') -> str:
+        """Convert image to base64 without padding"""
+        buffer = io.BytesIO()
+        
+        if format == 'JPEG':
+            if image.mode == 'RGBA':
+                rgb_image = Image.new('RGB', image.size, (255, 255, 255))
+                rgb_image.paste(image, mask=image.split()[3])
+                image = rgb_image
+            image.save(buffer, format=format, quality=95, optimize=True)
         else:
-            # Moderate sharpening for gold colors
-            kernel = np.array([[-1, -1, -1],
-                               [-1, 9, -1],
-                               [-1, -1, -1]])
-            result = cv2.filter2D(denoised, -1, kernel)
-        
-        return result
+            image.save(buffer, format=format)
+            
+        buffer.seek(0)
+        img_str = base64.b64encode(buffer.read()).decode()
+        return img_str.rstrip('=')
 
-    def process_thumbnail(self, input_path: str) -> Tuple[np.ndarray, str, Dict[str, Any]]:
-        """Main thumbnail processing function"""
-        logger.info("Starting thumbnail processing...")
-        
-        # Load image
-        if input_path.startswith('http'):
-            response = requests.get(input_path)
-            image = cv2.imdecode(np.frombuffer(response.content, np.uint8), cv2.IMREAD_COLOR)
-        else:
-            image = cv2.imread(input_path)
-        
-        if image is None:
-            raise ValueError("Failed to load image")
-        
-        original_shape = image.shape
-        logger.info(f"Original image shape: {original_shape}")
-        
-        # Detect black frame with enhanced algorithm
-        frame_detection = self.detect_black_frame_enhanced(image)
-        
-        # Remove black masking if detected
-        if frame_detection['has_black_frame'] and self.replicate_available:
-            logger.info("Black frame detected, removing with Replicate...")
-            image = self.remove_black_masking_with_replicate(
-                image, 
-                frame_detection['frame_boundaries']
-            )
-        
-        # Detect ring color
-        detected_color = self.detect_ring_color_in_thumbnail(image)
-        logger.info(f"Detected ring color: {detected_color}")
-        
-        # Crop to focus on ring
-        height, width = image.shape[:2]
-        crop_margin = 0.15
-        
-        y1 = int(height * crop_margin)
-        y2 = int(height * (1 - crop_margin))
-        x1 = int(width * crop_margin)
-        x2 = int(width * (1 - crop_margin))
-        
-        cropped = image[y1:y2, x1:x2]
-        
-        # Apply color-specific enhancement
-        enhanced = self.apply_color_specific_enhancement(cropped, detected_color)
-        
-        # Enhance details
-        detailed = self.enhance_details(enhanced, detected_color)
-        
-        # Resize to target dimensions
-        target_width, target_height = 1000, 1300
-        resized = cv2.resize(detailed, (target_width, target_height), 
-                           interpolation=cv2.INTER_LANCZOS4)
-        
-        # Final quality boost
-        final_enhanced = cv2.convertScaleAbs(resized, alpha=1.05, beta=5)
-        
+    def process_thumbnail(self, input_url: str) -> Tuple[str, str, Dict[str, Any]]:
+        """Main processing function for thumbnail generation"""
         processing_info = {
-            'original_shape': original_shape,
-            'detected_color': detected_color,
-            'has_black_frame': frame_detection['has_black_frame'],
-            'frame_confidence': frame_detection['confidence_score'],
-            'frame_detection_details': frame_detection['detection_details'],
-            'final_shape': final_enhanced.shape,
-            'replicate_used': frame_detection['has_black_frame'] and self.replicate_available
+            'original_size': None,
+            'mask_created': False,
+            'inpainting_applied': False,
+            'crop_coords': None,
+            'final_size': None,
+            'detected_color': None
         }
         
-        return final_enhanced, detected_color, processing_info
+        try:
+            # Load image with improved error handling
+            print(f"Starting to load image from: {input_url[:100]}...")
+            image = self.load_image_from_source(input_url)
+            
+            if image is None:
+                raise ValueError("Failed to load image from source")
+            
+            processing_info['original_size'] = image.size
+            print(f"Image loaded successfully: {image.size}")
+            
+            # Ensure image is in correct format
+            if image.size != (6720, 4480):
+                print(f"Resizing image from {image.size} to (6720, 4480)")
+                image = image.resize((6720, 4480), Image.Resampling.LANCZOS)
+            
+            # Create multi-stage mask
+            print("Creating multi-stage mask...")
+            mask = self.create_multi_stage_mask(image)
+            processing_info['mask_created'] = True
+            
+            # Remove masking
+            print("Removing black masking...")
+            cleaned_image = self.remove_masking_with_replicate(image, mask)
+            processing_info['inpainting_applied'] = True
+            
+            # Find optimal crop
+            print("Finding optimal crop area...")
+            crop_coords = self.find_optimal_crop(cleaned_image, mask)
+            processing_info['crop_coords'] = crop_coords
+            
+            # Crop image
+            cropped = cleaned_image.crop(crop_coords)
+            
+            # Resize to exact thumbnail size
+            thumbnail = cropped.resize((1000, 1300), Image.Resampling.LANCZOS)
+            processing_info['final_size'] = thumbnail.size
+            
+            # Detect color
+            print("Detecting ring color...")
+            detected_color = self.detect_ring_color(thumbnail)
+            processing_info['detected_color'] = detected_color
+            
+            # Enhance details
+            print("Enhancing ring details...")
+            final_image = self.enhance_ring_details(thumbnail)
+            
+            # Convert to base64
+            print("Converting to base64...")
+            base64_image = self.image_to_base64_no_padding(final_image)
+            
+            return base64_image, detected_color, processing_info
+            
+        except Exception as e:
+            print(f"Error in process_thumbnail: {str(e)}")
+            traceback.print_exc()
+            raise
 
 def handler(event):
-    """RunPod handler function"""
-    logger.info("=== Thumbnail Handler v38 Started ===")
-    
+    """RunPod handler function with proper return structure"""
     try:
-        handler_instance = ThumbnailHandler()
+        print("Starting thumbnail handler...")
+        print(f"Event received: {json.dumps(event, indent=2)}")
         
-        # Get input from event
-        input_data = event.get('input', {})
-        input_url = input_data.get('input_url')
+        # Extract input URL
+        input_data = event.get("input", {})
+        input_url = input_data.get("image_url", "")
         
         if not input_url:
-            raise ValueError("No input_url provided")
+            raise ValueError("No image_url provided in input")
         
-        logger.info(f"Processing image from: {input_url}")
+        print(f"Processing image from URL: {input_url[:100]}...")
         
         # Process thumbnail
+        handler_instance = ThumbnailHandler()
         processed_image, detected_color, processing_info = handler_instance.process_thumbnail(input_url)
         
-        # Convert to base64
-        _, buffer = cv2.imencode('.jpg', processed_image, 
-                                [cv2.IMWRITE_JPEG_QUALITY, 95])
-        image_base64 = base64.b64encode(buffer).decode('utf-8')
-        image_data_url = f"data:image/jpeg;base64,{image_base64}"
-        
+        # Return structure matching Make.com expectations
         result = {
             "output": {
-                "thumbnail_image": image_data_url,
+                "processed_image": f"data:image/jpeg;base64,{processed_image}",
                 "detected_color": detected_color,
                 "processing_info": processing_info,
-                "processing_time": datetime.now().isoformat(),
-                "processing_method": "v38_enhanced_detection",
-                "replicate_available": handler_instance.replicate_available,
-                "replicate_used": processing_info.get('replicate_used', False),
                 "success": True
             }
         }
         
-        logger.info(f"Processing completed successfully")
-        logger.info(f"Detected color: {detected_color}")
-        logger.info(f"Black frame detected: {processing_info['has_black_frame']}")
-        logger.info(f"Frame confidence: {processing_info['frame_confidence']:.2f}")
-        
+        print("Processing completed successfully")
         return result
         
     except Exception as e:
-        logger.error(f"Error in handler: {str(e)}")
-        logger.error(traceback.format_exc())
+        error_msg = str(e)
+        print(f"Error in handler: {error_msg}")
+        traceback.print_exc()
         
         return {
             "output": {
-                "error": str(e),
+                "error": error_msg,
                 "traceback": traceback.format_exc(),
                 "success": False
             }
         }
 
-# For local testing
-if __name__ == "__main__":
-    test_event = {
-        "input": {
-            "input_url": "https://example.com/test-image.jpg"
-        }
-    }
-    
-    result = handler(test_event)
-    print(json.dumps(result, indent=2))
+# RunPod endpoint
+runpod.serverless.start({"handler": handler})
