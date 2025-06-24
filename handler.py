@@ -9,7 +9,7 @@ import traceback
 import time
 
 # Version info
-VERSION = "v34-thumbnail"
+VERSION = "v35-thumbnail"
 
 # Import Replicate when available
 try:
@@ -25,62 +25,79 @@ try:
 except ImportError:
     REQUESTS_AVAILABLE = False
 
-class ThumbnailProcessorV34:
-    """v34 Thumbnail Processor - Enhanced Detail Processing with Noise/Dust/Scratch Removal"""
+class ThumbnailProcessorV35:
+    """v35 Thumbnail Processor - Better Masking Detection & Tighter Crop"""
     
     def __init__(self):
-        print(f"[{VERSION}] Initializing - Strong Detail Enhancement & Cleanup")
+        print(f"[{VERSION}] Initializing - Improved Masking & Tight Crop")
         self.replicate_client = None
     
-    def detect_and_remove_black_box(self, image):
-        """Detect and remove black box using simple but effective method"""
+    def detect_and_remove_black_box_improved(self, image):
+        """Improved black box detection - especially for bottom edges"""
         try:
             img_np = np.array(image)
             h, w = img_np.shape[:2]
-            print(f"[{VERSION}] Detecting black box in {w}x{h} image")
+            print(f"[{VERSION}] Detecting black box in {w}x{h} image - improved algorithm")
             
             # Convert to grayscale
             gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
             
-            # Use a simple threshold to find black areas
-            black_threshold = 30
+            # Use multiple thresholds for better detection
+            black_thresholds = [25, 30, 35, 40]
             
-            # Find where content starts from each edge
-            # Top edge
-            top = 0
-            for y in range(h//3):
-                row = gray[y, w//4:3*w//4]  # Check middle portion
-                if np.mean(row) > black_threshold + 20:
-                    top = max(0, y - 10)
-                    break
+            # Initialize edges
+            top, bottom, left, right = 0, h, 0, w
             
-            # Bottom edge
-            bottom = h
-            for y in range(h//3):
-                row = gray[h-1-y, w//4:3*w//4]
-                if np.mean(row) > black_threshold + 20:
-                    bottom = min(h, h - y + 10)
-                    break
+            # Find edges with multiple thresholds
+            for threshold in black_thresholds:
+                # Top edge
+                for y in range(min(h//2, 500)):
+                    row = gray[y, w//4:3*w//4]
+                    if np.mean(row) > threshold + 15:
+                        top = max(top, y - 5)
+                        break
+                
+                # Bottom edge - MORE AGGRESSIVE
+                for y in range(min(h//2, 500)):
+                    row = gray[h-1-y, w//4:3*w//4]
+                    if np.mean(row) > threshold + 15:
+                        bottom = min(bottom, h - y + 5)
+                        break
+                
+                # Left edge
+                for x in range(min(w//2, 500)):
+                    col = gray[h//4:3*h//4, x]
+                    if np.mean(col) > threshold + 15:
+                        left = max(left, x - 5)
+                        break
+                
+                # Right edge
+                for x in range(min(w//2, 500)):
+                    col = gray[h//4:3*h//4, w-1-x]
+                    if np.mean(col) > threshold + 15:
+                        right = min(right, w - x + 5)
+                        break
             
-            # Left edge
-            left = 0
-            for x in range(w//3):
-                col = gray[h//4:3*h//4, x]
-                if np.mean(col) > black_threshold + 20:
-                    left = max(0, x - 10)
-                    break
-            
-            # Right edge
-            right = w
-            for x in range(w//3):
-                col = gray[h//4:3*h//4, w-1-x]
-                if np.mean(col) > black_threshold + 20:
-                    right = min(w, w - x + 10)
+            # Additional check for thin black lines at edges
+            # Bottom edge special check
+            bottom_strip = gray[max(0, h-100):h, :]
+            mean_bottom = np.mean(bottom_strip, axis=1)
+            for i in range(len(mean_bottom)-1, -1, -1):
+                if mean_bottom[i] > 50:
+                    potential_bottom = h - len(mean_bottom) + i
+                    if potential_bottom < bottom:
+                        bottom = potential_bottom
                     break
             
             # Check if we found a black frame
-            if top > 0 or bottom < h or left > 0 or right < w:
+            if top > 10 or bottom < h - 10 or left > 10 or right < w - 10:
                 print(f"[{VERSION}] Black frame detected: T:{top}, B:{bottom}, L:{left}, R:{right}")
+                
+                # Add extra margin to ensure complete removal
+                top = max(0, top - 10)
+                bottom = min(h, bottom + 10)
+                left = max(0, left - 10)
+                right = min(w, right + 10)
                 
                 # Crop out the black frame
                 if right > left and bottom > top:
@@ -95,51 +112,38 @@ class ThumbnailProcessorV34:
             return image, False
     
     def remove_noise_and_defects(self, image):
-        """Advanced noise, dust, and scratch removal"""
+        """Advanced noise, dust, and scratch removal from v34"""
         try:
             img_np = np.array(image)
             
             # 1. Initial denoising
-            print(f"[{VERSION}] Applying advanced denoising...")
             denoised = cv2.fastNlMeansDenoisingColored(img_np, None, 3, 3, 7, 21)
             
-            # 2. Dust and scratch removal using median filter
-            print(f"[{VERSION}] Removing dust and scratches...")
-            # Small kernel for tiny dust
+            # 2. Dust and scratch removal
             dust_removed = cv2.medianBlur(denoised, 3)
             
             # 3. Detail-preserving smoothing
-            # Using bilateral filter to preserve edges while smoothing surfaces
             smooth = cv2.bilateralFilter(dust_removed, 5, 30, 30)
             
             # 4. Scratch detection and removal
-            # Convert to grayscale for scratch detection
             gray = cv2.cvtColor(smooth, cv2.COLOR_RGB2GRAY)
-            
-            # Detect thin lines (potential scratches)
             edges = cv2.Canny(gray, 30, 60)
             
-            # Morphological operations to identify scratch-like structures
             kernel_line = np.ones((3,1), np.uint8)
             scratches_v = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel_line, iterations=1)
             kernel_line = np.ones((1,3), np.uint8)
             scratches_h = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel_line, iterations=1)
             scratches = cv2.bitwise_or(scratches_v, scratches_h)
             
-            # Dilate scratches slightly for inpainting
             scratches = cv2.dilate(scratches, np.ones((3,3), np.uint8), iterations=1)
             
-            # Inpaint scratches
             if np.any(scratches):
-                print(f"[{VERSION}] Inpainting detected scratches...")
                 result = cv2.inpaint(smooth, scratches, 3, cv2.INPAINT_TELEA)
             else:
                 result = smooth
             
-            # 5. Final touch - very light gaussian to ensure smoothness
+            # 5. Final touch
             result = cv2.GaussianBlur(result, (3, 3), 0.5)
-            
-            # Blend with original to preserve some texture
             result = cv2.addWeighted(img_np, 0.3, result, 0.7, 0)
             
             return Image.fromarray(result)
@@ -148,47 +152,43 @@ class ThumbnailProcessorV34:
             print(f"[{VERSION}] Error in noise/defect removal: {e}")
             return image
     
-    def apply_enhancement_matching_v34(self, image):
-        """Enhancement matching v34 - stronger detail enhancement"""
+    def apply_enhancement_matching_v35(self, image):
+        """Enhancement matching v35 - brighter white metals"""
         try:
             # First apply noise and defect removal
             image = self.remove_noise_and_defects(image)
             
             # 1. Strong sharpening for detail
-            print(f"[{VERSION}] Applying strong detail enhancement...")
             image = image.filter(ImageFilter.UnsharpMask(radius=1.5, percent=100, threshold=2))
             
-            # 2. Brightness boost
+            # 2. Extra brightness for white metals (matching enhancement v35)
             enhancer = ImageEnhance.Brightness(image)
-            image = enhancer.enhance(1.15)  # Brighter
+            image = enhancer.enhance(1.18)  # Increased to match v35
             
             # 3. Strong contrast for detail
             enhancer = ImageEnhance.Contrast(image)
-            image = enhancer.enhance(1.12)  # More contrast
+            image = enhancer.enhance(1.12)
             
-            # 4. Clean colors
+            # 4. Desaturate for whiter appearance
             enhancer = ImageEnhance.Color(image)
-            image = enhancer.enhance(0.98)
+            image = enhancer.enhance(0.94)  # More desaturated
             
             # 5. Convert to numpy for advanced processing
             img_np = np.array(image)
             h, w = img_np.shape[:2]
             
-            # 6. Advanced detail enhancement using high-pass filter
-            # Create high-pass filter
+            # 6. Advanced detail enhancement
             gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
             blur = cv2.GaussianBlur(gray, (21, 21), 0)
             high_pass = cv2.subtract(gray, blur)
             high_pass = cv2.normalize(high_pass, None, 0, 50, cv2.NORM_MINMAX)
             
-            # Add high-pass to each channel for detail enhancement
             for i in range(3):
                 img_np[:, :, i] = cv2.add(img_np[:, :, i], high_pass)
             
-            # 7. Clean white background
-            white_color = (252, 252, 252)
+            # 7. Bright white background
+            white_color = (254, 254, 254)
             
-            # Edge detection for background
             edges = cv2.Canny(gray, 60, 150)
             edges_dilated = cv2.dilate(edges, np.ones((5,5), np.uint8), iterations=2)
             
@@ -196,18 +196,15 @@ class ThumbnailProcessorV34:
             mask[edges_dilated > 0] = 0
             mask = cv2.GaussianBlur(mask, (51, 51), 25)
             
-            # Apply white background
             for i in range(3):
-                img_np[:, :, i] = img_np[:, :, i] * (1 - mask * 0.15) + white_color[i] * mask * 0.15
+                img_np[:, :, i] = img_np[:, :, i] * (1 - mask * 0.20) + white_color[i] * mask * 0.20
             
-            # 8. Final clarity boost
-            # Gamma correction for better clarity
-            gamma = 0.9
+            # 8. Gamma correction for extra brightness
+            gamma = 0.88  # Match v35 enhancement
             img_np = np.power(img_np / 255.0, gamma) * 255
             img_np = np.clip(img_np, 0, 255).astype(np.uint8)
             
-            # 9. Micro-contrast enhancement
-            # Using CLAHE on L channel
+            # 9. CLAHE for micro-contrast
             lab = cv2.cvtColor(img_np, cv2.COLOR_RGB2LAB)
             l, a, b = cv2.split(lab)
             clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
@@ -220,16 +217,61 @@ class ThumbnailProcessorV34:
             print(f"[{VERSION}] Error in enhancement: {e}")
             return image
     
+    def create_perfect_thumbnail_1000x1300_tight(self, image):
+        """Create perfect 1000x1300 thumbnail with TIGHTER crop like image 6"""
+        try:
+            target_size = (1000, 1300)
+            img_np = np.array(image)
+            h, w = img_np.shape[:2]
+            
+            print(f"[{VERSION}] Creating TIGHT thumbnail like reference image 6...")
+            
+            # TIGHTER CROP - use less of the image (30-35% instead of 50%)
+            crop_ratio = 1.3
+            
+            # Use smaller percentage for tighter crop
+            if w / h > 1 / crop_ratio:
+                crop_h = int(h * 0.35)  # Reduced from 0.5 to 0.35
+                crop_w = int(crop_h / crop_ratio)
+            else:
+                crop_w = int(w * 0.35)  # Reduced from 0.5 to 0.35
+                crop_h = int(crop_w * crop_ratio)
+            
+            # Center the crop
+            x = (w - crop_w) // 2
+            y = (h - crop_h) // 2
+            
+            # Ensure bounds are valid
+            x = max(0, x)
+            y = max(0, y)
+            crop_w = min(crop_w, w - x)
+            crop_h = min(crop_h, h - y)
+            
+            print(f"[{VERSION}] Tight crop: ({x},{y}) size {crop_w}x{crop_h}")
+            
+            # Crop the image
+            cropped = image.crop((x, y, x + crop_w, y + crop_h))
+            
+            # Resize to target size with high quality
+            final = cropped.resize(target_size, Image.Resampling.LANCZOS)
+            
+            # Apply super-resolution-like enhancement
+            final = self.super_resolution_enhance(final)
+            
+            print(f"[{VERSION}] Created 1000x1300 tight crop thumbnail")
+            return final
+            
+        except Exception as e:
+            print(f"[{VERSION}] Error creating thumbnail: {e}")
+            traceback.print_exc()
+            return image.resize((1000, 1300), Image.Resampling.LANCZOS)
+    
     def super_resolution_enhance(self, image):
-        """Apply super-resolution-like enhancement"""
+        """Apply super-resolution-like enhancement from v34"""
         try:
             img_np = np.array(image)
             
-            # 1. Edge-aware upsampling simulation
-            # Even though we're not changing size, we can enhance as if upsampled
-            print(f"[{VERSION}] Applying super-resolution enhancement...")
-            
-            # Create multiple shifted versions
+            # 1. Edge-aware enhancement
             shifts = [(0,0), (1,0), (0,1), (1,1)]
             enhanced = np.zeros_like(img_np, dtype=np.float32)
             
@@ -246,12 +288,10 @@ class ThumbnailProcessorV34:
             laplacian = cv2.GaussianBlur(laplacian, (3, 3), 0)
             laplacian = np.clip(laplacian * 2, 0, 50)
             
-            # Add edge details back
             for i in range(3):
                 enhanced[:, :, i] += laplacian
             
             # 3. Frequency domain enhancement
-            # Enhance high frequencies
             for i in range(3):
                 channel = enhanced[:, :, i]
                 blur = cv2.GaussianBlur(channel, (5, 5), 0)
@@ -270,54 +310,6 @@ class ThumbnailProcessorV34:
         except Exception as e:
             print(f"[{VERSION}] Error in super-resolution: {e}")
             return image
-    
-    def create_perfect_thumbnail_1000x1300(self, image):
-        """Create perfect 1000x1300 thumbnail with strong detail enhancement"""
-        try:
-            target_size = (1000, 1300)
-            img_np = np.array(image)
-            h, w = img_np.shape[:2]
-            
-            print(f"[{VERSION}] Creating detail-enhanced thumbnail...")
-            
-            # Simple center crop approach (proven effective in v33)
-            crop_ratio = 1.3
-            
-            if w / h > 1 / crop_ratio:
-                crop_h = int(h * 0.5)  # Use 50% of height
-                crop_w = int(crop_h / crop_ratio)
-            else:
-                crop_w = int(w * 0.5)  # Use 50% of width
-                crop_h = int(crop_w * crop_ratio)
-            
-            # Center the crop
-            x = (w - crop_w) // 2
-            y = (h - crop_h) // 2
-            
-            # Ensure bounds are valid
-            x = max(0, x)
-            y = max(0, y)
-            crop_w = min(crop_w, w - x)
-            crop_h = min(crop_h, h - y)
-            
-            print(f"[{VERSION}] Center crop: ({x},{y}) size {crop_w}x{crop_h}")
-            
-            # Crop the image
-            cropped = image.crop((x, y, x + crop_w, y + crop_h))
-            
-            # Resize to target size with high quality
-            final = cropped.resize(target_size, Image.Resampling.LANCZOS)
-            
-            # Apply super-resolution-like enhancement
-            final = self.super_resolution_enhance(final)
-            
-            print(f"[{VERSION}] Created 1000x1300 detail-enhanced thumbnail")
-            return final
-            
-        except Exception as e:
-            print(f"[{VERSION}] Error creating thumbnail: {e}")
-            traceback.print_exc()
-            return image.resize((1000, 1300), Image.Resampling.LANCZOS)
 
 def find_base64_in_dict(data, depth=0, max_depth=10):
     """Find base64 image in nested dictionary"""
@@ -397,9 +389,9 @@ def encode_image_to_base64(image, format='PNG'):
         raise
 
 def handler(job):
-    """RunPod handler - V34 with strong detail enhancement"""
+    """RunPod handler - V35 with improved masking & tight crop"""
     print(f"[{VERSION}] ====== Thumbnail Handler Started ======")
-    print(f"[{VERSION}] Strong Detail Enhancement & Noise/Dust/Scratch Removal")
+    print(f"[{VERSION}] Improved Black Box Detection & Tighter Crop")
     
     start_time = time.time()
     
@@ -446,31 +438,31 @@ def handler(job):
             }
         
         # Create processor
-        processor = ThumbnailProcessorV34()
+        processor = ThumbnailProcessorV35()
         
         # Process image step by step
         had_black_frame = False
         
-        # 1. Detect and remove black box
+        # 1. Detect and remove black box with IMPROVED algorithm
         try:
-            image, had_black_frame = processor.detect_and_remove_black_box(image)
-            print(f"[{VERSION}] Black box detection complete: {had_black_frame}")
+            image, had_black_frame = processor.detect_and_remove_black_box_improved(image)
+            print(f"[{VERSION}] Improved black box detection complete: {had_black_frame}")
         except Exception as e:
             print(f"[{VERSION}] Error in black frame detection: {e}")
             traceback.print_exc()
         
-        # 2. Apply strong detail enhancement and cleanup - AFTER black box removal
+        # 2. Apply enhancement matching v35 - AFTER black box removal
         try:
-            image = processor.apply_enhancement_matching_v34(image)
-            print(f"[{VERSION}] Detail enhancement and cleanup applied")
+            image = processor.apply_enhancement_matching_v35(image)
+            print(f"[{VERSION}] v35 enhancement applied (brighter white metals)")
         except Exception as e:
             print(f"[{VERSION}] Error in enhancement: {e}")
             traceback.print_exc()
         
-        # 3. Create PERFECT 1000x1300 thumbnail with detail enhancement
+        # 3. Create PERFECT 1000x1300 thumbnail with TIGHT crop
         try:
-            thumbnail = processor.create_perfect_thumbnail_1000x1300(image)
-            print(f"[{VERSION}] Perfect detail-enhanced thumbnail created: {thumbnail.size}")
+            thumbnail = processor.create_perfect_thumbnail_1000x1300_tight(image)
+            print(f"[{VERSION}] Perfect tight crop thumbnail created: {thumbnail.size}")
         except Exception as e:
             print(f"[{VERSION}] Error creating thumbnail: {e}")
             traceback.print_exc()
@@ -501,14 +493,16 @@ def handler(job):
                 "success": True,
                 "version": VERSION,
                 "thumbnail_size": [1000, 1300],
-                "processing_method": "detail_enhanced_v34",
+                "processing_method": "improved_masking_tight_crop_v35",
                 "processing_time": round(processing_time, 2),
                 "replicate_available": REPLICATE_AVAILABLE,
                 "replicate_used": False,
                 "enhancements_applied": [
+                    "improved_black_box_detection",
                     "noise_removal",
-                    "dust_scratch_removal", 
-                    "detail_enhancement",
+                    "dust_scratch_removal",
+                    "v35_white_metal_brightness",
+                    "tight_crop_35_percent",
                     "super_resolution_simulation",
                     "micro_contrast",
                     "edge_sharpening"
@@ -518,10 +512,10 @@ def handler(job):
             }
         }
         
-        print(f"[{VERSION}] ====== Success - Returning Detail-Enhanced Thumbnail ======")
+        print(f"[{VERSION}] ====== Success - Returning v35 Thumbnail ======")
         print(f"[{VERSION}] Total processing time: {processing_time:.2f}s")
         print(f"[{VERSION}] Black frame detected and removed: {had_black_frame}")
-        print(f"[{VERSION}] Detail enhancements applied successfully")
+        print(f"[{VERSION}] Tight crop (35%) applied")
         
         return result
         
@@ -544,15 +538,15 @@ def handler(job):
 if __name__ == "__main__":
     print("="*70)
     print(f"Wedding Ring Thumbnail {VERSION}")
-    print("V34 - Strong Detail Enhancement & Noise/Dust/Scratch Removal")
+    print("V35 - Improved Black Box Detection & Tighter Crop")
     print("Features:")
-    print("- Simple black box detection and removal")
+    print("- Enhanced black box detection (multiple thresholds)")
+    print("- Special bottom edge detection")
+    print("- Tighter crop (35% instead of 50%)")
+    print("- Brighter white metals (matching v35 enhancement)")
     print("- Advanced noise and defect removal")
-    print("- Dust and scratch inpainting")
     print("- Super-resolution-like enhancement")
-    print("- Micro-contrast and edge sharpening")
     print("- CLAHE for local contrast")
-    print("- High-pass detail enhancement")
     print(f"Replicate Available: {REPLICATE_AVAILABLE}")
     print("CRITICAL: Padding is removed for Make.com")
     print("Google Apps Script MUST add padding back:")
