@@ -18,143 +18,127 @@ class ThumbnailProcessorV30:
         print(f"[{VERSION}] Initializing - Perfect Crop & Detection")
     
     def detect_black_rectangle_complete(self, image):
-        """Complete black rectangle detection including bottom edges"""
+        """Complete black rectangle detection - FIXED for actual black boxes"""
         try:
             img_np = np.array(image)
             h, w = img_np.shape[:2]
-            print(f"[{VERSION}] Complete rectangle detection - Processing {w}x{h} image")
+            print(f"[{VERSION}] Black box detection - Processing {w}x{h} image")
             
             # Convert to grayscale
             gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
             
-            # Method 1: Aggressive edge scanning (especially for bottom)
-            print(f"[{VERSION}] Scanning all edges carefully...")
+            # Method 1: Direct black box detection
+            # The black box is VERY black, so use low threshold
+            threshold = 30  # Very low for black detection
             
-            # Use lower threshold for better black detection
-            threshold = 40
+            # Create binary image where black pixels are white
+            _, black_mask = cv2.threshold(gray, threshold, 255, cv2.THRESH_BINARY_INV)
             
-            # Scan from each edge with more precision
-            # TOP edge
-            top_boundary = 0
-            for y in range(min(h//2, 300)):
-                row = gray[y, :]
-                black_pixels = np.sum(row < threshold)
-                if black_pixels > w * 0.8:  # 80% of row is black
-                    top_boundary = y
-                else:
-                    if y > 10:  # Found content
-                        top_boundary = y
-                        break
-            
-            # BOTTOM edge - scan more carefully
-            bottom_boundary = h
-            for y in range(min(h//2, 300)):
-                row = gray[h-1-y, :]
-                black_pixels = np.sum(row < threshold)
-                if black_pixels > w * 0.8:  # 80% of row is black
-                    bottom_boundary = h - y
-                else:
-                    if y > 10:  # Found content
-                        bottom_boundary = h - y
-                        break
-            
-            # LEFT edge
-            left_boundary = 0
-            for x in range(min(w//2, 300)):
-                col = gray[:, x]
-                black_pixels = np.sum(col < threshold)
-                if black_pixels > h * 0.8:  # 80% of column is black
-                    left_boundary = x
-                else:
-                    if x > 10:  # Found content
-                        left_boundary = x
-                        break
-            
-            # RIGHT edge
-            right_boundary = w
-            for x in range(min(w//2, 300)):
-                col = gray[:, w-1-x]
-                black_pixels = np.sum(col < threshold)
-                if black_pixels > w * 0.8:  # 80% of column is black
-                    right_boundary = w - x
-                else:
-                    if x > 10:  # Found content
-                        right_boundary = w - x
-                        break
-            
-            print(f"[{VERSION}] Edge scan results: T:{top_boundary}, B:{bottom_boundary}, L:{left_boundary}, R:{right_boundary}")
-            
-            # Method 2: Find the largest white/bright rectangle (content area)
-            # This helps when edge scanning misses some black areas
-            _, binary = cv2.threshold(gray, 50, 255, cv2.THRESH_BINARY)
-            
-            # Find contours of white areas
-            contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            # Find contours of black areas
+            contours, _ = cv2.findContours(black_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             
             if contours:
-                # Find largest white area (should be our content)
-                largest_contour = max(contours, key=cv2.contourArea)
-                x, y, cw, ch = cv2.boundingRect(largest_contour)
+                # Sort by area to find largest black region
+                sorted_contours = sorted(contours, key=cv2.contourArea, reverse=True)
                 
-                # Update boundaries based on content area
-                if x > left_boundary:
-                    left_boundary = x
-                if y > top_boundary:
-                    top_boundary = y
-                if x + cw < right_boundary:
-                    right_boundary = x + cw
-                if y + ch < bottom_boundary:
-                    bottom_boundary = y + ch
-                
-                print(f"[{VERSION}] Content area found: ({x},{y}) size {cw}x{ch}")
+                # Check each large black area
+                for contour in sorted_contours[:3]:
+                    x, y, cw, ch = cv2.boundingRect(contour)
+                    area = cw * ch
+                    
+                    # Check if it's a significant rectangle
+                    if area > (w * h * 0.1):  # At least 10% of image
+                        # Check if it's roughly square (black box)
+                        aspect_ratio = cw / ch
+                        if 0.7 < aspect_ratio < 1.3:
+                            print(f"[{VERSION}] BLACK BOX FOUND! Position: ({x},{y}), Size: {cw}x{ch}")
+                            
+                            # The content is INSIDE the black box
+                            # So we need to crop to the inside of this box
+                            margin = 30  # Remove black edges
+                            
+                            crop_x1 = x + margin
+                            crop_y1 = y + margin
+                            crop_x2 = x + cw - margin
+                            crop_y2 = y + ch - margin
+                            
+                            # Ensure valid crop
+                            if crop_x2 > crop_x1 and crop_y2 > crop_y1:
+                                cropped = img_np[crop_y1:crop_y2, crop_x1:crop_x2]
+                                print(f"[{VERSION}] Cropped to inside of black box: ({crop_x1},{crop_y1}) to ({crop_x2},{crop_y2})")
+                                return Image.fromarray(cropped), True
             
-            # Check if we found significant black frame
-            frame_found = False
-            if (top_boundary > 20 or (h - bottom_boundary) > 20 or 
-                left_boundary > 20 or (w - right_boundary) > 20):
-                frame_found = True
+            # Method 2: Find white content area inside black frame
+            print(f"[{VERSION}] Trying to find white content area...")
+            
+            # Use higher threshold to find bright content
+            _, bright_mask = cv2.threshold(gray, 100, 255, cv2.THRESH_BINARY)
+            
+            # Clean up the mask
+            kernel = np.ones((5, 5), np.uint8)
+            bright_mask = cv2.morphologyEx(bright_mask, cv2.MORPH_CLOSE, kernel)
+            
+            # Find contours of bright areas
+            contours, _ = cv2.findContours(bright_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            
+            if contours:
+                # Find the largest bright area
+                largest_bright = max(contours, key=cv2.contourArea)
+                x, y, cw, ch = cv2.boundingRect(largest_bright)
                 
-                # Add small margin inside the detected boundaries
+                # Add small margin
                 margin = 10
-                crop_box = (
-                    left_boundary + margin,
-                    top_boundary + margin,
-                    right_boundary - margin,
-                    bottom_boundary - margin
-                )
+                x = max(0, x - margin)
+                y = max(0, y - margin)
+                cw = min(w - x, cw + 2 * margin)
+                ch = min(h - y, ch + 2 * margin)
                 
-                # Ensure valid crop
-                if crop_box[2] > crop_box[0] + 100 and crop_box[3] > crop_box[1] + 100:
-                    print(f"[{VERSION}] Black frame removed: cropping to ({crop_box[0]},{crop_box[1]}) - ({crop_box[2]},{crop_box[3]})")
-                    cropped = img_np[crop_box[1]:crop_box[3], crop_box[0]:crop_box[2]]
+                # Check if this is significantly smaller than the whole image
+                if cw < w * 0.9 and ch < h * 0.9:
+                    print(f"[{VERSION}] Found content area: ({x},{y}) size {cw}x{ch}")
+                    cropped = img_np[y:y+ch, x:x+cw]
                     return Image.fromarray(cropped), True
             
-            # Method 3: If still has issues, try morphological operations
-            if not frame_found:
-                # Use morphology to find the main content area
-                kernel = np.ones((20, 20), np.uint8)
-                closed = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
-                
-                # Find contours again
-                contours, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                
-                if contours:
-                    largest = max(contours, key=cv2.contourArea)
-                    x, y, cw, ch = cv2.boundingRect(largest)
-                    
-                    # Crop to this area
-                    margin = 5
-                    crop_box = (
-                        max(0, x - margin),
-                        max(0, y - margin),
-                        min(w, x + cw + margin),
-                        min(h, y + ch + margin)
-                    )
-                    
-                    if crop_box[2] - crop_box[0] > 100 and crop_box[3] - crop_box[1] > 100:
-                        print(f"[{VERSION}] Using morphological detection: cropping to content area")
-                        cropped = img_np[crop_box[1]:crop_box[3], crop_box[0]:crop_box[2]]
-                        return Image.fromarray(cropped), True
+            # Method 3: Scan from center outward to find black box edges
+            print(f"[{VERSION}] Scanning from center outward...")
+            
+            center_x, center_y = w // 2, h // 2
+            
+            # Find black box boundaries from center
+            # Top boundary
+            top = 0
+            for y in range(center_y, 0, -1):
+                if np.mean(gray[y, center_x-50:center_x+50]) < 40:
+                    top = y + 20
+                    break
+            
+            # Bottom boundary
+            bottom = h
+            for y in range(center_y, h):
+                if np.mean(gray[y, center_x-50:center_x+50]) < 40:
+                    bottom = y - 20
+                    break
+            
+            # Left boundary
+            left = 0
+            for x in range(center_x, 0, -1):
+                if np.mean(gray[center_y-50:center_y+50, x]) < 40:
+                    left = x + 20
+                    break
+            
+            # Right boundary
+            right = w
+            for x in range(center_x, w):
+                if np.mean(gray[center_y-50:center_y+50, x]) < 40:
+                    right = x - 20
+                    break
+            
+            # Check if we found a black frame
+            if top > 0 or bottom < h or left > 0 or right < w:
+                print(f"[{VERSION}] Black frame boundaries: T:{top}, B:{bottom}, L:{left}, R:{right}")
+                if right > left and bottom > top:
+                    cropped = img_np[top:bottom, left:right]
+                    return Image.fromarray(cropped), True
             
             print(f"[{VERSION}] No black rectangle frame detected")
             return image, False
