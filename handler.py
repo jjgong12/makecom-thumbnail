@@ -9,16 +9,16 @@ import traceback
 import time
 
 # Version info
-VERSION = "v24-thumbnail"
+VERSION = "v25-thumbnail"
 
-class ThumbnailProcessorV24:
-    """v24 Thumbnail Processor - NumPy & PIL Methods for Black Box Removal"""
+class ThumbnailProcessorV25:
+    """v25 Thumbnail Processor - Google Script Compatible"""
     
     def __init__(self):
-        print(f"[{VERSION}] Initializing - NumPy/PIL Black Box Removal")
+        print(f"[{VERSION}] Initializing - Google Script Compatible Version")
     
     def remove_black_box_numpy(self, image):
-        """NumPy nonzero 방법 - 가장 빠르고 효과적"""
+        """NumPy nonzero method - fastest and most effective"""
         img_np = np.array(image)
         h, w = img_np.shape[:2]
         print(f"[{VERSION}] NumPy method - Processing {w}x{h} image")
@@ -54,7 +54,7 @@ class ThumbnailProcessorV24:
         return image, False
     
     def remove_black_box_pil(self, image):
-        """PIL ImageChops 방법 - 백업용"""
+        """PIL ImageChops method - backup"""
         try:
             print(f"[{VERSION}] PIL ImageChops method")
             
@@ -91,7 +91,7 @@ class ThumbnailProcessorV24:
         return image, False
     
     def remove_black_box_threshold(self, image):
-        """Threshold + Contour 방법 - 세 번째 옵션"""
+        """Threshold + Contour method - third option"""
         img_np = np.array(image)
         h, w = img_np.shape[:2]
         print(f"[{VERSION}] Threshold method")
@@ -124,61 +124,63 @@ class ThumbnailProcessorV24:
         return image, False
     
     def apply_simple_enhancement(self, image):
-        """Enhancement와 동일한 간단한 색감 보정"""
-        # 1. 밝기
+        """Enhancement similar to v25 enhancement handler"""
+        # 1. Brightness
         enhancer = ImageEnhance.Brightness(image)
-        image = enhancer.enhance(1.1)
+        image = enhancer.enhance(1.15)  # Match v25 enhancement
         
-        # 2. 대비
+        # 2. Contrast
         enhancer = ImageEnhance.Contrast(image)
-        image = enhancer.enhance(1.05)
+        image = enhancer.enhance(1.08)  # Match v25 enhancement
         
-        # 3. 채도
+        # 3. Saturation
         enhancer = ImageEnhance.Color(image)
-        image = enhancer.enhance(1.02)
+        image = enhancer.enhance(1.03)  # Match v25 enhancement
         
-        # 4. 배경색 블렌딩
+        # 4. Background color without shadow
         img_np = np.array(image)
         h, w = img_np.shape[:2]
         
-        background_color = (245, 243, 240)
-        mask = np.zeros((h, w), dtype=np.float32)
-        cv2.rectangle(mask, (30, 30), (w-30, h-30), 1.0, -1)
-        mask = cv2.GaussianBlur(mask, (61, 61), 30)
+        background_color = (250, 248, 245)
+        brightness_overlay = np.full((h, w, 3), background_color, dtype=np.float32)
         
+        # Uniform blending
         for i in range(3):
-            img_np[:, :, i] = img_np[:, :, i] * mask + background_color[i] * (1 - mask) * 0.3
+            img_np[:, :, i] = img_np[:, :, i] * 0.9 + brightness_overlay[:, :, i] * 0.1
+        
+        # Additional brightness
+        img_np = np.clip(img_np * 1.02, 0, 255)
         
         return Image.fromarray(img_np.astype(np.uint8))
     
     def create_thumbnail_1000x1300(self, image):
-        """정확히 1000x1300 썸네일 생성 - 웨딩링 중심으로 더 크게"""
+        """Create exact 1000x1300 thumbnail - wedding ring centered and large"""
         target_size = (1000, 1300)
         
-        # 먼저 웨딩링 영역을 찾아서 타이트하게 크롭
+        # First find wedding ring area for tight crop
         img_np = np.array(image)
         gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
         
-        # 밝은 영역 찾기 (웨딩링)
+        # Find bright areas (rings)
         _, bright = cv2.threshold(gray, 100, 255, cv2.THRESH_BINARY)
         
-        # 엣지 검출
+        # Edge detection
         edges = cv2.Canny(gray, 50, 150)
         combined = cv2.bitwise_or(bright, edges)
         
-        # 노이즈 제거
+        # Noise removal
         kernel = np.ones((5, 5), np.uint8)
         combined = cv2.morphologyEx(combined, cv2.MORPH_CLOSE, kernel)
         
-        # Contour 찾기
+        # Find contours
         contours, _ = cv2.findContours(combined, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         
         if contours:
-            # 모든 contour를 포함하는 바운딩 박스
+            # Get bounding box of all contours
             all_points = np.concatenate(contours)
             x, y, w_box, h_box = cv2.boundingRect(all_points)
             
-            # 5% 패딩만 추가 (더 타이트하게)
+            # Only 5% padding for tighter crop
             padding_x = int(w_box * 0.05)
             padding_y = int(h_box * 0.05)
             
@@ -187,33 +189,33 @@ class ThumbnailProcessorV24:
             w_box = min(img_np.shape[1] - x, w_box + 2 * padding_x)
             h_box = min(img_np.shape[0] - y, h_box + 2 * padding_y)
             
-            # 크롭
+            # Crop
             cropped = image.crop((x, y, x + w_box, y + h_box))
         else:
-            # Fallback: 중앙 60% 크롭 (더 타이트하게)
+            # Fallback: center 60% crop
             w, h = image.size
             margin_x = int(w * 0.2)
             margin_y = int(h * 0.2)
             cropped = image.crop((margin_x, margin_y, w - margin_x, h - margin_y))
         
-        # 이제 1000x1300으로 리사이즈
-        # 비율 유지하며 가득 채우기
+        # Now resize to 1000x1300
+        # Keep aspect ratio and fill
         cropped_w, cropped_h = cropped.size
         scale = max(1000 / cropped_w, 1300 / cropped_h)
         
-        # 스케일 적용
+        # Apply scale
         new_w = int(cropped_w * scale)
         new_h = int(cropped_h * scale)
         resized = cropped.resize((new_w, new_h), Image.Resampling.LANCZOS)
         
-        # 1000x1300 캔버스에 중앙 배치
-        canvas = Image.new('RGB', target_size, (245, 243, 240))
+        # Create 1000x1300 canvas
+        canvas = Image.new('RGB', target_size, (250, 248, 245))
         paste_x = (1000 - new_w) // 2
         paste_y = (1300 - new_h) // 2
         
-        # 크롭이 필요한 경우
+        # Crop if needed
         if new_w > 1000 or new_h > 1300:
-            # 중앙 크롭
+            # Center crop
             left = (new_w - 1000) // 2
             top = (new_h - 1300) // 2
             resized = resized.crop((left, top, left + 1000, top + 1300))
@@ -221,16 +223,20 @@ class ThumbnailProcessorV24:
         else:
             canvas.paste(resized, (paste_x, paste_y))
         
-        # 최종 선명도 증가
+        # Final sharpness increase
         enhancer = ImageEnhance.Sharpness(canvas)
-        canvas = enhancer.enhance(1.8)  # 더 강하게
+        canvas = enhancer.enhance(1.8)  # Strong sharpening
         
         print(f"[{VERSION}] Created exact 1000x1300 thumbnail with tight crop")
         return canvas
 
 def handler(job):
-    """RunPod handler - V24 with multiple removal methods"""
+    """RunPod handler - V25 with Google Script compatibility"""
     print(f"[{VERSION}] ====== Thumbnail Handler Started ======")
+    print(f"[{VERSION}] CRITICAL: Google Apps Script requires padding!")
+    print(f"[{VERSION}] Make.com forbids padding - we remove it here")
+    print(f"[{VERSION}] Google Script must add it back with:")
+    print(f"[{VERSION}] while (base64Data.length % 4 !== 0) {{ base64Data += '='; }}")
     
     try:
         job_input = job.get("input", {})
@@ -241,7 +247,7 @@ def handler(job):
         base64_image = None
         
         if isinstance(job_input, dict):
-            # CRITICAL FIX: Added 'image_base64' as first key to check
+            # CRITICAL: 'image_base64' as first key to check
             for key in ['image_base64', 'image', 'base64', 'data', 'input', 'file', 'imageData']:
                 if key in job_input:
                     value = job_input[key]
@@ -264,13 +270,15 @@ def handler(job):
         
         if not base64_image:
             return {
-                "thumbnail": None,
-                "error": "No image data found",
-                "success": False,
-                "version": VERSION,
-                "debug_info": {
-                    "input_keys": list(job_input.keys()) if isinstance(job_input, dict) else [],
-                    "first_key": list(job_input.keys())[0] if isinstance(job_input, dict) and job_input else None
+                "output": {
+                    "thumbnail": None,
+                    "error": "No image data found",
+                    "success": False,
+                    "version": VERSION,
+                    "debug_info": {
+                        "input_keys": list(job_input.keys()) if isinstance(job_input, dict) else [],
+                        "first_key": list(job_input.keys())[0] if isinstance(job_input, dict) and job_input else None
+                    }
                 }
             }
         
@@ -295,7 +303,7 @@ def handler(job):
         print(f"[{VERSION}] Image decoded: {image.size}")
         
         # Create processor
-        processor = ThumbnailProcessorV24()
+        processor = ThumbnailProcessorV25()
         
         # Try multiple methods for black box removal
         had_black_box = False
@@ -331,19 +339,30 @@ def handler(job):
         
         thumbnail_base64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
         
-        # Remove padding for Make.com
+        # CRITICAL FOR MAKE.COM: Remove padding
+        # But Google Apps Script NEEDS padding!
+        # Google Script must add it back with:
+        # while (base64Data.length % 4 !== 0) { base64Data += '='; }
+        print(f"[{VERSION}] WARNING: Removing padding for Make.com")
+        print(f"[{VERSION}] Google Apps Script MUST add padding back!")
         thumbnail_base64 = thumbnail_base64.rstrip('=')
         
         print(f"[{VERSION}] Thumbnail base64 length: {len(thumbnail_base64)}")
+        print(f"[{VERSION}] Padding removed - Google Script must restore it!")
         
         # Return proper structure
+        # RunPod wraps this in {"data": {"output": ...}}
+        # Make.com path: {{4.data.output.output.thumbnail}}
         result = {
-            "thumbnail": thumbnail_base64,
-            "has_black_frame": had_black_box,
-            "success": True,
-            "version": VERSION,
-            "thumbnail_size": [1000, 1300],
-            "processing_method": "multi_method_v24"
+            "output": {
+                "thumbnail": thumbnail_base64,
+                "has_black_frame": had_black_box,
+                "success": True,
+                "version": VERSION,
+                "thumbnail_size": [1000, 1300],
+                "processing_method": "multi_method_v25",
+                "warning": "Google Script must add padding: while (base64Data.length % 4 !== 0) { base64Data += '='; }"
+            }
         }
         
         print(f"[{VERSION}] ====== Success - Returning Thumbnail ======")
@@ -355,21 +374,22 @@ def handler(job):
         traceback.print_exc()
         
         return {
-            "thumbnail": None,
-            "error": error_msg,
-            "success": False,
-            "version": VERSION
+            "output": {
+                "thumbnail": None,
+                "error": error_msg,
+                "success": False,
+                "version": VERSION
+            }
         }
 
 # RunPod serverless start
 if __name__ == "__main__":
     print("="*70)
     print(f"Wedding Ring Thumbnail {VERSION}")
-    print("V24 - Multiple Black Box Removal Methods")
-    print("1. NumPy nonzero (fastest)")
-    print("2. PIL ImageChops (backup)")
-    print("3. OpenCV threshold (fallback)")
-    print("Make.com path: {{4.data.output.thumbnail}}")
+    print("V25 - Google Script Compatible Version")
+    print("CRITICAL: Padding is removed for Make.com")
+    print("Google Apps Script MUST add padding back:")
+    print("while (base64Data.length % 4 !== 0) { base64Data += '='; }")
     print("="*70)
     
     runpod.serverless.start({"handler": handler})
