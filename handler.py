@@ -9,7 +9,7 @@ import traceback
 import time
 
 # Version info
-VERSION = "v32-thumbnail"
+VERSION = "v33-thumbnail"
 
 # Import Replicate when available
 try:
@@ -25,11 +25,11 @@ try:
 except ImportError:
     REQUESTS_AVAILABLE = False
 
-class ThumbnailProcessorV32:
-    """v32 Thumbnail Processor - Bright Thumbnail with Less Zoom"""
+class ThumbnailProcessorV33:
+    """v33 Thumbnail Processor - Much Less Zoom & Better Processing"""
     
     def __init__(self):
-        print(f"[{VERSION}] Initializing - Bright Thumbnail with Less Zoom")
+        print(f"[{VERSION}] Initializing - Much Less Zoom & Better Processing")
         self.replicate_client = None
     
     def detect_black_box_ultimate(self, image):
@@ -278,73 +278,36 @@ class ThumbnailProcessorV32:
             return image, False
     
     def remove_black_frame_replicate(self, image, had_frame):
-        """Use Replicate API for inpainting if needed"""
-        if not had_frame or not REPLICATE_AVAILABLE:
-            return image
-        
-        try:
-            print(f"[{VERSION}] Using Replicate for additional cleanup")
-            
-            # Initialize client
-            if not self.replicate_client:
-                api_token = os.environ.get('REPLICATE_API_TOKEN')
-                if api_token:
-                    self.replicate_client = replicate.Client(api_token=api_token)
-                else:
-                    print(f"[{VERSION}] No REPLICATE_API_TOKEN found")
-                    return image
-            
-            # Convert to base64
-            buffer = io.BytesIO()
-            image.save(buffer, format='PNG')
-            buffer.seek(0)
-            img_base64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
-            
-            # Run inpainting to clean any remaining artifacts
-            output = self.replicate_client.run(
-                "stability-ai/stable-diffusion-inpainting",
-                input={
-                    "image": f"data:image/png;base64,{img_base64}",
-                    "prompt": "clean white background, professional product photography",
-                    "negative_prompt": "black edges, dark corners, shadows",
-                    "num_inference_steps": 20
-                }
-            )
-            
-            if output and len(output) > 0:
-                response = requests.get(output[0])
-                return Image.open(io.BytesIO(response.content))
-                
-        except Exception as e:
-            print(f"[{VERSION}] Replicate error: {e}")
-        
+        """Skip Replicate for now as model might be wrong"""
+        # Temporarily disabled until we verify the correct model
+        print(f"[{VERSION}] Replicate temporarily disabled - using cropped image")
         return image
     
-    def apply_enhancement_matching_v32(self, image):
-        """Enhancement matching v32 enhancement handler - minimal bright"""
+    def apply_enhancement_matching_v33(self, image):
+        """Enhancement matching v33 enhancement handler - brighter"""
         try:
-            # Match v32 enhancement settings - very minimal
+            # Match v33 enhancement settings - brighter
             # 1. Light sharpening
             image = image.filter(ImageFilter.UnsharpMask(radius=1.2, percent=50, threshold=3))
             
-            # 2. Minimal brightness
+            # 2. More brightness - match v33
             enhancer = ImageEnhance.Brightness(image)
-            image = enhancer.enhance(1.08)  # Match v32
+            image = enhancer.enhance(1.12)  # Match v33
             
-            # 3. Slight contrast
+            # 3. More contrast
             enhancer = ImageEnhance.Contrast(image)
-            image = enhancer.enhance(1.06)  # Match v32
+            image = enhancer.enhance(1.08)  # Match v33
             
-            # 4. Natural colors
+            # 4. Cleaner colors
             enhancer = ImageEnhance.Color(image)
-            image = enhancer.enhance(0.98)  # Match v32
+            image = enhancer.enhance(0.96)  # Match v33
             
-            # 5. Convert to numpy for subtle processing
+            # 5. Convert to numpy for processing
             img_np = np.array(image)
             h, w = img_np.shape[:2]
             
-            # 6. Very subtle white background
-            white_color = (248, 248, 248)
+            # 6. Whiter background
+            white_color = (252, 252, 252)
             
             # Edge detection
             gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
@@ -356,12 +319,15 @@ class ThumbnailProcessorV32:
             mask = cv2.GaussianBlur(mask, (31, 31), 15)
             
             for i in range(3):
-                img_np[:, :, i] = img_np[:, :, i] * (1 - mask * 0.08) + white_color[i] * mask * 0.08
+                img_np[:, :, i] = img_np[:, :, i] * (1 - mask * 0.12) + white_color[i] * mask * 0.12
             
-            # Gentle gamma correction
-            gamma = 0.95
+            # Gamma correction
+            gamma = 0.92
             img_np = np.power(img_np / 255.0, gamma) * 255
             img_np = np.clip(img_np, 0, 255).astype(np.uint8)
+            
+            # Additional brightness
+            img_np = np.clip(img_np * 1.03, 0, 255).astype(np.uint8)
             
             return Image.fromarray(img_np)
             
@@ -370,7 +336,7 @@ class ThumbnailProcessorV32:
             return image
     
     def create_perfect_thumbnail_1000x1300(self, image):
-        """Create perfect 1000x1300 thumbnail with less zoom"""
+        """Create perfect 1000x1300 thumbnail with MUCH less zoom"""
         try:
             target_size = (1000, 1300)
             
@@ -378,7 +344,7 @@ class ThumbnailProcessorV32:
             img_np = np.array(image)
             gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
             
-            print(f"[{VERSION}] Finding rings for perfect thumbnail with less zoom...")
+            print(f"[{VERSION}] Finding rings for perfect thumbnail with MUCH less zoom...")
             
             # Method 1: Find bright/metallic areas (rings)
             # Apply CLAHE for better contrast
@@ -421,8 +387,8 @@ class ThumbnailProcessorV32:
                     all_points = np.concatenate(valid_contours)
                     x, y, w_box, h_box = cv2.boundingRect(all_points)
                     
-                    # MORE PADDING for less zoom - like image 5
-                    padding_percent = 0.15  # 15% padding - much more than before
+                    # MUCH MORE PADDING for complete ring view
+                    padding_percent = 0.35  # 35% padding - MUCH more than before
                     padding_x = int(w_box * padding_percent)
                     padding_y = int(h_box * padding_percent)
                     
@@ -432,13 +398,13 @@ class ThumbnailProcessorV32:
                     h_box = min(img_np.shape[0] - y, h_box + 2 * padding_y)
                     
                     ring_box = (x, y, w_box, h_box)
-                    print(f"[{VERSION}] Rings found at ({x},{y}) size {w_box}x{h_box} with 15% padding")
+                    print(f"[{VERSION}] Rings found at ({x},{y}) size {w_box}x{h_box} with 35% padding")
             
-            # If no rings found, use center area with more margin
+            # If no rings found, use center area with MUCH more margin
             if ring_box is None:
-                print(f"[{VERSION}] Using center crop fallback with more margin")
+                print(f"[{VERSION}] Using center crop fallback with much more margin")
                 h, w = image.size[1], image.size[0]
-                margin_percent = 0.25  # 25% margin for less zoom
+                margin_percent = 0.35  # 35% margin for much less zoom
                 margin_x = int(w * margin_percent)
                 margin_y = int(h * margin_percent)
                 ring_box = (margin_x, margin_y, w - 2 * margin_x, h - 2 * margin_y)
@@ -449,11 +415,11 @@ class ThumbnailProcessorV32:
             
             print(f"[{VERSION}] Cropped to ring area: {cropped.size}")
             
-            # Calculate scale to fill thumbnail - less aggressive
+            # Calculate scale to fill thumbnail - minimal extra
             cropped_w, cropped_h = cropped.size
             scale_w = target_size[0] / cropped_w
             scale_h = target_size[1] / cropped_h
-            scale = max(scale_w, scale_h) * 1.02  # Only 2% extra instead of 10%
+            scale = max(scale_w, scale_h) * 1.01  # Only 1% extra - minimal
             
             new_w = int(cropped_w * scale)
             new_h = int(cropped_h * scale)
@@ -469,27 +435,27 @@ class ThumbnailProcessorV32:
             # Moderate detail enhancement - not too strong
             # Sharpening for clarity
             enhancer = ImageEnhance.Sharpness(final)
-            final = enhancer.enhance(1.4)  # Moderate sharpening
+            final = enhancer.enhance(1.3)  # Moderate sharpening
             
             # Additional detail enhancement
             final_np = np.array(final)
             
             # Unsharp mask
             gaussian = cv2.GaussianBlur(final_np, (0, 0), 2.0)
-            unsharp = cv2.addWeighted(final_np, 1.4, gaussian, -0.4, 0)
+            unsharp = cv2.addWeighted(final_np, 1.3, gaussian, -0.3, 0)
             
-            # Edge enhancement - less aggressive
+            # Edge enhancement - gentle
             kernel = np.array([[-1,-1,-1],
                               [-1, 9,-1],
-                              [-1,-1,-1]]) / 10.0  # Softer kernel
+                              [-1,-1,-1]]) / 12.0  # Very soft kernel
             
             enhanced = cv2.filter2D(unsharp, -1, kernel)
-            final_np = cv2.addWeighted(unsharp, 0.8, enhanced, 0.2, 0)  # Less edge enhancement
+            final_np = cv2.addWeighted(unsharp, 0.85, enhanced, 0.15, 0)  # Minimal edge enhancement
             
             # Ensure no artifacts
             final_np = np.clip(final_np, 0, 255).astype(np.uint8)
             
-            print(f"[{VERSION}] Created perfect 1000x1300 thumbnail with less zoom")
+            print(f"[{VERSION}] Created perfect 1000x1300 thumbnail with much less zoom")
             return Image.fromarray(final_np)
             
         except Exception as e:
@@ -498,9 +464,9 @@ class ThumbnailProcessorV32:
             return image.resize((1000, 1300), Image.Resampling.LANCZOS)
 
 def handler(job):
-    """RunPod handler - V32 with bright processing and less zoom"""
+    """RunPod handler - V33 with bright processing and much less zoom"""
     print(f"[{VERSION}] ====== Thumbnail Handler Started ======")
-    print(f"[{VERSION}] Bright Processing & Less Zoom")
+    print(f"[{VERSION}] Bright Processing & Much Less Zoom")
     
     start_time = time.time()
     
@@ -591,7 +557,7 @@ def handler(job):
             }
         
         # Create processor
-        processor = ThumbnailProcessorV32()
+        processor = ThumbnailProcessorV33()
         
         # Process image step by step
         had_black_frame = False
@@ -601,27 +567,27 @@ def handler(job):
             image, had_black_frame = processor.detect_black_box_ultimate(image)
             print(f"[{VERSION}] Black box detection complete: {had_black_frame}")
             
-            # Additional cleanup with Replicate if available
-            if had_black_frame and REPLICATE_AVAILABLE:
-                image = processor.remove_black_frame_replicate(image, had_black_frame)
-                print(f"[{VERSION}] Additional cleanup with Replicate done")
+            # NOTE: Replicate temporarily disabled - needs correct model
+            # if had_black_frame and REPLICATE_AVAILABLE:
+            #     image = processor.remove_black_frame_replicate(image, had_black_frame)
+            #     print(f"[{VERSION}] Additional cleanup with Replicate done")
                 
         except Exception as e:
             print(f"[{VERSION}] Error in black frame detection: {e}")
             traceback.print_exc()
         
-        # 2. Apply color enhancement matching v32 - AFTER masking removal
+        # 2. Apply color enhancement matching v33 - AFTER masking removal
         try:
-            image = processor.apply_enhancement_matching_v32(image)
-            print(f"[{VERSION}] Color enhancement applied (v32 style - minimal bright)")
+            image = processor.apply_enhancement_matching_v33(image)
+            print(f"[{VERSION}] Color enhancement applied (v33 style - brighter)")
         except Exception as e:
             print(f"[{VERSION}] Error in color enhancement: {e}")
             traceback.print_exc()
         
-        # 3. Create PERFECT 1000x1300 thumbnail with LESS ZOOM
+        # 3. Create PERFECT 1000x1300 thumbnail with MUCH LESS ZOOM
         try:
             thumbnail = processor.create_perfect_thumbnail_1000x1300(image)
-            print(f"[{VERSION}] Perfect thumbnail created with less zoom: {thumbnail.size}")
+            print(f"[{VERSION}] Perfect thumbnail created with much less zoom: {thumbnail.size}")
         except Exception as e:
             print(f"[{VERSION}] Error creating thumbnail: {e}")
             traceback.print_exc()
@@ -661,14 +627,15 @@ def handler(job):
                 "success": True,
                 "version": VERSION,
                 "thumbnail_size": [1000, 1300],
-                "processing_method": "bright_less_zoom_v32",
+                "processing_method": "bright_much_less_zoom_v33",
                 "processing_time": round(processing_time, 2),
                 "replicate_available": REPLICATE_AVAILABLE,
+                "replicate_used": False,  # Temporarily disabled
                 "warning": "Google Script must add padding: while (base64Data.length % 4 !== 0) { base64Data += '='; }"
             }
         }
         
-        print(f"[{VERSION}] ====== Success - Returning Bright Thumbnail with Less Zoom ======")
+        print(f"[{VERSION}] ====== Success - Returning Bright Thumbnail with Much Less Zoom ======")
         print(f"[{VERSION}] Total processing time: {processing_time:.2f}s")
         print(f"[{VERSION}] Black frame detected and removed: {had_black_frame}")
         
@@ -693,16 +660,16 @@ def handler(job):
 if __name__ == "__main__":
     print("="*70)
     print(f"Wedding Ring Thumbnail {VERSION}")
-    print("V32 - Bright Thumbnail with Less Zoom")
+    print("V33 - Bright Thumbnail with Much Less Zoom")
     print("Features:")
     print("- Ultra-sensitive black detection (threshold: 25)")
     print("- Multi-line edge scanning")
     print("- Contour-based rectangle detection")
     print("- Histogram analysis")
-    print("- Replicate API cleanup")
-    print("- Less zoom (15% padding)")
-    print("- Bright enhancement matching v32")
-    print("- Moderate detail enhancement")
+    print("- Replicate API temporarily disabled")
+    print("- MUCH less zoom (35% padding)")
+    print("- Brighter enhancement matching v33")
+    print("- Gentle detail enhancement")
     print(f"Replicate Available: {REPLICATE_AVAILABLE}")
     print("CRITICAL: Padding is removed for Make.com")
     print("Google Apps Script MUST add padding back:")
