@@ -12,10 +12,15 @@ import time
 import cv2
 from scipy import ndimage
 import json
+import logging
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 class ThumbnailHandler:
     def __init__(self):
         """Initialize thumbnail handler with Replicate client"""
+        logger.info("Thumbnail Handler v40 initialized - Stable Version")
         self.replicate_client = replicate.Client(api_token=os.environ.get("REPLICATE_API_TOKEN"))
         self.ring_colors = {
             'yellow_gold': {
@@ -47,12 +52,66 @@ class ThumbnailHandler:
             }
         }
 
+    def find_input_url(self, event: Dict[str, Any]) -> Optional[str]:
+        """Find input URL from various possible paths in the event"""
+        logger.info("Searching for input URL in event structure...")
+        
+        # Direct input paths
+        input_data = event.get('input', {})
+        
+        # Try direct URL keys
+        url_keys = ['input_url', 'image_url', 'url', 'image', 'enhanced_image']
+        for key in url_keys:
+            if key in input_data and input_data[key]:
+                logger.info(f"Found URL in direct input: {key}")
+                return input_data[key]
+        
+        # Try Make.com nested structures
+        # Pattern: data.output.output
+        if 'data' in input_data and isinstance(input_data['data'], dict):
+            data = input_data['data']
+            if 'output' in data and isinstance(data['output'], dict):
+                output = data['output']
+                if 'output' in output and isinstance(output['output'], dict):
+                    nested_output = output['output']
+                    for key in url_keys:
+                        if key in nested_output and nested_output[key]:
+                            logger.info(f"Found URL in data.output.output: {key}")
+                            return nested_output[key]
+                else:
+                    for key in url_keys:
+                        if key in output and output[key]:
+                            logger.info(f"Found URL in data.output: {key}")
+                            return output[key]
+        
+        # Try numbered keys (like '4')
+        for num_key in input_data:
+            if num_key.isdigit() and isinstance(input_data[num_key], dict):
+                numbered_data = input_data[num_key]
+                if 'data' in numbered_data and isinstance(numbered_data['data'], dict):
+                    data = numbered_data['data']
+                    if 'output' in data and isinstance(data['output'], dict):
+                        output = data['output']
+                        if 'output' in output and isinstance(output['output'], dict):
+                            nested_output = output['output']
+                            for key in url_keys:
+                                if key in nested_output and nested_output[key]:
+                                    logger.info(f"Found URL in {num_key}.data.output.output: {key}")
+                                    return nested_output[key]
+        
+        # Log what we found for debugging
+        logger.warning(f"Could not find URL. Event keys: {list(event.keys())}")
+        if input_data:
+            logger.warning(f"Input keys: {list(input_data.keys())}")
+        
+        return None
+
     def load_image_from_source(self, source: str) -> Optional[Image.Image]:
         """Load image from URL or base64 string with improved error handling"""
         try:
             # URL case
             if source.startswith(('http://', 'https://')):
-                print(f"Loading image from URL: {source[:100]}...")
+                logger.info(f"Loading image from URL: {source[:100]}...")
                 
                 # Multiple retry attempts with different headers
                 headers_list = [
@@ -61,8 +120,9 @@ class ThumbnailHandler:
                     {}  # No headers
                 ]
                 
-                for headers in headers_list:
+                for idx, headers in enumerate(headers_list):
                     try:
+                        logger.info(f"Attempt {idx + 1} with headers: {headers}")
                         response = requests.get(source, headers=headers, timeout=30, stream=True)
                         if response.status_code == 200:
                             image_data = io.BytesIO(response.content)
@@ -72,19 +132,27 @@ class ThumbnailHandler:
                             if img.mode not in ('RGB', 'RGBA'):
                                 img = img.convert('RGB')
                             
-                            print(f"Successfully loaded image: {img.size}, mode: {img.mode}")
+                            logger.info(f"Successfully loaded image: {img.size}, mode: {img.mode}")
                             return img
+                        else:
+                            logger.warning(f"HTTP {response.status_code} for attempt {idx + 1}")
                     except Exception as e:
-                        print(f"Attempt with headers {headers} failed: {str(e)}")
+                        logger.warning(f"Attempt {idx + 1} failed: {str(e)}")
                         continue
                 
-                print(f"All URL loading attempts failed")
+                logger.error(f"All URL loading attempts failed")
                 return None
                 
             # Base64 case
             elif source.startswith('data:image'):
-                print("Loading image from base64 data URL")
+                logger.info("Loading image from base64 data URL")
                 base64_str = source.split(',')[1]
+                
+                # Fix padding if needed
+                padding = 4 - len(base64_str) % 4
+                if padding != 4:
+                    base64_str += '=' * padding
+                    
                 image_data = base64.b64decode(base64_str)
                 img = Image.open(io.BytesIO(image_data))
                 if img.mode not in ('RGB', 'RGBA'):
@@ -93,7 +161,7 @@ class ThumbnailHandler:
                 
             # Raw base64 case
             else:
-                print("Loading image from raw base64")
+                logger.info("Loading image from raw base64")
                 # Handle potential padding issues
                 padding = 4 - len(source) % 4
                 if padding != 4:
@@ -106,7 +174,7 @@ class ThumbnailHandler:
                 return img
                 
         except Exception as e:
-            print(f"Error loading image: {str(e)}")
+            logger.error(f"Error loading image: {str(e)}")
             traceback.print_exc()
             return None
 
@@ -206,20 +274,20 @@ class ThumbnailHandler:
             # Try different Replicate models
             models = [
                 "stability-ai/stable-diffusion-inpainting:95b7223104132402a9ae91cc677285bc5eb997834bd2349fa486f53910fd68b3",
-                "andreasjansson/stable-diffusion-inpainting:0063e4b2f59027f463e5f163a44b8f24968c6f2e8287f7e2e344570e6669f16f"
+                "andreasjansson/stable-diffusion-inpainting:e490d072a34a94a11e9711ed5a6ba621c3fab884eda1665d9d3a282d65a21180"
             ]
             
             for model in models:
                 for attempt in range(max_retries):
                     try:
-                        print(f"Attempting inpainting with model {model.split('/')[1]}, attempt {attempt + 1}")
+                        logger.info(f"Attempting inpainting with model {model.split('/')[1]}, attempt {attempt + 1}")
                         
                         output = self.replicate_client.run(
                             model,
                             input={
                                 "image": img_buffer,
                                 "mask": mask_buffer,
-                                "prompt": "high quality wedding ring, professional jewelry photography, clean background, detailed metal surface",
+                                "prompt": "high quality wedding ring, professional jewelry photography, clean white background, detailed metal surface",
                                 "negative_prompt": "black areas, shadows, dark spots, masking tape, blur, low quality",
                                 "num_inference_steps": 50,
                                 "guidance_scale": 7.5
@@ -233,17 +301,17 @@ class ThumbnailHandler:
                                 return Image.open(io.BytesIO(response.content))
                                 
                     except Exception as e:
-                        print(f"Inpainting attempt {attempt + 1} failed: {str(e)}")
+                        logger.warning(f"Inpainting attempt {attempt + 1} failed: {str(e)}")
                         if attempt < max_retries - 1:
                             time.sleep(2)
                         continue
             
             # If all attempts fail, apply fallback enhancement
-            print("All inpainting attempts failed, using fallback enhancement")
+            logger.warning("All inpainting attempts failed, using fallback enhancement")
             return self.apply_fallback_enhancement(image, mask)
             
         except Exception as e:
-            print(f"Error in remove_masking_with_replicate: {str(e)}")
+            logger.error(f"Error in remove_masking_with_replicate: {str(e)}")
             return self.apply_fallback_enhancement(image, mask)
 
     def apply_fallback_enhancement(self, image: Image.Image, mask: np.ndarray) -> Image.Image:
@@ -310,7 +378,7 @@ class ThumbnailHandler:
             return self.ring_colors[best_color]['display']
             
         except Exception as e:
-            print(f"Error in color detection: {str(e)}")
+            logger.error(f"Error in color detection: {str(e)}")
             return 'White Gold'
 
     def find_optimal_crop(self, image: Image.Image, mask: np.ndarray) -> Tuple[int, int, int, int]:
@@ -417,37 +485,38 @@ class ThumbnailHandler:
             'inpainting_applied': False,
             'crop_coords': None,
             'final_size': None,
-            'detected_color': None
+            'detected_color': None,
+            'version': 'v40_stable'
         }
         
         try:
             # Load image with improved error handling
-            print(f"Starting to load image from: {input_url[:100]}...")
+            logger.info(f"Starting to load image from: {input_url[:100]}...")
             image = self.load_image_from_source(input_url)
             
             if image is None:
                 raise ValueError("Failed to load image from source")
             
             processing_info['original_size'] = image.size
-            print(f"Image loaded successfully: {image.size}")
+            logger.info(f"Image loaded successfully: {image.size}")
             
             # Ensure image is in correct format
             if image.size != (6720, 4480):
-                print(f"Resizing image from {image.size} to (6720, 4480)")
+                logger.info(f"Resizing image from {image.size} to (6720, 4480)")
                 image = image.resize((6720, 4480), Image.Resampling.LANCZOS)
             
             # Create multi-stage mask
-            print("Creating multi-stage mask...")
+            logger.info("Creating multi-stage mask...")
             mask = self.create_multi_stage_mask(image)
             processing_info['mask_created'] = True
             
             # Remove masking
-            print("Removing black masking...")
+            logger.info("Removing black masking...")
             cleaned_image = self.remove_masking_with_replicate(image, mask)
             processing_info['inpainting_applied'] = True
             
             # Find optimal crop
-            print("Finding optimal crop area...")
+            logger.info("Finding optimal crop area...")
             crop_coords = self.find_optimal_crop(cleaned_image, mask)
             processing_info['crop_coords'] = crop_coords
             
@@ -459,42 +528,41 @@ class ThumbnailHandler:
             processing_info['final_size'] = thumbnail.size
             
             # Detect color
-            print("Detecting ring color...")
+            logger.info("Detecting ring color...")
             detected_color = self.detect_ring_color(thumbnail)
             processing_info['detected_color'] = detected_color
             
             # Enhance details
-            print("Enhancing ring details...")
+            logger.info("Enhancing ring details...")
             final_image = self.enhance_ring_details(thumbnail)
             
             # Convert to base64
-            print("Converting to base64...")
+            logger.info("Converting to base64...")
             base64_image = self.image_to_base64_no_padding(final_image)
             
             return base64_image, detected_color, processing_info
             
         except Exception as e:
-            print(f"Error in process_thumbnail: {str(e)}")
+            logger.error(f"Error in process_thumbnail: {str(e)}")
             traceback.print_exc()
             raise
 
 def handler(event):
     """RunPod handler function with proper return structure"""
+    logger.info("=== Thumbnail Handler v40 Started ===")
+    
     try:
-        print("Starting thumbnail handler...")
-        print(f"Event received: {json.dumps(event, indent=2)}")
+        handler_instance = ThumbnailHandler()
         
-        # Extract input URL
-        input_data = event.get("input", {})
-        input_url = input_data.get("image_url", "")
+        # Find input URL from various possible paths
+        input_url = handler_instance.find_input_url(event)
         
         if not input_url:
-            raise ValueError("No image_url provided in input")
+            raise ValueError("No input URL found in event. Please check the input structure.")
         
-        print(f"Processing image from URL: {input_url[:100]}...")
+        logger.info(f"Processing image from URL: {input_url[:100]}...")
         
         # Process thumbnail
-        handler_instance = ThumbnailHandler()
         processed_image, detected_color, processing_info = handler_instance.process_thumbnail(input_url)
         
         # Return structure matching Make.com expectations
@@ -507,12 +575,15 @@ def handler(event):
             }
         }
         
-        print("Processing completed successfully")
+        logger.info("Processing completed successfully")
+        logger.info(f"Detected color: {detected_color}")
+        logger.info(f"Final size: {processing_info['final_size']}")
+        
         return result
         
     except Exception as e:
         error_msg = str(e)
-        print(f"Error in handler: {error_msg}")
+        logger.error(f"Error in handler: {error_msg}")
         traceback.print_exc()
         
         return {
@@ -524,4 +595,5 @@ def handler(event):
         }
 
 # RunPod endpoint
-runpod.serverless.start({"handler": handler})
+if __name__ == "__main__":
+    runpod.serverless.start({"handler": handler})
