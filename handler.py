@@ -13,7 +13,7 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-VERSION = "V71-BrightClean"
+VERSION = "V72-ImprovedColorDetection"
 
 def find_input_data(data):
     """Find input data recursively"""
@@ -54,34 +54,12 @@ def base64_to_image(base64_string):
     img_data = base64.b64decode(base64_string)
     return Image.open(BytesIO(img_data))
 
-def apply_basic_enhancement(image):
-    """Apply basic enhancement matching Enhancement handler"""
-    if image.mode != 'RGB':
-        if image.mode == 'RGBA':
-            background = Image.new('RGB', image.size, (255, 255, 255))
-            background.paste(image, mask=image.split()[3])
-            image = background
-        else:
-            image = image.convert('RGB')
-    
-    # Match Enhancement V71 values
-    brightness = ImageEnhance.Brightness(image)
-    image = brightness.enhance(1.12)  # Default brightness
-    
-    contrast = ImageEnhance.Contrast(image)
-    image = contrast.enhance(1.08)
-    
-    color = ImageEnhance.Color(image)
-    image = color.enhance(1.05)
-    
-    return image
-
 def detect_ring_color(image):
-    """Detect ring color - same as Enhancement"""
+    """Improved color detection matching Enhancement V72"""
     img_array = np.array(image)
     height, width = img_array.shape[:2]
     
-    # Center 50% region
+    # Focus on center 50%
     center_y, center_x = height // 2, width // 2
     crop_size = min(height, width) // 2
     
@@ -91,8 +69,12 @@ def detect_ring_color(image):
     x2 = min(width, center_x + crop_size // 2)
     
     center_region = img_array[y1:y2, x1:x2]
+    
+    # Convert to HSV for better color analysis
     hsv = cv2.cvtColor(center_region, cv2.COLOR_RGB2HSV)
     
+    # Calculate average values
+    avg_hue = np.mean(hsv[:, :, 0])
     avg_saturation = np.mean(hsv[:, :, 1])
     avg_value = np.mean(hsv[:, :, 2])
     
@@ -101,6 +83,7 @@ def detect_ring_color(image):
     g_mean = np.mean(center_region[:, :, 1])
     b_mean = np.mean(center_region[:, :, 2])
     
+    # Normalize RGB values
     max_rgb = max(r_mean, g_mean, b_mean)
     if max_rgb > 0:
         r_norm = r_mean / max_rgb
@@ -109,162 +92,176 @@ def detect_ring_color(image):
     else:
         r_norm = g_norm = b_norm = 1.0
     
-    # Color detection
-    if avg_saturation < 25:
-        color = "무도금화이트" if avg_value > 200 else "화이트골드"
-    elif r_norm > 0.95 and 0.85 < g_norm < 0.95:
-        color = "로즈골드" if avg_saturation > 40 else "옐로우골드"
-    elif abs(r_norm - g_norm) < 0.1 and abs(g_norm - b_norm) < 0.1:
-        color = "화이트골드"
+    # Calculate color ratios
+    rg_ratio = r_mean / (g_mean + 1)  # Red to Green ratio
+    rb_ratio = r_mean / (b_mean + 1)  # Red to Blue ratio
+    gb_ratio = g_mean / (b_mean + 1)  # Green to Blue ratio
+    
+    # Improved color detection logic
+    if avg_saturation < 15 and avg_value > 220:
+        # Very low saturation + high brightness = 무도금화이트
+        return "무도금화이트"
+    elif avg_saturation < 30:
+        # Low saturation = 화이트골드
+        return "화이트골드"
+    elif avg_hue >= 15 and avg_hue <= 35 and gb_ratio > 1.1:
+        # Hue in yellow range AND green > blue = 옐로우골드
+        return "옐로우골드"
+    elif rg_ratio > 1.15 and avg_hue < 20:
+        # High red ratio with low hue = 로즈골드
+        return "로즈골드"
+    elif gb_ratio > 1.05:
+        # Green slightly higher than blue = 옐로우골드
+        return "옐로우골드"
     else:
-        warmth = (r_norm + g_norm) / 2 - b_norm
-        color = "옐로우골드" if warmth > 0.1 else "화이트골드"
-    
-    logger.info(f"Detected color: {color}")
-    return color
+        # Default based on warmth
+        if r_norm > 0.95 and g_norm > 0.85:
+            return "옐로우골드"
+        elif r_norm > g_norm and r_norm > b_norm:
+            return "로즈골드"
+        else:
+            return "화이트골드"
 
-def apply_color_specific_enhancement(image, color):
-    """Apply lighter color-specific enhancement to match Enhancement handler"""
-    enhanced = image.copy()
+def apply_basic_enhancement(image):
+    """Apply basic enhancement matching Enhancement V72"""
+    if image.mode != 'RGB':
+        if image.mode == 'RGBA':
+            background = Image.new('RGB', image.size, (255, 255, 255))
+            background.paste(image, mask=image.split()[3])
+            image = background
+        else:
+            image = image.convert('RGB')
     
-    if color == '무도금화이트':
-        # Lighter pure white enhancement
-        brightness = ImageEnhance.Brightness(enhanced)
-        enhanced = brightness.enhance(1.08)  # Much lighter than before
-        
-        # Gentle desaturation
-        color_enhancer = ImageEnhance.Color(enhanced)
-        enhanced = color_enhancer.enhance(0.8)
-        
-        # Very slight blue tint
-        img_array = np.array(enhanced)
-        img_array[:, :, 2] = np.minimum(img_array[:, :, 2] * 1.03, 255).astype(np.uint8)
-        enhanced = Image.fromarray(img_array)
+    # Match Enhancement V72 basic settings
+    brightness = ImageEnhance.Brightness(image)
+    image = brightness.enhance(1.12)
     
-    elif color == '옐로우골드':
-        # Light warm enhancement
-        brightness = ImageEnhance.Brightness(enhanced)
-        enhanced = brightness.enhance(1.05)
-        
-        img_array = np.array(enhanced)
-        img_array[:, :, 0] = np.minimum(img_array[:, :, 0] * 1.03, 255).astype(np.uint8)
-        img_array[:, :, 1] = np.minimum(img_array[:, :, 1] * 1.02, 255).astype(np.uint8)
-        enhanced = Image.fromarray(img_array)
+    contrast = ImageEnhance.Contrast(image)
+    image = contrast.enhance(1.08)
     
-    elif color == '로즈골드':
-        # Light rose enhancement
-        brightness = ImageEnhance.Brightness(enhanced)
-        enhanced = brightness.enhance(1.06)
-        
-        img_array = np.array(enhanced)
-        img_array[:, :, 0] = np.minimum(img_array[:, :, 0] * 1.04, 255).astype(np.uint8)
-        enhanced = Image.fromarray(img_array)
+    color = ImageEnhance.Color(image)
+    image = color.enhance(1.05)
     
-    elif color == '화이트골드':
-        # Light cool enhancement
-        brightness = ImageEnhance.Brightness(enhanced)
-        enhanced = brightness.enhance(1.08)
-        
-        contrast = ImageEnhance.Contrast(enhanced)
-        enhanced = contrast.enhance(1.05)
-        
-        img_array = np.array(enhanced)
-        img_array[:, :, 2] = np.minimum(img_array[:, :, 2] * 1.02, 255).astype(np.uint8)
-        enhanced = Image.fromarray(img_array)
-    
-    # Light sharpening
-    sharpness = ImageEnhance.Sharpness(enhanced)
-    enhanced = sharpness.enhance(1.3)
-    
-    return enhanced
+    return image
 
-def create_thumbnail_with_crop(image, size=(1000, 1300)):
+def create_thumbnail_with_crop(image, target_size=(1000, 1300)):
     """Create thumbnail with minimal 10% crop"""
-    logger.info(f"Creating thumbnail - original size: {image.size}")
+    original_width, original_height = image.size
     
-    target_ratio = 1000 / 1300  # 0.769
-    img_width, img_height = image.size
-    
-    # Only 10% crop for minimal zoom
+    # 10% crop from each side
     crop_percentage = 0.1
+    crop_width = int(original_width * crop_percentage)
+    crop_height = int(original_height * crop_percentage)
     
-    # Calculate crop area
-    crop_width = int(img_width * (1 - crop_percentage))
-    crop_height = int(img_height * (1 - crop_percentage))
+    # Calculate crop box
+    left = crop_width
+    top = crop_height
+    right = original_width - crop_width
+    bottom = original_height - crop_height
     
-    # Adjust for target ratio
-    current_ratio = crop_width / crop_height
+    # Crop image
+    cropped = image.crop((left, top, right, bottom))
     
-    if current_ratio > target_ratio:
-        # Too wide - increase height
-        crop_height = int(crop_width / target_ratio)
-    else:
-        # Too tall - increase width
-        crop_width = int(crop_height * target_ratio)
+    # Resize to target
+    thumbnail = cropped.resize(target_size, Image.Resampling.LANCZOS)
     
-    # Ensure we don't exceed image bounds
-    crop_width = min(crop_width, img_width)
-    crop_height = min(crop_height, img_height)
-    
-    # Center align
-    x_offset = max(0, (img_width - crop_width) // 2)
-    y_offset = max(0, (img_height - crop_height) // 2)
-    
-    # Crop
-    crop_box = (x_offset, y_offset, x_offset + crop_width, y_offset + crop_height)
-    cropped = image.crop(crop_box)
-    
-    # Resize to final size
-    thumbnail = cropped.resize(size, Image.Resampling.LANCZOS)
-    
-    logger.info(f"Thumbnail created: {thumbnail.size}")
     return thumbnail
+
+def apply_color_specific_enhancement(image, detected_color):
+    """Apply light color-specific enhancement for thumbnail"""
+    if detected_color == "무도금화이트":
+        # Strong pure white enhancement
+        img_array = np.array(image)
+        
+        # Convert to LAB for better white control
+        lab = cv2.cvtColor(img_array, cv2.COLOR_RGB2LAB).astype(np.float32)
+        
+        # Increase lightness significantly
+        lab[:, :, 0] = np.clip(lab[:, :, 0] * 1.2, 0, 255)
+        
+        # Remove all color (pure white)
+        lab[:, :, 1] = lab[:, :, 1] * 0.3  # Nearly eliminate a channel
+        lab[:, :, 2] = lab[:, :, 2] * 0.3  # Nearly eliminate b channel
+        
+        # Convert back
+        lab = lab.astype(np.uint8)
+        img_array = cv2.cvtColor(lab, cv2.COLOR_LAB2RGB)
+        image = Image.fromarray(img_array)
+        
+        # Additional brightness
+        brightness = ImageEnhance.Brightness(image)
+        image = brightness.enhance(1.1)
+        
+        # Remove saturation completely
+        color = ImageEnhance.Color(image)
+        image = color.enhance(0.2)
+        
+        # Blue boost to eliminate yellow
+        img_array = np.array(image)
+        img_array[:, :, 2] = np.clip(img_array[:, :, 2] * 1.1, 0, 255)
+        image = Image.fromarray(img_array)
+        
+    elif detected_color == "옐로우골드":
+        # Light warm enhancement
+        brightness = ImageEnhance.Brightness(image)
+        image = brightness.enhance(1.05)
+        
+    elif detected_color == "로즈골드":
+        # Light pink enhancement
+        brightness = ImageEnhance.Brightness(image)
+        image = brightness.enhance(1.03)
+        
+    elif detected_color == "화이트골드":
+        # Light cool enhancement
+        brightness = ImageEnhance.Brightness(image)
+        image = brightness.enhance(1.06)
+    
+    return image
 
 def apply_center_vignette(image):
     """Apply very subtle center vignette"""
     width, height = image.size
     
-    # Create gradient mask
-    mask = Image.new('L', (width, height), 255)
-    mask_array = np.array(mask)
+    # Create radial gradient
+    x = np.linspace(-1, 1, width)
+    y = np.linspace(-1, 1, height)
+    X, Y = np.meshgrid(x, y)
     
-    center_x, center_y = width // 2, height // 2
+    # Distance from center
+    distance = np.sqrt(X**2 + Y**2)
     
-    for y in range(height):
-        for x in range(width):
-            dx = (x - center_x) / center_x
-            dy = (y - center_y) / center_y
-            dist = np.sqrt(dx**2 + dy**2)
-            
-            # Very subtle vignette - almost imperceptible
-            brightness = int(255 * (1 - dist * 0.05))
-            brightness = max(242, brightness)  # Very bright minimum
-            mask_array[y, x] = brightness
+    # Very subtle vignette (0.05 strength)
+    vignette = 1 - (0.05 * np.clip(distance - 0.5, 0, 1))
+    vignette = np.clip(vignette, 0.95, 1.0)  # Minimum brightness 95%
     
-    mask = Image.fromarray(mask_array)
+    # Apply vignette
+    img_array = np.array(image)
+    for i in range(3):
+        img_array[:, :, i] = img_array[:, :, i] * vignette
     
-    # Apply vignette with very light background
-    vignette_layer = Image.new('RGB', (width, height), (250, 250, 250))
-    return Image.composite(image, vignette_layer, mask)
+    return Image.fromarray(img_array.astype(np.uint8))
 
-def image_to_base64(image, format='JPEG'):
-    """Convert PIL Image to base64"""
+def image_to_base64(image):
+    """Convert image to base64 without padding for Make.com"""
     buffered = BytesIO()
-    if format == 'JPEG' and image.mode == 'RGBA':
-        rgb_image = Image.new('RGB', image.size, (255, 255, 255))
-        rgb_image.paste(image, mask=image.split()[3])
-        image = rgb_image
     
-    image.save(buffered, format=format, quality=95)
+    if image.mode == 'RGBA':
+        background = Image.new('RGB', image.size, (255, 255, 255))
+        background.paste(image, mask=image.split()[3])
+        image = background
+    
+    image.save(buffered, format='PNG', quality=95)
     img_base64 = base64.b64encode(buffered.getvalue()).decode()
     
     # Remove padding for Make.com
-    return img_base64.rstrip('=')
+    img_base64_no_padding = img_base64.rstrip('=')
+    
+    return img_base64_no_padding
 
 def handler(event):
-    """Thumbnail handler"""
+    """Thumbnail handler function"""
     try:
-        logger.info(f"[{VERSION}] Event received")
+        logger.info(f"Thumbnail {VERSION} started")
         
         # Find input data
         input_data = find_input_data(event)
@@ -272,7 +269,7 @@ def handler(event):
         if not input_data:
             raise ValueError("No input data found")
         
-        # Load image
+        # Get image
         image = None
         
         if isinstance(input_data, dict):
@@ -289,7 +286,7 @@ def handler(event):
                 image = base64_to_image(input_data)
         
         if not image:
-            raise ValueError("Could not load image")
+            raise ValueError("Failed to load image")
         
         logger.info(f"Image loaded: {image.size}")
         
@@ -299,10 +296,11 @@ def handler(event):
         # 2. Create thumbnail with minimal crop (10%)
         thumbnail = create_thumbnail_with_crop(enhanced_image)
         
-        # 3. Detect color
+        # 3. Detect color with improved logic
         detected_color = detect_ring_color(thumbnail)
+        logger.info(f"Detected color: {detected_color}")
         
-        # 4. Apply light color-specific enhancement
+        # 4. Apply color-specific enhancement
         thumbnail = apply_color_specific_enhancement(thumbnail, detected_color)
         
         # 5. Apply very subtle vignette
@@ -328,12 +326,17 @@ def handler(event):
         
     except Exception as e:
         logger.error(f"Error: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
+        
         return {
             "output": {
                 "error": str(e),
                 "status": "failed",
-                "version": VERSION
+                "version": VERSION,
+                "traceback": traceback.format_exc()
             }
         }
 
+# RunPod handler
 runpod.serverless.start({"handler": handler})
