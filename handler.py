@@ -1,18 +1,114 @@
 import runpod
 import base64
 from io import BytesIO
-from PIL import Image, ImageOps, ImageDraw, ImageFont
-import requests
+from PIL import Image, ImageOps, ImageDraw, ImageFont, ImageEnhance, ImageFilter
+import numpy as np
+import cv2
 
-# 색상 매핑
-COLOR_MAPPING = {
-    'yellow_gold': {'bg': (255, 248, 220), 'text': (218, 165, 32)},
-    'rose_gold': {'bg': (255, 228, 225), 'text': (183, 110, 121)}, 
-    'white_gold': {'bg': (245, 245, 245), 'text': (192, 192, 192)},
-    'white': {'bg': (255, 255, 255), 'text': (200, 200, 200)}
-}
+# 목표 썸네일 크기
+THUMBNAIL_WIDTH = 1000
+THUMBNAIL_HEIGHT = 1300
 
-def create_thumbnail(base64_image, metal_color='yellow_gold', size=(800, 800)):
+def detect_wedding_rings(image):
+    """웨딩링 감지 및 위치 찾기"""
+    # PIL to OpenCV
+    img_array = np.array(image)
+    if len(img_array.shape) == 3 and img_array.shape[2] == 4:
+        img_array = cv2.cvtColor(img_array, cv2.COLOR_RGBA2RGB)
+    
+    # 감지를 위한 이미지 축소 (최대 1500px)
+    height, width = img_array.shape[:2]
+    if max(height, width) > 1500:
+        scale = 1500 / max(height, width)
+        new_width = int(width * scale)
+        new_height = int(height * scale)
+        img_small = cv2.resize(img_array, (new_width, new_height))
+    else:
+        img_small = img_array
+        scale = 1.0
+    
+    # 그레이스케일 변환
+    gray = cv2.cvtColor(img_small, cv2.COLOR_RGB2GRAY)
+    
+    # 엣지 검출
+    edges = cv2.Canny(gray, 50, 150)
+    
+    # 원형 객체 감지
+    circles = cv2.HoughCircles(
+        gray,
+        cv2.HOUGH_GRADIENT,
+        dp=1,
+        minDist=30,
+        param1=50,
+        param2=30,
+        minRadius=20,
+        maxRadius=200
+    )
+    
+    if circles is not None:
+        circles = np.uint16(np.around(circles))
+        # 원본 크기로 스케일 복원
+        circles[0, :, :2] = circles[0, :, :2] / scale
+        
+        # 가장 큰 원들 찾기
+        sorted_circles = sorted(circles[0], key=lambda x: x[2], reverse=True)
+        
+        # 상위 2개 원의 중심점 계산
+        if len(sorted_circles) >= 2:
+            center_x = (sorted_circles[0][0] + sorted_circles[1][0]) // 2
+            center_y = (sorted_circles[0][1] + sorted_circles[1][1]) // 2
+        else:
+            center_x = sorted_circles[0][0]
+            center_y = sorted_circles[0][1]
+        
+        return int(center_x), int(center_y), True
+    
+    # 원을 못 찾으면 이미지 중앙 사용
+    return width // 2, height // 2, False
+
+def detect_metal_color(image, ring_area=None):
+    """웨딩링의 금속 색상 감지"""
+    img_array = np.array(image)
+    
+    # 링 영역이 있으면 해당 부분만 분석
+    if ring_area:
+        x, y, w, h = ring_area
+        img_array = img_array[y:y+h, x:x+w]
+    
+    # HSV 변환
+    hsv = cv2.cvtColor(img_array, cv2.COLOR_RGB2HSV)
+    
+    # 색상별 범위 정의
+    yellow_lower = np.array([20, 100, 100])
+    yellow_upper = np.array([30, 255, 255])
+    
+    rose_lower = np.array([0, 50, 100])
+    rose_upper = np.array([10, 150, 255])
+    
+    white_lower = np.array([0, 0, 200])
+    white_upper = np.array([180, 30, 255])
+    
+    # 마스크 생성
+    yellow_mask = cv2.inRange(hsv, yellow_lower, yellow_upper)
+    rose_mask = cv2.inRange(hsv, rose_lower, rose_upper)
+    white_mask = cv2.inRange(hsv, white_lower, white_upper)
+    
+    # 픽셀 수 계산
+    yellow_pixels = cv2.countNonZero(yellow_mask)
+    rose_pixels = cv2.countNonZero(rose_mask)
+    white_pixels = cv2.countNonZero(white_mask)
+    
+    # 가장 많은 색상 결정
+    max_pixels = max(yellow_pixels, rose_pixels, white_pixels)
+    
+    if max_pixels == yellow_pixels:
+        return 'yellow_gold'
+    elif max_pixels == rose_pixels:
+        return 'rose_gold'
+    else:
+        return 'white'
+
+def create_thumbnail(base64_image, size=(THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT)):
     """썸네일 생성 함수"""
     try:
         # base64 디코드
@@ -118,26 +214,22 @@ def handler(job):
         
         # 입력 받기
         base64_image = job_input.get('image')
-        metal_color = job_input.get('metal_color', 'yellow_gold')
         
         if not base64_image:
             return {"output": {"error": "No image provided", "success": False}}
         
-        # 색상 검증
-        valid_colors = ['yellow_gold', 'rose_gold', 'white_gold', 'white']
-        if metal_color not in valid_colors:
-            metal_color = 'yellow_gold'
-        
-        # 썸네일 생성
-        thumbnail_base64 = create_thumbnail(base64_image, metal_color)
+        # 썸네일 생성 (웨딩링 감지 → 크롭 → 색상 검증 → 디테일 보정)
+        thumbnail_base64, detected_color, ring_found = create_thumbnail(base64_image)
         
         if thumbnail_base64:
             return {
                 "output": {
                     "success": True,
                     "thumbnail": thumbnail_base64,
-                    "metal_color": metal_color,
-                    "message": "Thumbnail created successfully"
+                    "detected_color": detected_color,
+                    "ring_found": ring_found,
+                    "crop_size": f"{THUMBNAIL_WIDTH}x{THUMBNAIL_HEIGHT}",
+                    "message": "Thumbnail created successfully with ring detection and detail enhancement"
                 }
             }
         else:
