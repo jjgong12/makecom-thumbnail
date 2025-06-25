@@ -10,9 +10,14 @@ import replicate
 import os
 import cv2
 
-# Replicate API 설정
-REPLICATE_API_TOKEN = "r8_8pH3riHZWKr6UwhUjVqHoNDrWqpOdek2nwdRa"
-os.environ["REPLICATE_API_TOKEN"] = REPLICATE_API_TOKEN
+# Replicate API 설정 - 환경변수에서 가져오기
+REPLICATE_API_TOKEN = os.environ.get("REPLICATE_API_TOKEN", "")
+if not REPLICATE_API_TOKEN:
+    # 환경변수가 없으면 직접 설정 (백업용)
+    REPLICATE_API_TOKEN = "r8_8pH3riHZWKr6UwhUjVqHoNDrWqpOdek2nwdRa"
+
+# Replicate 클라이언트 초기화
+replicate_client = replicate.Client(api_token=REPLICATE_API_TOKEN)
 print(f"Replicate API Token 설정됨: {REPLICATE_API_TOKEN[:10]}...")
 
 def find_input_data(data):
@@ -112,32 +117,40 @@ def base64_to_image(base64_string):
 
 def remove_background_with_replicate(image):
     """Replicate API를 사용하여 배경 제거"""
-    # PIL Image를 base64로 변환
-    buffered = BytesIO()
-    image.save(buffered, format="PNG")
-    img_base64 = base64.b64encode(buffered.getvalue()).decode()
-    
-    # Replicate 모델 실행
-    model = replicate.models.get("cjwbw/rembg")
-    version = model.versions.get("fb8af171cfa1616ddcf1242c093f9c46bcada5ad4cf6f2fbe8b81b330ec5c003")
-    
-    input_data = {
-        "image": f"data:image/png;base64,{img_base64}"
-    }
-    
-    print("Replicate API 호출 중...")
-    output = version.predict(**input_data)
-    
-    # 결과 다운로드
-    if isinstance(output, str) and output.startswith('http'):
-        response = requests.get(output)
-        return Image.open(BytesIO(response.content))
-    elif isinstance(output, str) and 'base64,' in output:
-        img_data = output.split('base64,')[1]
-        return Image.open(BytesIO(base64.b64decode(img_data)))
-    else:
+    try:
+        # PIL Image를 base64로 변환
+        buffered = BytesIO()
+        image.save(buffered, format="PNG")
+        img_base64 = base64.b64encode(buffered.getvalue()).decode()
+        
+        # Replicate 실행 (새로운 방식)
+        print("Replicate API 호출 중...")
+        
+        output = replicate_client.run(
+            "cjwbw/rembg:fb8af171cfa1616ddcf1242c093f9c46bcada5ad4cf6f2fbe8b81b330ec5c003",
+            input={
+                "image": f"data:image/png;base64,{img_base64}"
+            }
+        )
+        
+        # 결과 처리
+        if isinstance(output, str):
+            if output.startswith('http'):
+                # URL인 경우 다운로드
+                response = requests.get(output)
+                return Image.open(BytesIO(response.content))
+            elif 'base64,' in output:
+                # Base64 데이터인 경우
+                img_data = output.split('base64,')[1]
+                return Image.open(BytesIO(base64.b64decode(img_data)))
+        
         # 이미 PIL Image인 경우
         return output
+        
+    except Exception as e:
+        print(f"Replicate API 오류: {str(e)}")
+        print("토큰을 확인하세요. RunPod 환경변수에 REPLICATE_API_TOKEN을 설정해야 합니다.")
+        raise
 
 def detect_ring_color(image):
     """반지 색상 감지 - 무도금화이트 우선 감지"""
@@ -275,41 +288,45 @@ def create_thumbnail_with_color(image, detected_color, size=(1000, 1300)):
         # 알파 채널을 사용하여 객체의 경계 찾기
         alpha = img_array[:, :, 3]
         coords = cv2.findNonZero(alpha)
-        x, y, w, h = cv2.boundingRect(coords)
         
-        # 객체 주변에 여백 추가 (15%)
-        padding = int(max(w, h) * 0.15)
-        x = max(0, x - padding)
-        y = max(0, y - padding)
-        w = min(img_array.shape[1] - x, w + 2 * padding)
-        h = min(img_array.shape[0] - y, h + 2 * padding)
-        
-        # 1000:1300 비율로 맞추기
-        target_ratio = 1000 / 1300  # 0.769
-        current_ratio = w / h
-        
-        if current_ratio > target_ratio:
-            # 너무 넓음 - 높이를 늘려야 함
-            new_h = int(w / target_ratio)
-            diff = new_h - h
-            y = max(0, y - diff // 2)
-            h = new_h
+        if coords is not None:
+            x, y, w, h = cv2.boundingRect(coords)
+            
+            # 객체 주변에 여백 추가 (15%)
+            padding = int(max(w, h) * 0.15)
+            x = max(0, x - padding)
+            y = max(0, y - padding)
+            w = min(img_array.shape[1] - x, w + 2 * padding)
+            h = min(img_array.shape[0] - y, h + 2 * padding)
+            
+            # 1000:1300 비율로 맞추기
+            target_ratio = 1000 / 1300  # 0.769
+            current_ratio = w / h
+            
+            if current_ratio > target_ratio:
+                # 너무 넓음 - 높이를 늘려야 함
+                new_h = int(w / target_ratio)
+                diff = new_h - h
+                y = max(0, y - diff // 2)
+                h = new_h
+            else:
+                # 너무 높음 - 너비를 늘려야 함
+                new_w = int(h * target_ratio)
+                diff = new_w - w
+                x = max(0, x - diff // 2)
+                w = new_w
+            
+            # 경계 체크
+            x = max(0, x)
+            y = max(0, y)
+            w = min(img_array.shape[1] - x, w)
+            h = min(img_array.shape[0] - y, h)
+            
+            # 크롭
+            cropped = img_array[y:y+h, x:x+w]
+            cropped_img = Image.fromarray(cropped)
         else:
-            # 너무 높음 - 너비를 늘려야 함
-            new_w = int(h * target_ratio)
-            diff = new_w - w
-            x = max(0, x - diff // 2)
-            w = new_w
-        
-        # 경계 체크
-        x = max(0, x)
-        y = max(0, y)
-        w = min(img_array.shape[1] - x, w)
-        h = min(img_array.shape[0] - y, h)
-        
-        # 크롭
-        cropped = img_array[y:y+h, x:x+w]
-        cropped_img = Image.fromarray(cropped)
+            cropped_img = image
     else:
         cropped_img = image
     
