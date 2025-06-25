@@ -6,18 +6,84 @@ from PIL import Image, ImageEnhance, ImageFilter
 import cv2
 import traceback
 
-VERSION = "thumbnail_v50"
+VERSION = "thumbnail_v51"
 print(f"{VERSION} starting...")
 
 def find_input_url(event):
     """Find URL or base64 data from various possible locations"""
-    # Direct URL/data paths
-    direct_paths = [
-        'enhanced_image', 'image_url', 'url', 'imageUrl', 'image',
-        'input.enhanced_image', 'input.image_url', 'input.url', 'input.image'
+    print(f"Searching for image in event with keys: {list(event.keys())}")
+    
+    # PRIORITY 1: Check direct enhanced_image paths first
+    priority_paths = [
+        'enhanced_image',
+        'input.enhanced_image',
+        'input.4.data.output.output.enhanced_image'
     ]
     
-    for path in direct_paths:
+    for path in priority_paths:
+        keys = path.split('.')
+        value = event
+        try:
+            for key in keys:
+                if isinstance(value, dict):
+                    value = value.get(key)
+                else:
+                    value = None
+                    break
+            if value and isinstance(value, str) and len(value) > 100:
+                print(f"Found enhanced_image at: {path}")
+                return value
+        except:
+            continue
+    
+    # PRIORITY 2: Check numbered patterns (Make.com structure)
+    # First check if input exists and has numbered keys
+    if 'input' in event and isinstance(event['input'], dict):
+        for i in range(10):
+            # Check input.{i}.data.output.output.enhanced_image
+            if str(i) in event['input']:
+                try:
+                    node = event['input'][str(i)]
+                    if isinstance(node, dict) and 'data' in node:
+                        data = node['data']
+                        if isinstance(data, dict) and 'output' in data:
+                            output = data['output']
+                            if isinstance(output, dict) and 'output' in output:
+                                inner_output = output['output']
+                                if isinstance(inner_output, dict) and 'enhanced_image' in inner_output:
+                                    value = inner_output['enhanced_image']
+                                    if value and isinstance(value, str):
+                                        print(f"Found enhanced_image at: input.{i}.data.output.output.enhanced_image")
+                                        return value
+                except:
+                    continue
+    
+    # Check root level numbered patterns
+    for i in range(10):
+        if str(i) in event:
+            try:
+                node = event[str(i)]
+                if isinstance(node, dict) and 'data' in node:
+                    data = node['data']
+                    if isinstance(data, dict) and 'output' in data:
+                        output = data['output']
+                        if isinstance(output, dict) and 'output' in output:
+                            inner_output = output['output']
+                            if isinstance(inner_output, dict) and 'enhanced_image' in inner_output:
+                                value = inner_output['enhanced_image']
+                                if value and isinstance(value, str):
+                                    print(f"Found enhanced_image at: {i}.data.output.output.enhanced_image")
+                                    return value
+            except:
+                continue
+    
+    # PRIORITY 3: Check other image paths
+    fallback_paths = [
+        'image_url', 'url', 'imageUrl', 'image', 'image_base64',
+        'input.image_url', 'input.url', 'input.image', 'input.image_base64'
+    ]
+    
+    for path in fallback_paths:
         keys = path.split('.')
         value = event
         try:
@@ -37,31 +103,42 @@ def find_input_url(event):
         except:
             continue
     
-    # Check numbered patterns
-    for i in range(10):
-        try:
-            # Pattern 1: {i}.data.output.output.enhanced_image
-            if str(i) in event:
-                node = event[str(i)]
-                if isinstance(node, dict) and 'data' in node:
-                    data = node['data']
-                    if isinstance(data, dict) and 'output' in data:
-                        output = data['output']
-                        if isinstance(output, dict) and 'output' in output:
-                            inner_output = output['output']
-                            if isinstance(inner_output, dict) and 'enhanced_image' in inner_output:
-                                value = inner_output['enhanced_image']
-                                if value and isinstance(value, str):
-                                    print(f"Found image data at: {i}.data.output.output.enhanced_image")
-                                    return value
-        except:
-            continue
+    # PRIORITY 4: Deep search in event structure
+    def search_dict(d, depth=0, max_depth=5):
+        if depth > max_depth:
+            return None
+        if not isinstance(d, dict):
+            return None
+            
+        # Check for enhanced_image key
+        if 'enhanced_image' in d:
+            value = d['enhanced_image']
+            if isinstance(value, str) and len(value) > 100:
+                return value
+        
+        # Check for any image-related keys
+        for key in ['image', 'image_url', 'url', 'image_base64']:
+            if key in d:
+                value = d[key]
+                if isinstance(value, str) and len(value) > 100:
+                    return value
+        
+        # Recursive search
+        for key, value in d.items():
+            if isinstance(value, dict):
+                result = search_dict(value, depth + 1, max_depth)
+                if result:
+                    return result
+        
+        return None
     
-    # Check input dict
-    if 'input' in event and isinstance(event['input'], dict):
-        return find_input_url(event['input'])
+    # Try deep search
+    result = search_dict(event)
+    if result:
+        print("Found image data through deep search")
+        return result
     
-    print("No image data found in any known location")
+    print(f"No image data found. Full event structure: {event}")
     return None
 
 def detect_wedding_rings(img_np):
@@ -200,21 +277,27 @@ def enhance_details(img):
 def thumbnail_handler(event):
     print(f"=== {VERSION} Handler Started ===")
     print(f"Event keys: {list(event.keys())}")
+    if 'input' in event and isinstance(event['input'], dict):
+        print(f"Input keys: {list(event['input'].keys())}")
     
     try:
         # Find image data
         img_data = find_input_url(event)
         if not img_data:
-            print(f"Event structure: {event}")
             return {
                 "output": {
                     "error": "No image URL or data found",
                     "status": "error",
-                    "version": VERSION
+                    "version": VERSION,
+                    "debug_info": {
+                        "event_keys": list(event.keys()),
+                        "input_keys": list(event.get('input', {}).keys()) if 'input' in event else None
+                    }
                 }
             }
         
         print(f"Found image data, type: {'data URL' if img_data.startswith('data:') else 'base64'}")
+        print(f"Data length: {len(img_data)}")
         
         # Extract base64 data
         if img_data.startswith('data:'):
