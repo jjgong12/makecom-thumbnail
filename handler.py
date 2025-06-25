@@ -17,9 +17,9 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-VERSION = "Thumbnail_V65_HIGH_QUALITY"
+VERSION = "Thumbnail_V66_LESS_ZOOM"
 
-# V64: Get API token from environment variable FIRST
+# V66: Get API token from environment variable FIRST
 REPLICATE_API_TOKEN = os.environ.get('REPLICATE_API_TOKEN', 'r8_6cksfxEmLxWlYxjW4K1FEbnZMEEmlQw2UeNNY')
 
 def create_session():
@@ -189,25 +189,25 @@ def apply_super_resolution_enhance(image):
         logger.error(f"Super resolution error: {str(e)}")
         return image
 
-def apply_enhancement_v65(image):
-    """Apply v65 enhancement - pure white for 무도금화이트"""
+def apply_enhancement_v66(image):
+    """Apply v66 enhancement - pure white for 무도금화이트"""
     try:
         # Ensure RGB mode
         if image.mode != 'RGB':
             image = image.convert('RGB')
         
-        logger.info("Applying v65 enhancement for pure white look...")
+        logger.info("Applying v66 enhancement for pure white look...")
         
         # 1. Strong brightness increase for white metal
         enhancer = ImageEnhance.Brightness(image)
-        image = enhancer.enhance(1.45)  # Increased from 1.35
+        image = enhancer.enhance(1.45)  # Same as v65
         
         # 2. Gamma correction for bright mid-tones
-        image = apply_gamma_correction(image, 0.6)  # Lower gamma for brighter result
+        image = apply_gamma_correction(image, 0.6)  # Same as v65
         
         # 3. Reduce saturation significantly
         enhancer = ImageEnhance.Color(image)
-        image = enhancer.enhance(0.5)  # More desaturation for white
+        image = enhancer.enhance(0.5)  # Same as v65
         
         # 4. Increase contrast
         enhancer = ImageEnhance.Contrast(image)
@@ -279,7 +279,7 @@ def detect_wedding_rings(image):
         return (w // 2, h // 2)
 
 def create_thumbnail_with_less_zoom(image, target_size=(1000, 1300)):
-    """Create thumbnail with less zoom (40-45% crop instead of 35%)"""
+    """Create thumbnail with less zoom - V66: 55% crop instead of 45%"""
     try:
         # First, detect wedding rings to find optimal crop center
         ring_center = detect_wedding_rings(image)
@@ -289,8 +289,8 @@ def create_thumbnail_with_less_zoom(image, target_size=(1000, 1300)):
         target_ratio = target_size[0] / target_size[1]  # 1000/1300 = 0.769
         img_width, img_height = image.size
         
-        # V65: Use 45% of the image (less zoom than v64's 35%)
-        crop_percentage = 0.45
+        # V66: Use 55% of the image (much less zoom than v65's 45%)
+        crop_percentage = 0.55
         
         # Determine crop size
         if img_width / img_height > target_ratio:
@@ -455,7 +455,7 @@ def detect_ring_color(image):
         logger.info(f"Color analysis - H: {avg_h:.1f}, S: {avg_s:.1f}, V: {avg_v:.1f}")
         logger.info(f"LAB analysis - L: {avg_l:.1f}, a: {avg_a:.1f}, b: {avg_b:.1f}")
         
-        # V65: 무도금화이트 우선 감지
+        # V66: 무도금화이트 우선 감지
         if avg_v > 200 and avg_s < 30:  # Very bright and low saturation
             return 'white'
         elif avg_s < 40 and avg_v > 150 and avg_a < 130:  # Low saturation, bright, neutral
@@ -477,7 +477,7 @@ def apply_final_color_enhancement(image, color):
         enhanced = image.copy()
         
         if color == 'white':  # 무도금화이트
-            # V65: Maximum white enhancement
+            # V66: Maximum white enhancement
             enhancer = ImageEnhance.Brightness(enhanced)
             enhanced = enhancer.enhance(1.3)
             
@@ -516,7 +516,7 @@ def apply_final_color_enhancement(image, color):
         return image
 
 def process_thumbnail(job):
-    """Process thumbnail request with v65 enhancements"""
+    """Process thumbnail request with v66 enhancements"""
     logger.info(f"=== {VERSION} Started ===")
     logger.info(f"Received job: {json.dumps(job, indent=2)[:500]}...")
     
@@ -580,11 +580,11 @@ def process_thumbnail(job):
             image = image.convert('RGB')
         
         # Step 1: Apply enhancement FIRST
-        logger.info("Step 1: Applying v65 enhancement...")
-        enhanced_image = apply_enhancement_v65(image)
+        logger.info("Step 1: Applying v66 enhancement...")
+        enhanced_image = apply_enhancement_v66(image)
         
         # Step 2: Create 1000x1300 thumbnail with less zoom
-        logger.info("Step 2: Creating thumbnail with less zoom...")
+        logger.info("Step 2: Creating thumbnail with less zoom (55%)...")
         thumbnail = create_thumbnail_with_less_zoom(enhanced_image, (1000, 1300))
         
         # Step 3: Enhance with Replicate for quality
@@ -651,15 +651,15 @@ def process_thumbnail(job):
                 "thumbnail_with_padding": result_base64_with_padding,  # Google Script용
                 "color": color_map.get(detected_color, '#FFD700'),
                 "status": "success",
-                "message": f"Thumbnail created with v65 high quality enhancement",
+                "message": f"Thumbnail created with v66 less zoom (55%) enhancement",
                 "processing_time": f"{processing_time:.2f}s",
                 "detected_color": detected_color,
                 "original_size": list(image.size),
                 "final_size": [1000, 1300],
                 "settings": {
                     "size": "1000x1300",
-                    "zoom_level": "45%",
-                    "enhancement": "v65_pure_white",
+                    "zoom_level": "55%",  # V66: Less zoom
+                    "enhancement": "v66_pure_white_less_zoom",
                     "replicate_used": enhanced_base64 is not None,
                     "color_name": detected_color,
                     "color_hex": color_map.get(detected_color, '#FFD700')
