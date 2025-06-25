@@ -6,53 +6,66 @@ from PIL import Image, ImageEnhance, ImageFilter
 import cv2
 import traceback
 
-VERSION = "thumbnail_v48"
+VERSION = "thumbnail_v50"
 print(f"{VERSION} starting...")
 
 def find_input_url(event):
-    """Find URL from various possible locations"""
-    # Direct URL paths
-    url_paths = [
-        'enhanced_image', 'image_url', 'url', 'imageUrl',
-        'input.enhanced_image', 'input.image_url', 'input.url'
+    """Find URL or base64 data from various possible locations"""
+    # Direct URL/data paths
+    direct_paths = [
+        'enhanced_image', 'image_url', 'url', 'imageUrl', 'image',
+        'input.enhanced_image', 'input.image_url', 'input.url', 'input.image'
     ]
     
-    for path in url_paths:
+    for path in direct_paths:
+        keys = path.split('.')
+        value = event
         try:
-            keys = path.split('.')
-            value = event
             for key in keys:
-                value = value.get(key, {})
+                if isinstance(value, dict):
+                    value = value.get(key)
+                else:
+                    value = None
+                    break
             if value and isinstance(value, str) and (
                 value.startswith('http') or 
                 value.startswith('data:') or
-                (len(value) > 100 and not ' ' in value)
+                len(value) > 100
             ):
+                print(f"Found image data at: {path}")
                 return value
         except:
             continue
     
     # Check numbered patterns
     for i in range(10):
-        paths = [
-            f"{i}.data.output.output.enhanced_image",
-            f"input.{i}.data.output.output.enhanced_image"
-        ]
-        for path in paths:
-            try:
-                keys = path.split('.')
-                value = event
-                for key in keys:
-                    value = value.get(str(key), {})
-                if value and isinstance(value, str):
-                    return value
-            except:
-                continue
+        try:
+            # Pattern 1: {i}.data.output.output.enhanced_image
+            if str(i) in event:
+                node = event[str(i)]
+                if isinstance(node, dict) and 'data' in node:
+                    data = node['data']
+                    if isinstance(data, dict) and 'output' in data:
+                        output = data['output']
+                        if isinstance(output, dict) and 'output' in output:
+                            inner_output = output['output']
+                            if isinstance(inner_output, dict) and 'enhanced_image' in inner_output:
+                                value = inner_output['enhanced_image']
+                                if value and isinstance(value, str):
+                                    print(f"Found image data at: {i}.data.output.output.enhanced_image")
+                                    return value
+        except:
+            continue
     
+    # Check input dict
+    if 'input' in event and isinstance(event['input'], dict):
+        return find_input_url(event['input'])
+    
+    print("No image data found in any known location")
     return None
 
 def detect_wedding_rings(img_np):
-    """Detect wedding rings using multiple methods on resized image"""
+    """Detect wedding rings using multiple methods"""
     h, w = img_np.shape[:2]
     gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
     
@@ -71,49 +84,41 @@ def detect_wedding_rings(img_np):
         maxRadius=min(w, h)//3
     )
     
-    # Method 3: Find contours of metallic objects
+    # Method 3: Find contours
     contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     
-    # Default to center region if no specific detection
+    # Default to center
     best_x = w // 2
     best_y = h // 2
     best_size = min(w, h) // 3
     
-    # If circles detected, use the most prominent one
+    # Use circles if found
     if circles is not None:
         circles = np.uint16(np.around(circles))
         for circle in circles[0, :]:
             cx, cy, r = circle
-            # Prefer circles near center
             if abs(cx - w//2) < w//3 and abs(cy - h//2) < h//3:
                 best_x = cx
                 best_y = cy
                 best_size = r * 2
                 break
     
-    # If no circles, check contours
+    # Check contours if no circles
     elif len(contours) > 0:
-        # Find largest contour near center
-        best_contour = None
         max_area = 0
-        
         for contour in contours:
             area = cv2.contourArea(contour)
-            if area > max_area:
+            if area > max_area and area > 100:
                 M = cv2.moments(contour)
                 if M["m00"] != 0:
                     cx = int(M["m10"] / M["m00"])
                     cy = int(M["m01"] / M["m00"])
-                    # Check if near center
                     if abs(cx - w//2) < w//3 and abs(cy - h//2) < h//3:
-                        max_area = area
-                        best_contour = contour
+                        x, y, w_c, h_c = cv2.boundingRect(contour)
                         best_x = cx
                         best_y = cy
-        
-        if best_contour is not None:
-            x, y, w_c, h_c = cv2.boundingRect(best_contour)
-            best_size = max(w_c, h_c)
+                        best_size = max(w_c, h_c)
+                        max_area = area
     
     # Return bounding box
     x1 = max(0, best_x - best_size)
@@ -124,71 +129,63 @@ def detect_wedding_rings(img_np):
     return x1, y1, x2, y2
 
 def detect_metal_type(img_np):
-    """Detect the type of metal based on color analysis"""
-    # Calculate average color
+    """Detect metal type based on color"""
     avg_color = img_np.mean(axis=(0, 1))
     r, g, b = avg_color
     
-    # Convert to HSV for better analysis
     hsv = cv2.cvtColor(img_np, cv2.COLOR_RGB2HSV)
     avg_hsv = hsv.mean(axis=(0, 1))
     h, s, v = avg_hsv
     
-    # Determine metal type
+    # Detect metal type
     if v > 200 and s < 30:
-        return "white"  # White gold or unplated white
+        return "white"
     elif h < 20 and s > 40 and r > g:
-        return "rose"  # Rose gold
+        return "rose"
     elif 20 < h < 40 and s > 30:
-        return "yellow"  # Yellow gold
+        return "yellow"
     else:
-        return "white"  # Default to white
+        return "white"
 
-def apply_metal_specific_enhancement(img, metal_type):
-    """Apply enhancement based on detected metal type"""
+def apply_metal_enhancement(img, metal_type):
+    """Apply metal-specific enhancements"""
     img_np = np.array(img)
     
     if metal_type == "white":
-        # Make whites brighter and cooler
+        # Bright and cool
         img_np = cv2.convertScaleAbs(img_np, alpha=1.25, beta=25)
-        # Cool tone adjustment
-        img_np[:,:,0] = np.clip(img_np[:,:,0] * 0.97, 0, 255)  # Reduce red
-        img_np[:,:,2] = np.clip(img_np[:,:,2] * 1.03, 0, 255)  # Increase blue
+        img_np[:,:,0] = np.clip(img_np[:,:,0] * 0.97, 0, 255)
+        img_np[:,:,2] = np.clip(img_np[:,:,2] * 1.03, 0, 255)
         
     elif metal_type == "rose":
-        # Enhance rose gold warmth
+        # Warm rose tones
         img_np = cv2.convertScaleAbs(img_np, alpha=1.15, beta=15)
-        # Warm tone adjustment
-        img_np[:,:,0] = np.clip(img_np[:,:,0] * 1.08, 0, 255)  # Increase red
-        img_np[:,:,1] = np.clip(img_np[:,:,1] * 1.03, 0, 255)  # Slight green
+        img_np[:,:,0] = np.clip(img_np[:,:,0] * 1.08, 0, 255)
+        img_np[:,:,1] = np.clip(img_np[:,:,1] * 1.03, 0, 255)
         
     elif metal_type == "yellow":
-        # Enhance yellow gold
+        # Golden tones
         img_np = cv2.convertScaleAbs(img_np, alpha=1.18, beta=18)
-        # Golden tone adjustment
-        img_np[:,:,0] = np.clip(img_np[:,:,0] * 1.05, 0, 255)  # Increase red
-        img_np[:,:,1] = np.clip(img_np[:,:,1] * 1.08, 0, 255)  # Increase green
+        img_np[:,:,0] = np.clip(img_np[:,:,0] * 1.05, 0, 255)
+        img_np[:,:,1] = np.clip(img_np[:,:,1] * 1.08, 0, 255)
     
     return Image.fromarray(img_np.astype(np.uint8))
 
 def enhance_details(img):
-    """Enhance details after resizing"""
-    # Convert to numpy
+    """Final detail enhancement"""
     img_np = np.array(img)
     
     # Denoise
     denoised = cv2.fastNlMeansDenoisingColored(img_np, None, 3, 3, 7, 21)
     
     # Sharpen
-    kernel = np.array([[-1,-1,-1],
-                       [-1, 9,-1],
-                       [-1,-1,-1]]) / 9.0
+    kernel = np.array([[-1,-1,-1], [-1,9,-1], [-1,-1,-1]]) / 9.0
     sharpened = cv2.filter2D(denoised, -1, kernel)
     
     # Blend
     result = cv2.addWeighted(denoised, 0.6, sharpened, 0.4, 0)
     
-    # Convert back to PIL
+    # Convert back
     img = Image.fromarray(result)
     
     # Final adjustments
@@ -202,31 +199,46 @@ def enhance_details(img):
 
 def thumbnail_handler(event):
     print(f"=== {VERSION} Handler Started ===")
+    print(f"Event keys: {list(event.keys())}")
     
     try:
-        # Find image URL or base64
+        # Find image data
         img_data = find_input_url(event)
         if not img_data:
+            print(f"Event structure: {event}")
             return {
                 "output": {
-                    "error": "No image URL found",
+                    "error": "No image URL or data found",
                     "status": "error",
                     "version": VERSION
                 }
             }
         
-        # Handle base64 data
+        print(f"Found image data, type: {'data URL' if img_data.startswith('data:') else 'base64'}")
+        
+        # Extract base64 data
         if img_data.startswith('data:'):
             base64_data = img_data.split(',')[1]
         else:
             base64_data = img_data
         
-        # Add padding for decoding
+        # IMPORTANT: Add padding for decoding
         padding = 4 - (len(base64_data) % 4)
         if padding != 4:
             base64_data += '=' * padding
         
-        img_bytes = base64.b64decode(base64_data)
+        # Decode
+        try:
+            img_bytes = base64.b64decode(base64_data)
+        except Exception as e:
+            print(f"Base64 decode error: {str(e)}")
+            return {
+                "output": {
+                    "error": f"Base64 decode error: {str(e)}",
+                    "status": "error",
+                    "version": VERSION
+                }
+            }
         
         # Open image
         img = Image.open(BytesIO(img_bytes))
@@ -235,10 +247,9 @@ def thumbnail_handler(event):
         
         original_img = img.copy()
         orig_w, orig_h = img.size
+        print(f"Image opened: {orig_w}x{orig_h}")
         
-        print(f"Original image size: {orig_w}x{orig_h}")
-        
-        # Step 1: Create detection image (max 1500px for speed)
+        # Step 1: Create detection image
         max_detect_size = 1500
         if orig_w > max_detect_size or orig_h > max_detect_size:
             ratio = min(max_detect_size/orig_w, max_detect_size/orig_h)
@@ -249,17 +260,17 @@ def thumbnail_handler(event):
             detect_img = img
             ratio = 1.0
         
-        # Step 2: Detect rings on smaller image
+        # Step 2: Detect rings
         detect_np = np.array(detect_img)
         x1, y1, x2, y2 = detect_wedding_rings(detect_np)
         
-        # Step 3: Convert coordinates to original size
+        # Step 3: Scale coordinates
         orig_x1 = int(x1 / ratio)
         orig_y1 = int(y1 / ratio)
         orig_x2 = int(x2 / ratio)
         orig_y2 = int(y2 / ratio)
         
-        # Step 4: Add padding for better composition
+        # Step 4: Add padding
         pad_x = int((orig_x2 - orig_x1) * 0.3)
         pad_y = int((orig_y2 - orig_y1) * 0.3)
         
@@ -268,21 +279,19 @@ def thumbnail_handler(event):
         crop_x2 = min(orig_w, orig_x2 + pad_x)
         crop_y2 = min(orig_h, orig_y2 + pad_y)
         
-        # Step 5: Crop from original
+        # Step 5: Crop
         cropped = original_img.crop((crop_x1, crop_y1, crop_x2, crop_y2))
         
-        # Step 6: Detect metal type
+        # Step 6: Detect metal
         crop_np = np.array(cropped)
         metal_type = detect_metal_type(crop_np)
-        print(f"Detected metal type: {metal_type}")
+        print(f"Detected metal: {metal_type}")
         
-        # Step 7: Resize to 1000x1300
+        # Step 7: Resize
         thumb = cropped.resize((1000, 1300), Image.Resampling.LANCZOS)
         
-        # Step 8: Apply metal-specific enhancement
-        thumb = apply_metal_specific_enhancement(thumb, metal_type)
-        
-        # Step 9: Enhance details
+        # Step 8: Apply enhancements
+        thumb = apply_metal_enhancement(thumb, metal_type)
         thumb = enhance_details(thumb)
         
         # Save as JPEG
@@ -290,9 +299,8 @@ def thumbnail_handler(event):
         thumb.save(output_buffer, format='JPEG', quality=95)
         thumb_bytes = output_buffer.getvalue()
         
-        # Encode to base64 and remove padding for Make.com
-        thumb_base64 = base64.b64encode(thumb_bytes).decode('utf-8')
-        thumb_base64 = thumb_base64.rstrip('=')
+        # IMPORTANT: Encode and remove padding for Make.com
+        thumb_base64 = base64.b64encode(thumb_bytes).decode('utf-8').rstrip('=')
         
         print(f"{VERSION} completed successfully")
         
@@ -315,7 +323,8 @@ def thumbnail_handler(event):
             "output": {
                 "error": str(e),
                 "status": "error",
-                "version": VERSION
+                "version": VERSION,
+                "traceback": traceback.format_exc()
             }
         }
 
