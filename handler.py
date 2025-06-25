@@ -1,713 +1,482 @@
-import runpod
-import os
-import logging
-import traceback
-import cv2
-import numpy as np
-from PIL import Image, ImageEnhance, ImageFilter, ImageOps, ImageDraw
-import requests
-import base64
-import io
 import json
-from typing import Dict, Any, Tuple, Optional
+import base64
+import traceback
+import replicate
+import requests
+from io import BytesIO
+from typing import Dict, Any, Optional, Tuple, List
+from PIL import Image, ImageEnhance, ImageFilter
+import numpy as np
+import cv2
 
-# Setup logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+VERSION = "43"
 
-# Import replicate
-try:
-    import replicate
-    REPLICATE_AVAILABLE = True
-    logger.info("Replicate module loaded successfully")
-except ImportError:
-    REPLICATE_AVAILABLE = False
-    logger.warning("Replicate module not available")
-
-class ThumbnailHandler:
-    def __init__(self):
-        self.version = "v42-perfect-recursive"
-        logger.info(f"Initializing {self.version}")
-        self.headers_list = [
-            {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'},
-            {'User-Agent': 'Python-Requests/2.31.0'},
-            {}
-        ]
+def handler(event: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    RunPod serverless handler for wedding ring thumbnail creation
+    v43: Fixed masking detection and inpainting
+    """
+    print(f"Thumbnail Handler v{VERSION} starting...")
     
-    def find_input_url(self, event: Dict[str, Any]) -> Optional[str]:
-        """Find image URL/data using recursive search - FOOLPROOF VERSION"""
+    thumbnail_handler = ThumbnailHandlerV43()
+    
+    try:
+        # Find input URL with flexible search
+        input_url = thumbnail_handler.find_input_url(event)
         
-        def find_url_recursive(obj, path="", depth=0, max_depth=10):
-            """Recursively find URL or base64 image data"""
-            if depth > max_depth:
-                return None
-                
-            if isinstance(obj, str):
-                # Check if it's a URL
-                if obj.startswith('http'):
-                    logger.info(f"Found URL at path: {path}")
-                    return obj
-                # Check if it's a data URL
-                elif obj.startswith('data:image'):
-                    logger.info(f"Found data URL at path: {path}")
-                    return obj
-                # Check if it's likely base64 (long string)
-                elif len(obj) > 1000:
-                    logger.info(f"Found potential base64 at path: {path}")
-                    return obj
-                    
-            elif isinstance(obj, dict):
-                # Priority keys to check first
-                priority_keys = ['enhanced_image', 'url', 'image_url', 'image', 'data', 'imageData', 'file', 'thumbnail', 'base64']
-                
-                # Check priority keys first
-                for key in priority_keys:
-                    if key in obj:
-                        result = find_url_recursive(obj[key], f"{path}.{key}" if path else key, depth + 1, max_depth)
-                        if result:
-                            return result
-                
-                # Check numbered keys (0-9)
-                for i in range(10):
-                    key = str(i)
-                    if key in obj:
-                        result = find_url_recursive(obj[key], f"{path}.{key}" if path else key, depth + 1, max_depth)
-                        if result:
-                            return result
-                
-                # Check all other keys
-                for key, value in obj.items():
-                    if key not in priority_keys and not key.isdigit():
-                        result = find_url_recursive(value, f"{path}.{key}" if path else key, depth + 1, max_depth)
-                        if result:
-                            return result
-                            
-            elif isinstance(obj, list):
-                for i, item in enumerate(obj):
-                    result = find_url_recursive(item, f"{path}[{i}]", depth + 1, max_depth)
-                    if result:
-                        return result
-                        
+        if not input_url:
+            print("ERROR: No input URL found")
+            print(f"Event structure (first 500 chars): {str(event)[:500]}")
+            return thumbnail_handler.create_error_response("No input URL found")
+        
+        # Process the image
+        result = thumbnail_handler.process_image(input_url)
+        return result
+        
+    except Exception as e:
+        print(f"ERROR in handler: {str(e)}")
+        print(f"Traceback: {traceback.format_exc()}")
+        return thumbnail_handler.create_error_response(f"Handler error: {str(e)}")
+
+
+class ThumbnailHandlerV43:
+    def __init__(self):
+        self.version = VERSION
+        self.thumbnail_size = (1000, 1300)
+        
+    def find_input_url(self, event: Dict[str, Any]) -> Optional[str]:
+        """Find input URL from various possible locations"""
+        # Priority keys to check
+        keys_to_check = [
+            'enhanced_image', 'image_url', 'url', 'image',
+            'input_url', 'input_image', 'input'
+        ]
+        
+        # Direct check
+        for key in keys_to_check:
+            if key in event and isinstance(event[key], str):
+                url = event[key]
+                if url.startswith(('http', 'data:')):
+                    print(f"Found URL in key: {key}")
+                    return url
+        
+        # Check input dict
+        if 'input' in event and isinstance(event['input'], dict):
+            for key in keys_to_check:
+                if key in event['input'] and isinstance(event['input'][key], str):
+                    url = event['input'][key]
+                    if url.startswith(('http', 'data:')):
+                        print(f"Found URL in input.{key}")
+                        return url
+        
+        # Check numbered paths (like 4.data.output.output.enhanced_image)
+        for i in range(10):
+            path_parts = [
+                [str(i), 'data', 'output', 'output', 'enhanced_image'],
+                [str(i), 'data', 'output', 'enhanced_image'],
+                [str(i), 'output', 'enhanced_image'],
+                [str(i), 'enhanced_image']
+            ]
+            
+            for parts in path_parts:
+                try:
+                    obj = event
+                    for part in parts:
+                        if isinstance(obj, dict) and part in obj:
+                            obj = obj[part]
+                        else:
+                            break
+                    else:
+                        if isinstance(obj, str) and obj.startswith(('http', 'data:')):
+                            print(f"Found URL at path: {'.'.join(parts)}")
+                            return obj
+                except:
+                    continue
+        
+        # Deep search as last resort
+        return self.find_url_recursive(event)
+    
+    def find_url_recursive(self, obj: Any, depth: int = 0, max_depth: int = 10) -> Optional[str]:
+        """Recursively search for URL in nested structure"""
+        if depth > max_depth:
             return None
         
-        # Log the event structure for debugging
-        logger.info(f"Event keys at top level: {list(event.keys()) if isinstance(event, dict) else 'Not a dict'}")
-        if 'input' in event:
-            logger.info(f"Input keys: {list(event['input'].keys()) if isinstance(event['input'], dict) else 'Not a dict'}")
+        if isinstance(obj, str) and obj.startswith(('http', 'data:')):
+            return obj
+        elif isinstance(obj, dict):
+            for value in obj.values():
+                result = self.find_url_recursive(value, depth + 1, max_depth)
+                if result:
+                    return result
+        elif isinstance(obj, list):
+            for item in obj:
+                result = self.find_url_recursive(item, depth + 1, max_depth)
+                if result:
+                    return result
         
-        # Start recursive search
-        result = find_url_recursive(event)
-        
-        if not result:
-            logger.error("No valid image URL/data found in event")
-            logger.error(f"Full event structure: {json.dumps(event, indent=2)}")
-            
-        return result
+        return None
     
-    def load_image_from_source(self, source: str) -> Optional[Image.Image]:
-        """Load image from URL or base64 data"""
+    def load_image_from_url(self, url: str) -> Image.Image:
+        """Load image from URL or data URL"""
         try:
-            # Handle data URLs
-            if source.startswith('data:'):
-                logger.info("Loading from data URL")
-                base64_str = source.split(',')[1]
-                # Fix padding if needed
-                padding = 4 - len(base64_str) % 4
+            if url.startswith('data:'):
+                # Handle data URL
+                header, data = url.split(',', 1)
+                # Add padding if needed
+                padding = 4 - len(data) % 4
                 if padding != 4:
-                    base64_str += '=' * padding
-                img_data = base64.b64decode(base64_str)
-                return Image.open(io.BytesIO(img_data)).convert('RGB')
-            
-            # Handle base64 strings
-            elif not source.startswith('http') and len(source) > 100:
-                logger.info("Loading from base64 string")
-                # Fix padding if needed
-                padding = 4 - len(source) % 4
-                if padding != 4:
-                    source += '=' * padding
-                img_data = base64.b64decode(source)
-                return Image.open(io.BytesIO(img_data)).convert('RGB')
-            
-            # Handle URLs
+                    data += '=' * padding
+                img_data = base64.b64decode(data)
+                return Image.open(BytesIO(img_data))
             else:
-                logger.info(f"Loading from URL: {source[:100]}...")
-                for headers in self.headers_list:
+                # Handle regular URL
+                headers_list = [
+                    {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'},
+                    {'User-Agent': 'Python-Requests/2.31.0'},
+                    {}
+                ]
+                
+                for headers in headers_list:
                     try:
-                        response = requests.get(source, headers=headers, timeout=30, stream=True)
-                        if response.status_code == 200:
-                            return Image.open(io.BytesIO(response.content)).convert('RGB')
+                        response = requests.get(url, headers=headers, timeout=30, stream=True)
+                        response.raise_for_status()
+                        return Image.open(BytesIO(response.content))
                     except Exception as e:
-                        logger.warning(f"Failed with headers {headers}: {str(e)}")
+                        print(f"Failed with headers {headers}: {str(e)}")
                         continue
                 
-                raise ValueError("Failed to load image from URL with all header options")
+                raise ValueError("Failed to load image with all header attempts")
                 
         except Exception as e:
-            logger.error(f"Error loading image: {str(e)}")
-            return None
+            print(f"ERROR loading image: {str(e)}")
+            raise
     
-    def detect_black_masking_multi_method(self, image: Image.Image) -> Dict[str, Any]:
-        """Detect black masking using multiple methods with weighted scoring"""
-        img_array = np.array(image)
-        height, width = img_array.shape[:2]
-        gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
+    def detect_black_frame_multi_method(self, img: Image.Image) -> Dict[str, Any]:
+        """Detect black frame using multiple methods (based on v31 success)"""
+        img_np = np.array(img)
+        gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
+        h, w = gray.shape
         
-        detection_results = []
+        results = []
         
-        # Method 1: Edge-based detection (weight: 0.3)
-        edge_result = self._detect_edges_method(gray, width, height)
-        if edge_result['detected']:
-            detection_results.append({**edge_result, 'weight': 0.3})
+        # Method 1: Ultra-sensitive black detection
+        threshold = 25  # Very low threshold
+        binary = (gray < threshold).astype(np.uint8) * 255
         
-        # Method 2: Corner analysis (weight: 0.2)
-        corner_result = self._detect_corners_method(gray, width, height)
-        if corner_result['detected']:
-            detection_results.append({**corner_result, 'weight': 0.2})
+        # Check edges
+        edge_thickness = 0
+        for edge_name, edge_pixels in [
+            ('top', binary[:100, :]),
+            ('bottom', binary[-100:, :]),
+            ('left', binary[:, :100]),
+            ('right', binary[:, -100:])
+        ]:
+            if np.mean(edge_pixels) > 200:  # Mostly white (inverted)
+                edge_thickness = max(edge_thickness, 100)
         
-        # Method 3: Gradient-based (weight: 0.3)
-        gradient_result = self._detect_gradient_method(gray, width, height)
-        if gradient_result['detected']:
-            detection_results.append({**gradient_result, 'weight': 0.3})
+        if edge_thickness > 0:
+            results.append({
+                'method': 'ultra_sensitive',
+                'detected': True,
+                'thickness': edge_thickness
+            })
         
-        # Method 4: Connected components (weight: 0.2)
-        component_result = self._detect_components_method(gray, width, height)
-        if component_result['detected']:
-            detection_results.append({**component_result, 'weight': 0.2})
+        # Method 2: Contour-based detection
+        _, thresh = cv2.threshold(gray, 40, 255, cv2.THRESH_BINARY)
+        contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         
-        # Calculate weighted score
-        total_weight = sum(r['weight'] for r in detection_results)
-        
-        if total_weight >= 0.4:  # At least 40% confidence
-            # Average the detected frames
-            avg_top = int(np.mean([r['frame']['top'] for r in detection_results]))
-            avg_bottom = int(np.mean([r['frame']['bottom'] for r in detection_results]))
-            avg_left = int(np.mean([r['frame']['left'] for r in detection_results]))
-            avg_right = int(np.mean([r['frame']['right'] for r in detection_results]))
+        for contour in contours:
+            x, y, cw, ch = cv2.boundingRect(contour)
+            area = cw * ch
             
+            # Check if it's a large rectangle touching edges
+            if area > 0.3 * w * h:
+                if x == 0 or y == 0 or x + cw == w or y + ch == h:
+                    # Calculate thickness
+                    thickness = min(x, y, w - (x + cw), h - (y + ch))
+                    if thickness < 0:
+                        thickness = 100  # Default if calculation fails
+                    
+                    results.append({
+                        'method': 'contour',
+                        'detected': True,
+                        'thickness': thickness
+                    })
+                    break
+        
+        # Method 3: Multi-line edge scan
+        scan_lines = 10
+        edge_scores = {'top': [], 'bottom': [], 'left': [], 'right': []}
+        
+        for i in range(scan_lines):
+            offset = i * 10
+            
+            # Top edge
+            if np.mean(gray[offset, :]) < 30:
+                edge_scores['top'].append(offset + 10)
+            
+            # Bottom edge
+            if np.mean(gray[h - offset - 1, :]) < 30:
+                edge_scores['bottom'].append(offset + 10)
+            
+            # Left edge
+            if np.mean(gray[:, offset]) < 30:
+                edge_scores['left'].append(offset + 10)
+            
+            # Right edge
+            if np.mean(gray[:, w - offset - 1]) < 30:
+                edge_scores['right'].append(offset + 10)
+        
+        # If multiple edges detected
+        detected_edges = sum(1 for scores in edge_scores.values() if len(scores) > 3)
+        if detected_edges >= 2:
+            avg_thickness = sum(
+                max(scores) for scores in edge_scores.values() if scores
+            ) / max(1, sum(1 for scores in edge_scores.values() if scores))
+            
+            results.append({
+                'method': 'multi_line',
+                'detected': True,
+                'thickness': int(avg_thickness)
+            })
+        
+        # Method 4: Histogram analysis
+        hist = cv2.calcHist([gray], [0], None, [256], [0, 256])
+        dark_pixels = np.sum(hist[:30])
+        total_pixels = w * h
+        dark_ratio = dark_pixels / total_pixels
+        
+        if dark_ratio > 0.1:  # More than 10% very dark pixels
+            # Estimate thickness based on ratio
+            estimated_thickness = int(min(w, h) * dark_ratio / 4)
+            results.append({
+                'method': 'histogram',
+                'detected': True,
+                'thickness': estimated_thickness
+            })
+        
+        # Combine results
+        if len(results) >= 2:  # At least 2 methods agree
+            avg_thickness = sum(r['thickness'] for r in results) / len(results)
             return {
                 'detected': True,
-                'confidence': total_weight,
-                'frame': {
-                    'top': avg_top,
-                    'bottom': avg_bottom,
-                    'left': avg_left,
-                    'right': avg_right
-                },
-                'methods_detected': len(detection_results)
+                'thickness': int(avg_thickness),
+                'confidence': len(results) / 4.0,
+                'methods': [r['method'] for r in results]
             }
         
-        return {'detected': False, 'confidence': 0, 'frame': None}
+        return {
+            'detected': False,
+            'thickness': 0,
+            'confidence': 0,
+            'methods': []
+        }
     
-    def _detect_edges_method(self, gray: np.ndarray, width: int, height: int) -> Dict[str, Any]:
-        """Edge-based detection scanning from borders"""
-        threshold = 30
-        scan_depth = min(300, height // 3, width // 3)
-        
-        edges = {'top': 0, 'bottom': 0, 'left': 0, 'right': 0}
-        
-        # Top edge
-        for y in range(scan_depth):
-            if np.mean(gray[y, :]) > threshold:
-                edges['top'] = y
-                break
-        
-        # Bottom edge
-        for y in range(scan_depth):
-            if np.mean(gray[height-1-y, :]) > threshold:
-                edges['bottom'] = y
-                break
-        
-        # Left edge
-        for x in range(scan_depth):
-            if np.mean(gray[:, x]) > threshold:
-                edges['left'] = x
-                break
-        
-        # Right edge
-        for x in range(scan_depth):
-            if np.mean(gray[:, width-1-x]) > threshold:
-                edges['right'] = x
-                break
-        
-        total_frame = sum(edges.values())
-        if total_frame > 20:  # At least 20 pixels of frame
-            return {'detected': True, 'frame': edges}
-        
-        return {'detected': False}
-    
-    def _detect_corners_method(self, gray: np.ndarray, width: int, height: int) -> Dict[str, Any]:
-        """Analyze corners for black regions"""
-        corner_size = min(200, height // 4, width // 4)
-        threshold = 40
-        
-        corners = [
-            gray[:corner_size, :corner_size],  # Top-left
-            gray[:corner_size, -corner_size:],  # Top-right
-            gray[-corner_size:, :corner_size],  # Bottom-left
-            gray[-corner_size:, -corner_size:]  # Bottom-right
-        ]
-        
-        dark_corners = sum(1 for corner in corners if np.mean(corner) < threshold)
-        
-        if dark_corners >= 3:  # At least 3 dark corners
-            # Estimate frame
-            edges = {'top': 0, 'bottom': 0, 'left': 0, 'right': 0}
-            
-            # Scan for actual edges
-            for y in range(corner_size):
-                if np.mean(gray[y, :]) > threshold:
-                    edges['top'] = y
-                    break
-            
-            for y in range(corner_size):
-                if np.mean(gray[height-1-y, :]) > threshold:
-                    edges['bottom'] = y
-                    break
-                    
-            return {'detected': True, 'frame': edges}
-        
-        return {'detected': False}
-    
-    def _detect_gradient_method(self, gray: np.ndarray, width: int, height: int) -> Dict[str, Any]:
-        """Use gradients to detect frame transitions"""
-        # Sobel gradients
-        grad_x = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)
-        grad_y = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3)
-        
-        # Find strong horizontal/vertical lines
-        edges = {'top': 0, 'bottom': 0, 'left': 0, 'right': 0}
-        
-        # Top edge - look for strong horizontal gradient
-        top_region = np.abs(grad_y[:100, :])
-        top_lines = np.mean(top_region, axis=1)
-        strong_lines = np.where(top_lines > np.percentile(top_lines, 90))[0]
-        if len(strong_lines) > 0:
-            edges['top'] = strong_lines[-1]
-        
-        # Similar for other edges...
-        # Simplified for brevity
-        
-        if edges['top'] > 10 or edges['bottom'] > 10:
-            return {'detected': True, 'frame': edges}
-        
-        return {'detected': False}
-    
-    def _detect_components_method(self, gray: np.ndarray, width: int, height: int) -> Dict[str, Any]:
-        """Use connected components to find black frame"""
-        _, binary = cv2.threshold(gray, 30, 255, cv2.THRESH_BINARY)
-        binary = cv2.bitwise_not(binary)  # Invert so black is white
-        
-        num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(binary, connectivity=8)
-        
-        # Look for large black regions touching edges
-        for i in range(1, num_labels):
-            x, y, w, h, area = stats[i]
-            
-            # Check if it's large and touches edges
-            if area > (width * height * 0.1):  # At least 10% of image
-                touches_edge = (x == 0 or y == 0 or x + w == width or y + h == height)
-                if touches_edge:
-                    # Estimate frame from this component
-                    edges = {
-                        'top': y if y == 0 else 0,
-                        'bottom': height - (y + h) if y + h == height else 0,
-                        'left': x if x == 0 else 0,
-                        'right': width - (x + w) if x + w == width else 0
-                    }
-                    return {'detected': True, 'frame': edges}
-        
-        return {'detected': False}
-    
-    def create_inpainting_mask(self, image: Image.Image, frame: Dict[str, int]) -> Image.Image:
-        """Create mask for black frame areas"""
-        mask = Image.new('L', image.size, 0)
-        draw = ImageDraw.Draw(mask)
-        
-        width, height = image.size
-        
-        # Paint frame areas white (to be inpainted)
-        # Top
-        if frame['top'] > 0:
-            draw.rectangle([0, 0, width, frame['top'] + 5], fill=255)
-        
-        # Bottom
-        if frame['bottom'] > 0:
-            draw.rectangle([0, height - frame['bottom'] - 5, width, height], fill=255)
-        
-        # Left
-        if frame['left'] > 0:
-            draw.rectangle([0, 0, frame['left'] + 5, height], fill=255)
-        
-        # Right
-        if frame['right'] > 0:
-            draw.rectangle([width - frame['right'] - 5, 0, width, height], fill=255)
-        
-        # Dilate mask slightly for better inpainting
-        mask_array = np.array(mask)
-        kernel = np.ones((5, 5), np.uint8)
-        mask_array = cv2.dilate(mask_array, kernel, iterations=2)
-        
-        return Image.fromarray(mask_array)
-    
-    def remove_black_frame_with_replicate(self, image: Image.Image, mask: Image.Image) -> Image.Image:
-        """Use Replicate API to inpaint the black frame areas"""
-        if not REPLICATE_AVAILABLE:
-            logger.warning("Replicate not available, using fallback crop")
-            return self.fallback_crop(image, mask)
-        
+    def remove_black_frame_with_replicate(self, img: Image.Image, thickness: int) -> Image.Image:
+        """Remove black frame using Replicate API inpainting"""
         try:
-            # Convert images to base64
-            img_buffer = io.BytesIO()
-            image.save(img_buffer, format='PNG')
+            print(f"Removing black frame with thickness: {thickness}")
+            
+            # Create mask for inpainting
+            img_np = np.array(img)
+            h, w = img_np.shape[:2]
+            
+            # Create mask (white where we want to inpaint)
+            mask = np.zeros((h, w), dtype=np.uint8)
+            
+            # Mark edges for inpainting (with some expansion)
+            expand = 10  # Expand mask slightly
+            t = thickness + expand
+            
+            mask[:t, :] = 255  # Top
+            mask[-t:, :] = 255  # Bottom
+            mask[:, :t] = 255  # Left
+            mask[:, -t:] = 255  # Right
+            
+            # Save images for Replicate
+            img_buffer = BytesIO()
+            img.save(img_buffer, format='PNG')
             img_buffer.seek(0)
             
-            mask_buffer = io.BytesIO()
-            mask.save(mask_buffer, format='PNG')
+            mask_img = Image.fromarray(mask)
+            mask_buffer = BytesIO()
+            mask_img.save(mask_buffer, format='PNG')
             mask_buffer.seek(0)
             
             # Run inpainting
             output = replicate.run(
-                "lucataco/flux-fill-pro",
+                "stability-ai/stable-diffusion-inpainting:95b7223104132402a9ae91cc677285bc5eb997834bd2349fa486f53910fd68b3",
                 input={
                     "image": img_buffer,
                     "mask": mask_buffer,
-                    "prompt": "professional product photography, clean white seamless background, studio lighting, high-end jewelry photography",
-                    "guidance_scale": 30,
-                    "steps": 50,
-                    "strength": 0.95
+                    "prompt": "clean white background, professional product photography background, bright studio lighting",
+                    "negative_prompt": "black frame, black border, dark edges, shadows, vignette",
+                    "num_inference_steps": 25,
+                    "guidance_scale": 7.5,
+                    "scheduler": "K_EULER"
                 }
             )
             
-            # Load result
-            if isinstance(output, str):
-                response = requests.get(output)
-                return Image.open(io.BytesIO(response.content))
-            else:
-                return Image.open(io.BytesIO(output.read()))
+            # Get result
+            if output and len(output) > 0:
+                result_url = output[0] if isinstance(output, list) else output
+                response = requests.get(result_url)
+                response.raise_for_status()
                 
+                inpainted = Image.open(BytesIO(response.content))
+                
+                # Verify black frame is gone
+                check = self.detect_black_frame_multi_method(inpainted)
+                if not check['detected']:
+                    print("Black frame successfully removed")
+                    return inpainted
+                else:
+                    print("Black frame still detected after inpainting, using crop fallback")
+            
         except Exception as e:
-            logger.error(f"Replicate inpainting failed: {str(e)}")
-            return self.fallback_crop(image, mask)
+            print(f"Replicate inpainting error: {str(e)}")
+        
+        # Fallback: aggressive crop
+        return self.crop_black_frame(img, thickness + 20)
     
-    def fallback_crop(self, image: Image.Image, mask: Image.Image) -> Image.Image:
-        """Fallback method when inpainting fails"""
-        # Find content bounds
-        mask_array = np.array(mask)
-        rows = np.any(mask_array == 0, axis=1)
-        cols = np.any(mask_array == 0, axis=0)
-        
-        ymin, ymax = np.where(rows)[0][[0, -1]]
-        xmin, xmax = np.where(cols)[0][[0, -1]]
-        
-        # Add small padding
-        padding = 10
-        xmin = max(0, xmin - padding)
-        ymin = max(0, ymin - padding)
-        xmax = min(image.width, xmax + padding)
-        ymax = min(image.height, ymax + padding)
-        
-        return image.crop((xmin, ymin, xmax, ymax))
+    def crop_black_frame(self, img: Image.Image, thickness: int) -> Image.Image:
+        """Fallback: crop out black frame"""
+        width, height = img.size
+        crop_box = (
+            thickness,
+            thickness,
+            width - thickness,
+            height - thickness
+        )
+        return img.crop(crop_box)
     
-    def detect_color_from_histogram(self, image: Image.Image) -> str:
-        """Enhanced color detection"""
-        img_array = np.array(image)
+    def apply_color_correction(self, img: Image.Image) -> Image.Image:
+        """Apply color correction after masking removal"""
+        # Brightness
+        enhancer = ImageEnhance.Brightness(img)
+        img = enhancer.enhance(1.15)
         
-        # Get center region
-        h, w = img_array.shape[:2]
-        center = img_array[h//3:2*h//3, w//3:2*w//3]
+        # Contrast
+        enhancer = ImageEnhance.Contrast(img)
+        img = enhancer.enhance(1.12)
         
-        # Calculate color statistics
-        avg_color = np.mean(center.reshape(-1, 3), axis=0)
-        r, g, b = avg_color
+        # Saturation
+        enhancer = ImageEnhance.Color(img)
+        img = enhancer.enhance(0.95)
         
-        # Convert to HSV for better color detection
-        hsv = cv2.cvtColor(center, cv2.COLOR_RGB2HSV)
-        avg_hsv = np.mean(hsv.reshape(-1, 3), axis=0)
-        h, s, v = avg_hsv
-        
-        # Check for plain white first (highest priority)
-        if v > 220 and s < 15:
-            return 'plain_white'
-        
-        # White gold
-        if s < 25 and v > 180 and abs(r - g) < 10 and abs(g - b) < 10:
-            return 'white_gold'
-        
-        # Yellow gold (stricter criteria)
-        yellow_hue = 20 <= h <= 35
-        warm_tone = r > g > b
-        good_saturation = s > 40
-        
-        if yellow_hue and warm_tone and good_saturation:
-            return 'yellow_gold'
-        
-        # Rose gold
-        rose_hue = (h < 15 or h > 165)
-        pink_tone = r > g and r > b
-        moderate_saturation = 25 < s < 60
-        
-        if rose_hue and pink_tone and moderate_saturation:
-            return 'rose_gold'
-        
-        # Default to plain white
-        return 'plain_white'
+        return img
     
-    def apply_color_specific_enhancement(self, image: Image.Image, color_type: str) -> Image.Image:
-        """Apply color-specific enhancements"""
-        if color_type == 'plain_white':
-            # Dramatic brightening for plain white
-            img_array = np.array(image).astype(np.float32)
-            
-            # Strong brightness boost
-            img_array = cv2.convertScaleAbs(img_array, alpha=1.3, beta=30)
-            
-            # Cool tone adjustment
-            img_array[:, :, 0] = np.clip(img_array[:, :, 0] * 1.02, 0, 255)  # Blue
-            img_array[:, :, 1] = np.clip(img_array[:, :, 1] * 0.98, 0, 255)  # Green
-            img_array[:, :, 2] = np.clip(img_array[:, :, 2] * 0.96, 0, 255)  # Red
-            
-            enhanced = Image.fromarray(img_array.astype(np.uint8))
-            
-            # Strong contrast
-            contrast = ImageEnhance.Contrast(enhanced)
-            enhanced = contrast.enhance(1.4)
-            
-            # Slight blur then sharpen for smooth surface
-            enhanced = enhanced.filter(ImageFilter.GaussianBlur(radius=0.5))
-            sharpness = ImageEnhance.Sharpness(enhanced)
-            enhanced = sharpness.enhance(1.8)
-            
-        elif color_type == 'white_gold':
-            # Bright but warmer than plain white
-            brightness = ImageEnhance.Brightness(image)
-            enhanced = brightness.enhance(1.15)
-            
-            contrast = ImageEnhance.Contrast(enhanced)
-            enhanced = contrast.enhance(1.2)
-            
-            # Slight warmth
-            color = ImageEnhance.Color(enhanced)
-            enhanced = color.enhance(0.95)
-            
-        elif color_type == 'yellow_gold':
-            # Warm and rich
-            brightness = ImageEnhance.Brightness(image)
-            enhanced = brightness.enhance(1.08)
-            
-            # Boost warmth
-            img_array = np.array(enhanced)
-            img_array[:, :, 2] = np.clip(img_array[:, :, 2] * 1.05, 0, 255)  # Red
-            img_array[:, :, 1] = np.clip(img_array[:, :, 1] * 1.02, 0, 255)  # Green
-            enhanced = Image.fromarray(img_array)
-            
-            contrast = ImageEnhance.Contrast(enhanced)
-            enhanced = contrast.enhance(1.15)
-            
-        else:  # rose_gold
-            # Pink tones
-            brightness = ImageEnhance.Brightness(image)
-            enhanced = brightness.enhance(1.10)
-            
-            # Enhance pink
-            img_array = np.array(enhanced)
-            img_array[:, :, 2] = np.clip(img_array[:, :, 2] * 1.08, 0, 255)  # Red
-            enhanced = Image.fromarray(img_array)
-            
-            contrast = ImageEnhance.Contrast(enhanced)
-            enhanced = contrast.enhance(1.12)
+    def create_tight_thumbnail(self, img: Image.Image) -> Image.Image:
+        """Create tight thumbnail with ring centered"""
+        # Find ring bounds
+        img_np = np.array(img)
+        gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
         
-        return enhanced
-    
-    def create_thumbnail_with_details(self, image: Image.Image, target_size: Tuple[int, int] = (1000, 1300)) -> Image.Image:
-        """Create detailed thumbnail with tight crop"""
-        # Convert to numpy for processing
-        img_array = np.array(image)
-        gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
-        
-        # Find ring contours
+        # Use edge detection to find ring
         edges = cv2.Canny(gray, 50, 150)
+        
+        # Find contours
         contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         
         if contours:
             # Get bounding box of all contours
-            x, y, w, h = cv2.boundingRect(np.concatenate(contours))
+            x_min, y_min = img.width, img.height
+            x_max, y_max = 0, 0
             
-            # Very tight padding (10%)
-            padding_x = int(w * 0.1)
-            padding_y = int(h * 0.1)
+            for contour in contours:
+                x, y, w, h = cv2.boundingRect(contour)
+                x_min = min(x_min, x)
+                y_min = min(y_min, y)
+                x_max = max(x_max, x + w)
+                y_max = max(y_max, y + h)
             
-            x = max(0, x - padding_x)
-            y = max(0, y - padding_y)
-            w = min(image.width - x, w + 2 * padding_x)
-            h = min(image.height - y, h + 2 * padding_y)
+            # Add small padding (3%)
+            padding = 0.03
+            pad_x = int((x_max - x_min) * padding)
+            pad_y = int((y_max - y_min) * padding)
+            
+            x_min = max(0, x_min - pad_x)
+            y_min = max(0, y_min - pad_y)
+            x_max = min(img.width, x_max + pad_x)
+            y_max = min(img.height, y_max + pad_y)
             
             # Crop
-            cropped = image.crop((x, y, x + w, y + h))
-        else:
-            # Fallback center crop
-            width, height = image.size
-            crop_size = min(width, height) * 0.6
-            left = (width - crop_size) // 2
-            top = (height - crop_size) // 2
-            cropped = image.crop((left, top, left + crop_size, top + crop_size))
+            img = img.crop((x_min, y_min, x_max, y_max))
         
-        # Resize to target maintaining aspect ratio
-        cropped.thumbnail(target_size, Image.Resampling.LANCZOS)
+        # Resize to target size
+        img = img.resize(self.thumbnail_size, Image.Resampling.LANCZOS)
         
-        # Create final image with padding if needed
-        final = Image.new('RGB', target_size, (250, 250, 250))
-        paste_x = (target_size[0] - cropped.width) // 2
-        paste_y = (target_size[1] - cropped.height) // 2
-        final.paste(cropped, (paste_x, paste_y))
+        # Apply detail enhancement
+        enhancer = ImageEnhance.Sharpness(img)
+        img = enhancer.enhance(1.6)  # Strong sharpness for thumbnails
         
-        # Enhance details
-        sharpness = ImageEnhance.Sharpness(final)
-        final = sharpness.enhance(1.5)
-        
-        return final
+        return img
     
-    def enhance_details(self, image: Image.Image) -> Image.Image:
-        """Apply detail enhancement filters"""
-        # Denoise
-        img_array = np.array(image)
-        denoised = cv2.fastNlMeansDenoisingColored(img_array, None, 3, 3, 7, 21)
-        
-        # Unsharp mask for detail enhancement
-        gaussian = cv2.GaussianBlur(denoised, (0, 0), 2.0)
-        enhanced = cv2.addWeighted(denoised, 1.5, gaussian, -0.5, 0)
-        enhanced = np.clip(enhanced, 0, 255).astype(np.uint8)
-        
-        return Image.fromarray(enhanced)
-    
-    def image_to_base64_no_padding(self, image: Image.Image, format: str = 'JPEG') -> str:
-        """Convert image to base64 without padding"""
-        buffer = io.BytesIO()
-        
-        if format == 'JPEG':
-            if image.mode == 'RGBA':
-                rgb_image = Image.new('RGB', image.size, (255, 255, 255))
-                rgb_image.paste(image, mask=image.split()[3])
-                image = rgb_image
-            image.save(buffer, format=format, quality=95, optimize=True)
-        else:
-            image.save(buffer, format=format)
-            
-        buffer.seek(0)
-        img_str = base64.b64encode(buffer.read()).decode()
-        return img_str.rstrip('=')
-
-    def process_thumbnail(self, input_url: str) -> Tuple[str, str, Dict[str, Any]]:
-        """Main processing function for thumbnail generation"""
-        processing_info = {
-            'original_size': None,
-            'mask_created': False,
-            'inpainting_applied': False,
-            'crop_coords': None,
-            'final_size': None,
-            'detected_color': None,
-            'version': 'v42_perfect_recursive'
-        }
-        
+    def process_image(self, input_url: str) -> Dict[str, Any]:
+        """Main processing pipeline"""
         try:
-            # Load image with improved error handling
-            logger.info(f"Starting to load image...")
-            image = self.load_image_from_source(input_url)
+            # Load image
+            img = self.load_image_from_url(input_url)
             
-            if image is None:
-                raise ValueError("Failed to load image from source")
+            # Convert to RGB
+            if img.mode != 'RGB':
+                img = img.convert('RGB')
             
-            processing_info['original_size'] = image.size
-            logger.info(f"Image loaded successfully: {image.size}")
+            # Detect black frame
+            detection = self.detect_black_frame_multi_method(img)
             
-            # Detect black masking
-            mask_detection = self.detect_black_masking_multi_method(image)
-            logger.info(f"Black masking detection: {mask_detection}")
+            # Remove black frame if detected
+            if detection['detected']:
+                print(f"Black frame detected: {detection}")
+                img = self.remove_black_frame_with_replicate(img, detection['thickness'])
+                # Apply color correction after masking removal
+                img = self.apply_color_correction(img)
+            else:
+                print("No black frame detected")
+                # Apply color correction directly
+                img = self.apply_color_correction(img)
             
-            if mask_detection['detected']:
-                processing_info['mask_created'] = True
-                processing_info['mask_confidence'] = mask_detection['confidence']
-                
-                # Create inpainting mask
-                mask = self.create_inpainting_mask(image, mask_detection['frame'])
-                
-                # Remove black frame
-                image = self.remove_black_frame_with_replicate(image, mask)
-                processing_info['inpainting_applied'] = True
-                logger.info("Black frame removed successfully")
+            # Create tight thumbnail
+            thumbnail = self.create_tight_thumbnail(img)
             
-            # Detect color
-            detected_color = self.detect_color_from_histogram(image)
-            processing_info['detected_color'] = detected_color
-            logger.info(f"Detected color: {detected_color}")
+            # Save to buffer
+            buffer = BytesIO()
+            thumbnail.save(buffer, format='JPEG', quality=95, optimize=True)
+            buffer.seek(0)
             
-            # Apply color-specific enhancements
-            image = self.apply_color_specific_enhancement(image, detected_color)
+            # Encode without padding
+            thumbnail_base64 = base64.b64encode(buffer.getvalue()).decode('utf-8').rstrip('=')
             
-            # Create thumbnail with tight crop
-            thumbnail = self.create_thumbnail_with_details(image)
-            
-            # Final detail enhancement
-            thumbnail = self.enhance_details(thumbnail)
-            
-            processing_info['final_size'] = thumbnail.size
-            
-            # Convert to base64 without padding
-            thumbnail_base64 = self.image_to_base64_no_padding(thumbnail)
-            thumbnail_data_url = f"data:image/jpeg;base64,{thumbnail_base64}"
-            
-            return thumbnail_data_url, detected_color, processing_info
+            # Return with correct structure
+            return {
+                "output": {
+                    "thumbnail": f"data:image/jpeg;base64,{thumbnail_base64}",
+                    "status": "success",
+                    "version": self.version,
+                    "has_black_frame": detection['detected'],
+                    "inpainting_applied": detection['detected'],
+                    "mask_created": detection['detected'],
+                    "frame_thickness": detection.get('thickness', 0),
+                    "detection_methods": detection.get('methods', []),
+                    "thumbnail_size": f"{self.thumbnail_size[0]}x{self.thumbnail_size[1]}",
+                    "message": "Thumbnail created successfully"
+                }
+            }
             
         except Exception as e:
-            logger.error(f"Error processing thumbnail: {str(e)}")
-            logger.error(traceback.format_exc())
-            raise
-
-def handler(event):
-    """RunPod handler function"""
-    try:
-        logger.info("="*50)
-        logger.info(f"Thumbnail handler started - v42")
-        logger.info(f"Event type: {type(event)}")
-        
-        handler_instance = ThumbnailHandler()
-        
-        # Find input URL with perfect recursive logic
-        input_url = handler_instance.find_input_url(event)
-        
-        if not input_url:
-            raise ValueError("No input URL found. Please check the input structure.")
-        
-        logger.info(f"Found input successfully")
-        
-        # Process thumbnail
-        thumbnail_data_url, detected_color, processing_info = handler_instance.process_thumbnail(input_url)
-        
-        # Prepare response
-        result = {
-            "output": {
-                "thumbnail": thumbnail_data_url,
-                "detected_color": detected_color,
-                "processing_info": processing_info,
-                "success": True
-            }
-        }
-        
-        logger.info("Thumbnail processing completed successfully")
-        return result
-        
-    except Exception as e:
-        logger.error(f"Error in handler: {str(e)}")
-        logger.error(traceback.format_exc())
-        
+            print(f"ERROR in process_image: {str(e)}")
+            return self.create_error_response(f"Processing error: {str(e)}")
+    
+    def create_error_response(self, error_message: str) -> Dict[str, Any]:
+        """Create error response with correct structure"""
         return {
             "output": {
-                "error": str(e),
-                "traceback": traceback.format_exc(),
-                "success": False
+                "status": "error",
+                "error": error_message,
+                "version": self.version
             }
         }
 
 # For RunPod
 if __name__ == "__main__":
-    import runpod
-    runpod.serverless.start({"handler": handler})
+    print(f"Thumbnail Handler v{VERSION} loaded successfully
