@@ -17,9 +17,9 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-VERSION = "Thumbnail_V66_LESS_ZOOM"
+VERSION = "Thumbnail_V67_COLOR_PRESERVE"
 
-# V66: Get API token from environment variable FIRST
+# V67: Get API token from environment variable FIRST
 REPLICATE_API_TOKEN = os.environ.get('REPLICATE_API_TOKEN', 'r8_6cksfxEmLxWlYxjW4K1FEbnZMEEmlQw2UeNNY')
 
 def create_session():
@@ -38,9 +38,6 @@ def create_session():
 def find_input_data(data):
     """Recursively find input data from various possible locations"""
     logger.info("Searching for input data...")
-    
-    # Log the structure (limited to prevent huge logs)
-    logger.info(f"Input structure: {json.dumps(data, indent=2)[:1000]}...")
     
     # Direct access attempts
     if isinstance(data, dict):
@@ -189,50 +186,146 @@ def apply_super_resolution_enhance(image):
         logger.error(f"Super resolution error: {str(e)}")
         return image
 
-def apply_enhancement_v66(image):
-    """Apply v66 enhancement - pure white for 무도금화이트"""
+def detect_ring_color_improved(image):
+    """Improved color detection that preserves original colors"""
+    try:
+        # Convert to numpy array
+        img_array = np.array(image)
+        
+        # Get center region (where ring is likely to be)
+        h, w = img_array.shape[:2]
+        center_y, center_x = h // 2, w // 2
+        region_size = min(h, w) // 3
+        
+        center_region = img_array[
+            center_y - region_size:center_y + region_size,
+            center_x - region_size:center_x + region_size
+        ]
+        
+        # Convert to HSV for better color detection
+        hsv = cv2.cvtColor(center_region, cv2.COLOR_RGB2HSV)
+        
+        # Calculate color statistics
+        avg_h = np.mean(hsv[:, :, 0])
+        avg_s = np.mean(hsv[:, :, 1])
+        avg_v = np.mean(hsv[:, :, 2])
+        
+        # Also check LAB color space
+        lab = cv2.cvtColor(center_region, cv2.COLOR_RGB2LAB)
+        avg_l = np.mean(lab[:, :, 0])
+        avg_a = np.mean(lab[:, :, 1])
+        avg_b = np.mean(lab[:, :, 2])
+        
+        # RGB average for better yellow detection
+        avg_r = np.mean(center_region[:, :, 0])
+        avg_g = np.mean(center_region[:, :, 1])
+        avg_b_rgb = np.mean(center_region[:, :, 2])
+        
+        logger.info(f"Color analysis - H: {avg_h:.1f}, S: {avg_s:.1f}, V: {avg_v:.1f}")
+        logger.info(f"LAB analysis - L: {avg_l:.1f}, a: {avg_a:.1f}, b: {avg_b:.1f}")
+        logger.info(f"RGB analysis - R: {avg_r:.1f}, G: {avg_g:.1f}, B: {avg_b_rgb:.1f}")
+        
+        # V67: Improved color detection logic
+        # Yellow gold detection - warm tones
+        if (15 <= avg_h <= 40 and avg_s > 25 and avg_b > 140) or \
+           (avg_r > avg_b_rgb + 20 and avg_g > avg_b_rgb + 10):
+            return 'yellow_gold'
+        # Rose gold detection - pink/reddish tones
+        elif ((avg_h < 15 or avg_h > 165) and avg_s > 20 and avg_a > 135) or \
+             (avg_r > avg_g + 5 and avg_r > avg_b_rgb + 10):
+            return 'rose_gold'
+        # White detection - very bright and desaturated
+        elif avg_v > 200 and avg_s < 25 and abs(avg_a - 128) < 10:
+            return 'white'
+        # White gold - bright but slightly cool
+        elif avg_s < 40 and avg_v > 150 and avg_b_rgb >= avg_r:
+            return 'white_gold'
+        # Default to yellow gold for warm tones
+        elif avg_r >= avg_b_rgb:
+            return 'yellow_gold'
+        else:
+            return 'white_gold'
+            
+    except Exception as e:
+        logger.error(f"Color detection error: {str(e)}")
+        return 'yellow_gold'  # Default to yellow gold
+
+def apply_color_specific_enhancement(image, color):
+    """Apply color-specific enhancements while preserving original colors"""
     try:
         # Ensure RGB mode
         if image.mode != 'RGB':
             image = image.convert('RGB')
         
-        logger.info("Applying v66 enhancement for pure white look...")
+        logger.info(f"Applying {color}-specific enhancement...")
         
-        # 1. Strong brightness increase for white metal
-        enhancer = ImageEnhance.Brightness(image)
-        image = enhancer.enhance(1.45)  # Same as v65
+        if color == 'yellow_gold':
+            # Preserve warm tones
+            enhancer = ImageEnhance.Brightness(image)
+            image = enhancer.enhance(1.1)  # Slight brightness
+            
+            # Enhance gold tone slightly
+            enhancer = ImageEnhance.Color(image)
+            image = enhancer.enhance(1.1)  # Slight saturation boost
+            
+            # Mild contrast
+            enhancer = ImageEnhance.Contrast(image)
+            image = enhancer.enhance(1.05)
+            
+            # Warm gamma
+            image = apply_gamma_correction(image, 0.9)
+            
+        elif color == 'rose_gold':
+            # Preserve pink tones
+            enhancer = ImageEnhance.Brightness(image)
+            image = enhancer.enhance(1.08)
+            
+            # Maintain color
+            enhancer = ImageEnhance.Color(image)
+            image = enhancer.enhance(1.05)
+            
+            # Soft contrast
+            enhancer = ImageEnhance.Contrast(image)
+            image = enhancer.enhance(1.05)
+            
+            # Preserve warmth
+            image = apply_gamma_correction(image, 0.85)
+            
+        elif color == 'white':
+            # V67: Pure white enhancement
+            enhancer = ImageEnhance.Brightness(image)
+            image = enhancer.enhance(1.35)
+            
+            # Strong desaturation
+            enhancer = ImageEnhance.Color(image)
+            image = enhancer.enhance(0.5)
+            
+            # High contrast
+            enhancer = ImageEnhance.Contrast(image)
+            image = enhancer.enhance(1.15)
+            
+            # Bright gamma
+            image = apply_gamma_correction(image, 0.7)
+            
+        elif color == 'white_gold':
+            # Cool metallic
+            enhancer = ImageEnhance.Brightness(image)
+            image = enhancer.enhance(1.15)
+            
+            # Slight desaturation
+            enhancer = ImageEnhance.Color(image)
+            image = enhancer.enhance(0.8)
+            
+            # Moderate contrast
+            enhancer = ImageEnhance.Contrast(image)
+            image = enhancer.enhance(1.1)
+            
+            image = apply_gamma_correction(image, 0.8)
         
-        # 2. Gamma correction for bright mid-tones
-        image = apply_gamma_correction(image, 0.6)  # Same as v65
-        
-        # 3. Reduce saturation significantly
-        enhancer = ImageEnhance.Color(image)
-        image = enhancer.enhance(0.5)  # Same as v65
-        
-        # 4. Increase contrast
-        enhancer = ImageEnhance.Contrast(image)
-        image = enhancer.enhance(1.15)
-        
-        # 5. Apply CLAHE for detail
+        # Apply CLAHE for all colors
         image = apply_clahe_enhancement(image)
         
-        # 6. LAB color space adjustment for pure white
-        img_array = np.array(image)
-        lab = cv2.cvtColor(img_array, cv2.COLOR_RGB2LAB)
-        l, a, b = cv2.split(lab)
-        
-        # Boost L channel for brightness
-        l = cv2.multiply(l, 1.1)
-        l = np.clip(l, 0, 255).astype(np.uint8)
-        
-        # Reduce a and b channels for neutral color
-        a = cv2.multiply(a, 0.8)
-        b = cv2.multiply(b, 0.8)
-        
-        enhanced_lab = cv2.merge([l, a, b])
-        enhanced_rgb = cv2.cvtColor(enhanced_lab, cv2.COLOR_LAB2RGB)
-        
-        return Image.fromarray(enhanced_rgb)
+        return image
         
     except Exception as e:
         logger.error(f"Enhancement error: {str(e)}")
@@ -279,7 +372,7 @@ def detect_wedding_rings(image):
         return (w // 2, h // 2)
 
 def create_thumbnail_with_less_zoom(image, target_size=(1000, 1300)):
-    """Create thumbnail with less zoom - V66: 55% crop instead of 45%"""
+    """Create thumbnail with less zoom - V67: 55% crop"""
     try:
         # First, detect wedding rings to find optimal crop center
         ring_center = detect_wedding_rings(image)
@@ -289,7 +382,7 @@ def create_thumbnail_with_less_zoom(image, target_size=(1000, 1300)):
         target_ratio = target_size[0] / target_size[1]  # 1000/1300 = 0.769
         img_width, img_height = image.size
         
-        # V66: Use 55% of the image (much less zoom than v65's 45%)
+        # V67: Use 55% of the image
         crop_percentage = 0.55
         
         # Determine crop size
@@ -327,9 +420,14 @@ def create_thumbnail_with_less_zoom(image, target_size=(1000, 1300)):
         # Fallback to simple center crop
         return image.resize(target_size, Image.Resampling.LANCZOS)
 
-def enhance_with_replicate(image_base64):
-    """Use Replicate API for high-quality enhancement"""
+def enhance_with_replicate_color_preserve(image_base64, color):
+    """Use Replicate API for quality enhancement with color preservation"""
     try:
+        # V67: Skip Replicate for yellow/rose gold to preserve color
+        if color in ['yellow_gold', 'rose_gold']:
+            logger.info(f"Skipping Replicate for {color} to preserve color")
+            return None
+            
         logger.info("Starting Replicate enhancement...")
         session = create_session()
         
@@ -346,11 +444,11 @@ def enhance_with_replicate(image_base64):
         create_response = session.post(
             "https://api.replicate.com/v1/predictions",
             json={
-                "version": "42fed1c4974146d4d2414e2be2c5277c7fcf05fcc3a73abf41610695738c1d7b",  # Real-ESRGAN
+                "version": "42fed1c4974146d4d2414e2be2c5277c7fcf05fcc3a73abf41610695738c1d7b",
                 "input": {
                     "image": f"data:image/png;base64,{image_base64_clean}",
-                    "scale": 2,  # 2x scale for quality
-                    "face_enhance": False  # We're doing rings, not faces
+                    "scale": 2,
+                    "face_enhance": False
                 }
             },
             headers=headers,
@@ -422,89 +520,46 @@ def enhance_with_replicate(image_base64):
         logger.error(f"Replicate API error: {str(e)}")
         return None
 
-def detect_ring_color(image):
-    """Detect ring color from image with improved accuracy"""
-    try:
-        # Convert to numpy array
-        img_array = np.array(image)
-        
-        # Get center region (where ring is likely to be)
-        h, w = img_array.shape[:2]
-        center_y, center_x = h // 2, w // 2
-        region_size = min(h, w) // 3
-        
-        center_region = img_array[
-            center_y - region_size:center_y + region_size,
-            center_x - region_size:center_x + region_size
-        ]
-        
-        # Convert to HSV for better color detection
-        hsv = cv2.cvtColor(center_region, cv2.COLOR_RGB2HSV)
-        
-        # Calculate color statistics
-        avg_h = np.mean(hsv[:, :, 0])
-        avg_s = np.mean(hsv[:, :, 1])
-        avg_v = np.mean(hsv[:, :, 2])
-        
-        # Also check LAB color space
-        lab = cv2.cvtColor(center_region, cv2.COLOR_RGB2LAB)
-        avg_l = np.mean(lab[:, :, 0])
-        avg_a = np.mean(lab[:, :, 1])
-        avg_b = np.mean(lab[:, :, 2])
-        
-        logger.info(f"Color analysis - H: {avg_h:.1f}, S: {avg_s:.1f}, V: {avg_v:.1f}")
-        logger.info(f"LAB analysis - L: {avg_l:.1f}, a: {avg_a:.1f}, b: {avg_b:.1f}")
-        
-        # V66: 무도금화이트 우선 감지
-        if avg_v > 200 and avg_s < 30:  # Very bright and low saturation
-            return 'white'
-        elif avg_s < 40 and avg_v > 150 and avg_a < 130:  # Low saturation, bright, neutral
-            return 'white_gold'
-        elif 15 <= avg_h <= 35 and avg_s > 30 and avg_a > 130:  # Yellow hue with warmth
-            return 'yellow_gold'
-        elif (avg_h < 15 or avg_h > 165) and avg_s > 20 and avg_a > 135:  # Pink tone
-            return 'rose_gold'
-        else:
-            return 'white'  # Default to white
-            
-    except Exception as e:
-        logger.error(f"Color detection error: {str(e)}")
-        return 'white'
-
 def apply_final_color_enhancement(image, color):
-    """Apply final color-specific enhancements for pure white look"""
+    """Apply final color-specific enhancements"""
     try:
         enhanced = image.copy()
         
-        if color == 'white':  # 무도금화이트
-            # V66: Maximum white enhancement
+        if color == 'white':
+            # Maximum white enhancement
             enhancer = ImageEnhance.Brightness(enhanced)
-            enhanced = enhancer.enhance(1.3)
+            enhanced = enhancer.enhance(1.2)
             
-            # Remove all color
             enhancer = ImageEnhance.Color(enhanced)
             enhanced = enhancer.enhance(0.4)
             
-            # High contrast for crisp look
             enhancer = ImageEnhance.Contrast(enhanced)
             enhanced = enhancer.enhance(1.2)
+            
+        elif color == 'yellow_gold':
+            # Preserve gold warmth
+            enhancer = ImageEnhance.Brightness(enhanced)
+            enhanced = enhancer.enhance(1.05)
+            
+            enhancer = ImageEnhance.Color(enhanced)
+            enhanced = enhancer.enhance(1.05)
+            
+        elif color == 'rose_gold':
+            # Preserve pink tones
+            enhancer = ImageEnhance.Brightness(enhanced)
+            enhanced = enhancer.enhance(1.05)
             
         elif color == 'white_gold':
-            # White gold: cool metallic
+            # Cool metallic
             enhancer = ImageEnhance.Brightness(enhanced)
-            enhanced = enhancer.enhance(1.2)
+            enhanced = enhancer.enhance(1.1)
             
             enhancer = ImageEnhance.Contrast(enhanced)
-            enhanced = enhancer.enhance(1.15)
-            
-            # Slight cool tone
-            img_array = np.array(enhanced)
-            img_array[:, :, 2] = np.clip(img_array[:, :, 2] * 0.95, 0, 255)  # Reduce red
-            enhanced = Image.fromarray(img_array.astype(np.uint8))
-            
-        # Maximum sharpness for all
+            enhanced = enhancer.enhance(1.1)
+        
+        # Moderate sharpness for all
         enhancer = ImageEnhance.Sharpness(enhanced)
-        enhanced = enhancer.enhance(2.0)
+        enhanced = enhancer.enhance(1.5)
         
         # Final super-resolution enhancement
         enhanced = apply_super_resolution_enhance(enhanced)
@@ -516,7 +571,7 @@ def apply_final_color_enhancement(image, color):
         return image
 
 def process_thumbnail(job):
-    """Process thumbnail request with v66 enhancements"""
+    """Process thumbnail request with v67 color preservation"""
     logger.info(f"=== {VERSION} Started ===")
     logger.info(f"Received job: {json.dumps(job, indent=2)[:500]}...")
     
@@ -579,42 +634,43 @@ def process_thumbnail(job):
             logger.info(f"Converting from {image.mode} to RGB")
             image = image.convert('RGB')
         
-        # Step 1: Apply enhancement FIRST
-        logger.info("Step 1: Applying v66 enhancement...")
-        enhanced_image = apply_enhancement_v66(image)
+        # Step 1: Detect color FIRST before any processing
+        logger.info("Step 1: Detecting ring color...")
+        detected_color = detect_ring_color_improved(image)
+        logger.info(f"Detected color: {detected_color}")
         
-        # Step 2: Create 1000x1300 thumbnail with less zoom
-        logger.info("Step 2: Creating thumbnail with less zoom (55%)...")
+        # Step 2: Apply color-specific enhancement
+        logger.info(f"Step 2: Applying {detected_color}-specific enhancement...")
+        enhanced_image = apply_color_specific_enhancement(image, detected_color)
+        
+        # Step 3: Create 1000x1300 thumbnail with less zoom
+        logger.info("Step 3: Creating thumbnail with 55% crop...")
         thumbnail = create_thumbnail_with_less_zoom(enhanced_image, (1000, 1300))
         
-        # Step 3: Enhance with Replicate for quality
-        logger.info("Step 3: Enhancing quality with Replicate...")
+        # Step 4: Optional Replicate enhancement (skip for yellow/rose gold)
+        logger.info("Step 4: Considering Replicate enhancement...")
         
         # Convert thumbnail to base64 for Replicate
         buffered = BytesIO()
         thumbnail.save(buffered, format="PNG")
         thumbnail_base64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
         
-        # Try Replicate enhancement
-        enhanced_base64 = enhance_with_replicate(thumbnail_base64)
+        # Try Replicate enhancement with color preservation
+        enhanced_base64 = enhance_with_replicate_color_preserve(thumbnail_base64, detected_color)
         
         if enhanced_base64:
             # Load enhanced image
             enhanced_bytes = decode_base64_safe(enhanced_base64)
             thumbnail = Image.open(BytesIO(enhanced_bytes))
             
-            # Resize back to 1000x1300 if needed (Real-ESRGAN scales up)
+            # Resize back to 1000x1300 if needed
             if thumbnail.size != (1000, 1300):
                 thumbnail = thumbnail.resize((1000, 1300), Image.Resampling.LANCZOS)
         else:
-            logger.warning("Replicate enhancement failed, continuing with local processing")
+            logger.info(f"Continuing with local processing for {detected_color}")
         
-        # Step 4: Detect color and apply final enhancements
-        logger.info("Step 4: Detecting color and applying final enhancements...")
-        detected_color = detect_ring_color(thumbnail)
-        logger.info(f"Detected color: {detected_color}")
-        
-        # Apply final color-specific enhancements
+        # Step 5: Apply final color-specific enhancements
+        logger.info("Step 5: Applying final enhancements...")
         final_thumbnail = apply_final_color_enhancement(thumbnail, detected_color)
         
         # Convert to base64
@@ -651,15 +707,15 @@ def process_thumbnail(job):
                 "thumbnail_with_padding": result_base64_with_padding,  # Google Script용
                 "color": color_map.get(detected_color, '#FFD700'),
                 "status": "success",
-                "message": f"Thumbnail created with v66 less zoom (55%) enhancement",
+                "message": f"Thumbnail created with v67 color preservation",
                 "processing_time": f"{processing_time:.2f}s",
                 "detected_color": detected_color,
                 "original_size": list(image.size),
                 "final_size": [1000, 1300],
                 "settings": {
                     "size": "1000x1300",
-                    "zoom_level": "55%",  # V66: Less zoom
-                    "enhancement": "v66_pure_white_less_zoom",
+                    "zoom_level": "55%",
+                    "enhancement": "v67_color_preserve",
                     "replicate_used": enhanced_base64 is not None,
                     "color_name": detected_color,
                     "color_hex": color_map.get(detected_color, '#FFD700')
