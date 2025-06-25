@@ -12,56 +12,80 @@ THUMBNAIL_WIDTH = 1000
 THUMBNAIL_HEIGHT = 1300
 
 def find_input_url(event):
-    """Find input URL from various possible locations"""
-    # Priority order - check enhanced_image first!
-    url_keys = [
-        'enhanced_image', 'input_url', 'image_url', 'url', 
-        'image', 'enhancedImage', 'imageUrl'
+    """Find input URL from ALL possible locations"""
+    # All possible keys for URL/image data
+    possible_keys = [
+        'enhanced_image', 'enhancedImage', 'input_url', 'inputUrl',
+        'image_url', 'imageUrl', 'url', 'image', 'img',
+        'output_image', 'outputImage', 'result', 'data',
+        'thumbnail', 'photo', 'file', 'content', 'base64',
+        'image_base64', 'imageBase64', 'base64Image'
     ]
     
-    # Check direct keys
-    for key in url_keys:
-        if key in event and isinstance(event[key], str):
-            url = event[key]
-            if url.startswith(('http', 'data:')):
-                print(f"Found URL at: {key}")
-                return url
+    def check_value(value):
+        """Check if value is URL or base64 data"""
+        if isinstance(value, str) and len(value) > 100:
+            # Check if it's URL
+            if value.startswith(('http://', 'https://', 'data:image')):
+                return True
+            # Check if it looks like base64 (could be without data: prefix)
+            if all(c in 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=' for c in value[:100]):
+                return True
+        return False
     
-    # Check input dict
-    if 'input' in event and isinstance(event['input'], dict):
-        for key in url_keys:
-            if key in event['input'] and isinstance(event['input'][key], str):
-                url = event['input'][key]
-                if url.startswith(('http', 'data:')):
-                    print(f"Found URL at: input.{key}")
-                    return url
+    def search_dict(d, path=""):
+        """Recursively search dictionary for URL/image data"""
+        if not isinstance(d, dict):
+            return None
+            
+        # Check all possible keys
+        for key in possible_keys:
+            if key in d:
+                if check_value(d[key]):
+                    print(f"Found URL/image at: {path}{key}")
+                    return d[key]
+        
+        # Check ALL keys (not just known ones)
+        for key, value in d.items():
+            if check_value(value):
+                print(f"Found URL/image at: {path}{key}")
+                return value
+            elif isinstance(value, dict):
+                result = search_dict(value, f"{path}{key}.")
+                if result:
+                    return result
+        
+        return None
     
-    # Check numbered output structure
-    if 'output' in event and isinstance(event['output'], dict):
-        if 'output' in event['output'] and isinstance(event['output']['output'], dict):
-            for key in url_keys:
-                if key in event['output']['output']:
-                    url = event['output']['output'][key]
-                    if isinstance(url, str) and url.startswith(('http', 'data:')):
-                        print(f"Found URL at: output.output.{key}")
-                        return url
+    # Search main event
+    result = search_dict(event)
+    if result:
+        return result
     
-    print("No URL found - dumping structure")
+    # If not found, dump structure for debugging
+    print("No URL/image found - dumping structure")
+    print(f"Event type: {type(event)}")
     print(f"Event keys: {list(event.keys()) if isinstance(event, dict) else 'Not dict'}")
-    if 'input' in event:
-        print(f"Input keys: {list(event['input'].keys()) if isinstance(event['input'], dict) else 'Not dict'}")
+    if isinstance(event, dict):
+        for key, value in event.items():
+            if isinstance(value, dict):
+                print(f"  {key}: {list(value.keys())}")
+            elif isinstance(value, str):
+                print(f"  {key}: string (length: {len(value)})")
+            else:
+                print(f"  {key}: {type(value)}")
     
     return None
 
 def load_image_from_url(url):
-    """Load image from URL or data URL"""
+    """Load image from URL, data URL, or raw base64"""
     try:
         if url.startswith('data:'):
             # Handle data URL
             header, encoded = url.split(',', 1)
             data = base64.b64decode(encoded + '==')  # Add padding just in case
             image = Image.open(BytesIO(data))
-        else:
+        elif url.startswith(('http://', 'https://')):
             # Handle HTTP URL
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
@@ -69,11 +93,21 @@ def load_image_from_url(url):
             response = requests.get(url, headers=headers, stream=True)
             response.raise_for_status()
             image = Image.open(BytesIO(response.content))
+        else:
+            # Assume it's raw base64
+            print("Treating as raw base64 data")
+            # Add padding if needed
+            padding = 4 - (len(url) % 4)
+            if padding != 4:
+                url += '=' * padding
+            data = base64.b64decode(url)
+            image = Image.open(BytesIO(data))
         
         # Convert to RGB if needed
         if image.mode not in ('RGB', 'RGBA'):
             image = image.convert('RGB')
         
+        print(f"Image loaded successfully: {image.size}")
         return image
     except Exception as e:
         print(f"Error loading image: {str(e)}")
@@ -284,16 +318,39 @@ def handler(job):
         # Find input URL
         input_url = find_input_url(job)
         if not input_url:
-            print(f"Job structure: {job}")
+            print(f"ERROR: No input URL found in job structure")
+            print(f"Job type: {type(job)}")
+            print(f"Job keys: {list(job.keys()) if isinstance(job, dict) else 'Not dict'}")
+            
+            # Deep structure dump
+            if isinstance(job, dict):
+                for key, value in job.items():
+                    print(f"\n--- Key: {key} ---")
+                    if isinstance(value, dict):
+                        print(f"  Type: dict, Keys: {list(value.keys())}")
+                        for k, v in value.items():
+                            if isinstance(v, str):
+                                print(f"    {k}: string (length: {len(v)}, starts: {v[:50]}...)")
+                            elif isinstance(v, dict):
+                                print(f"    {k}: dict with keys: {list(v.keys())}")
+                            else:
+                                print(f"    {k}: {type(v)}")
+                    elif isinstance(value, str):
+                        print(f"  Type: string (length: {len(value)}, starts: {value[:50]}...)")
+                    else:
+                        print(f"  Type: {type(value)}")
+            
             return {
                 "output": {
-                    "error": "No input URL found",
+                    "error": "No input URL found in any known location",
                     "success": False,
-                    "version": VERSION
+                    "version": VERSION,
+                    "checked_structure": True
                 }
             }
         
-        print(f"Found URL: {input_url[:100]}...")
+        print(f"Found URL/data, length: {len(input_url)}")
+        print(f"URL type: {'data URL' if input_url.startswith('data:') else 'HTTP URL' if input_url.startswith('http') else 'raw base64'}")
         
         # Load image
         try:
