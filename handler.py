@@ -104,7 +104,7 @@ def base64_to_image(base64_string):
     return Image.open(BytesIO(img_data))
 
 def apply_basic_enhancement(image):
-    """Enhancement와 동일한 기본 보정 적용"""
+    """Enhancement와 동일한 기본 보정 적용 (V58 버전)"""
     # RGB로 변환 (RGBA인 경우)
     if image.mode == 'RGBA':
         background = Image.new('RGB', image.size, (255, 255, 255))
@@ -130,17 +130,15 @@ def apply_basic_enhancement(image):
     
     for i in range(3):
         channel = img_array[:, :, i].astype(np.float32) / 255.0
-        channel = np.power(channel, 0.6)
+        channel = np.power(channel, 0.7)  # 감마 0.7
         channel = np.where(channel > 0.6, 
                           channel + (1 - channel) * 0.15,
                           channel * 1.05)
         channel = np.clip(channel, 0, 1)
         img_array[:, :, i] = (channel * 255).astype(np.uint8)
     
-    # 5단계: 화이트 오버레이 (3%)
-    white_overlay = np.ones_like(img_array) * 255
-    alpha = 0.03
-    img_array = (img_array * (1 - alpha) + white_overlay * alpha).astype(np.uint8)
+    # 5단계: 화이트 오버레이 제거 (0%)
+    # 화이트 오버레이 스킵
     
     enhanced_image = Image.fromarray(img_array)
     
@@ -363,9 +361,9 @@ def handler(event):
         
         print(f"이미지 로드 완료: {image.size}")
         
-        # 1. Enhancement 기본 보정 적용
+        # 1. Enhancement 기본 보정 적용 (V58 버전)
         enhanced_image = apply_basic_enhancement(image)
-        print("기본 보정 적용 완료")
+        print("기본 보정 적용 완료 (V58)")
         
         # 2. 1000x1300으로 크롭
         thumbnail = create_thumbnail_with_crop(enhanced_image)
@@ -389,7 +387,7 @@ def handler(event):
                 "size": list(thumbnail.size),
                 "detected_color": detected_color,
                 "format": "base64_no_padding",
-                "process": "enhancement_crop_detect_enhance_v57"
+                "process": "enhancement_crop_detect_enhance_v58"
             }
         }
         
