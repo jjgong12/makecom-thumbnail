@@ -46,12 +46,12 @@ def find_input_data(data):
             else:
                 return current
     
-    # 재귀적 탐색
-    def recursive_search(obj, target_keys=['input', 'url', 'image_url', 'imageUrl']):
+    # 재귀적 탐색 - image_base64도 찾기
+    def recursive_search(obj, target_keys=['input', 'url', 'image_url', 'imageUrl', 'image_base64', 'imageBase64']):
         if isinstance(obj, dict):
             for key in target_keys:
                 if key in obj:
-                    return obj[key]
+                    return obj[key] if key == 'input' else {key: obj[key]}
             
             for value in obj.values():
                 result = recursive_search(value, target_keys)
@@ -96,6 +96,20 @@ def download_image_from_url(url):
             else:
                 raise
 
+def base64_to_image(base64_string):
+    """Base64 문자열을 PIL Image로 변환"""
+    # padding 복원
+    padding = 4 - len(base64_string) % 4
+    if padding != 4:
+        base64_string += '=' * padding
+    
+    # data URL 형식 처리
+    if ',' in base64_string:
+        base64_string = base64_string.split(',')[1]
+    
+    img_data = base64.b64decode(base64_string)
+    return Image.open(BytesIO(img_data))
+
 def remove_background_with_replicate(image):
     """Replicate API를 사용하여 배경 제거"""
     # PIL Image를 base64로 변환
@@ -128,6 +142,14 @@ def remove_background_with_replicate(image):
 def detect_ring_color(image):
     """반지 색상 감지 - 무도금화이트 우선 감지"""
     img_array = np.array(image)
+    
+    # RGB인 경우만 처리 (RGBA는 RGB로 변환)
+    if len(img_array.shape) == 3 and img_array.shape[2] == 4:
+        # 흰색 배경에 합성
+        rgb_image = Image.new('RGB', image.size, (255, 255, 255))
+        rgb_image.paste(image, mask=image.split()[3])
+        img_array = np.array(rgb_image)
+    
     hsv = cv2.cvtColor(img_array, cv2.COLOR_RGB2HSV)
     
     # 이미지 중앙 부분만 분석 (반지가 있을 가능성이 높은 부분)
@@ -334,21 +356,33 @@ def handler(event):
         if not input_data:
             raise ValueError("입력 데이터를 찾을 수 없습니다")
         
-        # URL 추출
-        image_url = None
+        # 이미지 소스 확인 (URL 또는 Base64)
+        image = None
+        
+        # Base64 입력 처리
         if isinstance(input_data, dict):
-            image_url = input_data.get('url') or input_data.get('image_url') or input_data.get('imageUrl')
+            if 'image_base64' in input_data or 'imageBase64' in input_data:
+                base64_str = input_data.get('image_base64') or input_data.get('imageBase64')
+                print("Base64 이미지 입력 감지")
+                image = base64_to_image(base64_str)
+            elif 'url' in input_data or 'image_url' in input_data or 'imageUrl' in input_data:
+                image_url = input_data.get('url') or input_data.get('image_url') or input_data.get('imageUrl')
+                print(f"URL 입력 감지: {image_url}")
+                image = download_image_from_url(image_url)
         elif isinstance(input_data, str):
-            image_url = input_data
+            # 문자열인 경우 URL로 가정
+            if input_data.startswith('http'):
+                print(f"URL 문자열 입력: {input_data}")
+                image = download_image_from_url(input_data)
+            else:
+                # Base64 문자열로 가정
+                print("Base64 문자열 입력 감지")
+                image = base64_to_image(input_data)
         
-        if not image_url:
-            raise ValueError(f"이미지 URL을 찾을 수 없습니다. 입력: {input_data}")
+        if not image:
+            raise ValueError(f"이미지를 로드할 수 없습니다. 입력: {input_data}")
         
-        print(f"이미지 URL: {image_url}")
-        
-        # 이미지 다운로드
-        image = download_image_from_url(image_url)
-        print(f"이미지 다운로드 완료: {image.size}")
+        print(f"이미지 로드 완료: {image.size}")
         
         # 색상 감지 (배경 제거 전에 원본에서)
         detected_color = detect_ring_color(image)
@@ -369,7 +403,7 @@ def handler(event):
         return {
             "output": {
                 "thumbnail": thumbnail_base64,
-                "size": thumbnail.size,
+                "size": list(thumbnail.size),
                 "detected_color": detected_color,
                 "format": "base64_no_padding"
             }
