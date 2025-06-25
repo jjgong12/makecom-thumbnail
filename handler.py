@@ -125,9 +125,127 @@ def remove_background_with_replicate(image):
         # 이미 PIL Image인 경우
         return output
 
-def create_thumbnail(image, size=(500, 500)):
-    """정사각형 썸네일 생성"""
-    # 배경이 제거된 이미지를 정사각형으로 만들기
+def detect_ring_color(image):
+    """반지 색상 감지 - 무도금화이트 우선 감지"""
+    img_array = np.array(image)
+    hsv = cv2.cvtColor(img_array, cv2.COLOR_RGB2HSV)
+    
+    # 이미지 중앙 부분만 분석 (반지가 있을 가능성이 높은 부분)
+    h, w = hsv.shape[:2]
+    center_region = hsv[h//4:3*h//4, w//4:3*w//4]
+    
+    # 각 색상별 픽셀 수 계산
+    color_pixels = {}
+    
+    # 1. 무도금화이트 우선 체크 (넓은 범위)
+    white_mask = cv2.inRange(center_region, 
+                            np.array([0, 0, 180]),      # 매우 밝은 영역
+                            np.array([180, 30, 255]))    # 채도 낮음
+    color_pixels['white'] = cv2.countNonZero(white_mask)
+    
+    # 2. 옐로우골드
+    yellow_mask = cv2.inRange(center_region,
+                             np.array([20, 50, 100]),
+                             np.array([30, 255, 255]))
+    color_pixels['yellow'] = cv2.countNonZero(yellow_mask)
+    
+    # 3. 로즈골드
+    rose_mask = cv2.inRange(center_region,
+                           np.array([0, 30, 100]),
+                           np.array([15, 150, 255]))
+    color_pixels['rose'] = cv2.countNonZero(rose_mask)
+    
+    # 4. 화이트골드
+    white_gold_mask = cv2.inRange(center_region,
+                                 np.array([0, 0, 150]),
+                                 np.array([180, 40, 230]))
+    color_pixels['white_gold'] = cv2.countNonZero(white_gold_mask)
+    
+    # 무도금화이트가 전체의 70% 이상이면 무도금화이트로 판정
+    total_pixels = center_region.shape[0] * center_region.shape[1]
+    if color_pixels['white'] > total_pixels * 0.7:
+        return '무도금화이트'
+    
+    # 그 외의 경우 가장 많은 픽셀 수를 가진 색상 선택
+    detected_color = max(color_pixels.items(), key=lambda x: x[1])[0]
+    
+    color_map = {
+        'yellow': '옐로우골드',
+        'rose': '로즈골드',
+        'white_gold': '화이트골드',
+        'white': '무도금화이트'
+    }
+    
+    return color_map.get(detected_color, '무도금화이트')
+
+def apply_color_specific_enhancement(image, color):
+    """색상별 특화 보정 적용"""
+    enhanced = image.copy()
+    
+    if color == '옐로우골드':
+        # 옐로우골드: 따뜻한 톤 강화, 광택 증가
+        brightness = ImageEnhance.Brightness(enhanced)
+        enhanced = brightness.enhance(1.2)
+        
+        # 노란색 채널 강화
+        img_array = np.array(enhanced)
+        hsv = cv2.cvtColor(img_array, cv2.COLOR_RGB2HSV)
+        h, s, v = cv2.split(hsv)
+        
+        # 노란색 영역의 채도 증가
+        yellow_mask = cv2.inRange(h, 20, 30)
+        s = np.where(yellow_mask > 0, np.minimum(s * 1.3, 255), s).astype(np.uint8)
+        
+        hsv = cv2.merge([h, s, v])
+        enhanced = Image.fromarray(cv2.cvtColor(hsv, cv2.COLOR_HSV2RGB))
+        
+    elif color == '로즈골드':
+        # 로즈골드: 핑크톤 강화, 부드러운 광택
+        img_array = np.array(enhanced)
+        hsv = cv2.cvtColor(img_array, cv2.COLOR_RGB2HSV)
+        h, s, v = cv2.split(hsv)
+        
+        # 붉은 톤 영역 강화
+        rose_mask = cv2.inRange(h, 0, 15)
+        s = np.where(rose_mask > 0, np.minimum(s * 1.2, 255), s).astype(np.uint8)
+        v = np.where(rose_mask > 0, np.minimum(v * 1.1, 255), v).astype(np.uint8)
+        
+        hsv = cv2.merge([h, s, v])
+        enhanced = Image.fromarray(cv2.cvtColor(hsv, cv2.COLOR_HSV2RGB))
+        
+    elif color == '화이트골드':
+        # 화이트골드: 차가운 톤, 메탈릭 광택
+        brightness = ImageEnhance.Brightness(enhanced)
+        enhanced = brightness.enhance(1.15)
+        
+        contrast = ImageEnhance.Contrast(enhanced)
+        enhanced = contrast.enhance(1.1)
+        
+        # 약간의 블루 톤 추가
+        img_array = np.array(enhanced)
+        img_array[:, :, 2] = np.minimum(img_array[:, :, 2] * 1.05, 255).astype(np.uint8)
+        enhanced = Image.fromarray(img_array)
+        
+    else:  # 무도금화이트
+        # 무도금화이트: 순백색 강조, 밝기 최대화
+        brightness = ImageEnhance.Brightness(enhanced)
+        enhanced = brightness.enhance(1.25)
+        
+        # 채도 감소로 더 하얗게
+        color_enhancer = ImageEnhance.Color(enhanced)
+        enhanced = color_enhancer.enhance(0.7)
+    
+    # 공통: 샤프니스 증가
+    sharpness = ImageEnhance.Sharpness(enhanced)
+    enhanced = sharpness.enhance(1.5)
+    
+    return enhanced
+
+def create_thumbnail_with_color(image, detected_color, size=(1000, 1300)):
+    """1000x1300 썸네일 생성 with 색상별 보정"""
+    print(f"썸네일 생성 시작 - 색상: {detected_color}")
+    
+    # 배경이 제거된 이미지 처리
     img_array = np.array(image)
     
     # 알파 채널이 있는지 확인
@@ -137,22 +255,35 @@ def create_thumbnail(image, size=(500, 500)):
         coords = cv2.findNonZero(alpha)
         x, y, w, h = cv2.boundingRect(coords)
         
-        # 객체 주변에 여백 추가 (10%)
-        padding = int(max(w, h) * 0.1)
+        # 객체 주변에 여백 추가 (15%)
+        padding = int(max(w, h) * 0.15)
         x = max(0, x - padding)
         y = max(0, y - padding)
         w = min(img_array.shape[1] - x, w + 2 * padding)
         h = min(img_array.shape[0] - y, h + 2 * padding)
         
-        # 정사각형으로 만들기
-        if w > h:
-            diff = w - h
+        # 1000:1300 비율로 맞추기
+        target_ratio = 1000 / 1300  # 0.769
+        current_ratio = w / h
+        
+        if current_ratio > target_ratio:
+            # 너무 넓음 - 높이를 늘려야 함
+            new_h = int(w / target_ratio)
+            diff = new_h - h
             y = max(0, y - diff // 2)
-            h = w
+            h = new_h
         else:
-            diff = h - w
+            # 너무 높음 - 너비를 늘려야 함
+            new_w = int(h * target_ratio)
+            diff = new_w - w
             x = max(0, x - diff // 2)
-            w = h
+            w = new_w
+        
+        # 경계 체크
+        x = max(0, x)
+        y = max(0, y)
+        w = min(img_array.shape[1] - x, w)
+        h = min(img_array.shape[0] - y, h)
         
         # 크롭
         cropped = img_array[y:y+h, x:x+w]
@@ -168,6 +299,9 @@ def create_thumbnail(image, size=(500, 500)):
         background = Image.new('RGB', size, (255, 255, 255))
         background.paste(thumbnail, (0, 0), thumbnail)
         thumbnail = background
+    
+    # 색상별 디테일 보정 적용
+    thumbnail = apply_color_specific_enhancement(thumbnail, detected_color)
     
     return thumbnail
 
@@ -216,12 +350,16 @@ def handler(event):
         image = download_image_from_url(image_url)
         print(f"이미지 다운로드 완료: {image.size}")
         
+        # 색상 감지 (배경 제거 전에 원본에서)
+        detected_color = detect_ring_color(image)
+        print(f"감지된 반지 색상: {detected_color}")
+        
         # 배경 제거
         no_bg_image = remove_background_with_replicate(image)
         print("배경 제거 완료")
         
-        # 썸네일 생성
-        thumbnail = create_thumbnail(no_bg_image)
+        # 썸네일 생성 (색상 정보 전달)
+        thumbnail = create_thumbnail_with_color(no_bg_image, detected_color)
         print(f"썸네일 생성 완료: {thumbnail.size}")
         
         # base64 변환 (padding 제거)
@@ -232,6 +370,7 @@ def handler(event):
             "output": {
                 "thumbnail": thumbnail_base64,
                 "size": thumbnail.size,
+                "detected_color": detected_color,
                 "format": "base64_no_padding"
             }
         }
