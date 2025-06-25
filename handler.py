@@ -1,415 +1,252 @@
+import json
 import runpod
 import base64
-from io import BytesIO
-from PIL import Image, ImageEnhance, ImageFilter
-import numpy as np
-import cv2
 import requests
-import traceback
+import time
+from io import BytesIO
+from PIL import Image, ImageEnhance, ImageOps
+import numpy as np
+import replicate
+import os
+import cv2
 
-VERSION = "v53"
-THUMBNAIL_WIDTH = 1000
-THUMBNAIL_HEIGHT = 1300
+# Replicate API 설정
+REPLICATE_API_TOKEN = "r8_8pH3riHZWKr6UwhUjVqHoNDrWqpOdek2nwdRa"
+os.environ["REPLICATE_API_TOKEN"] = REPLICATE_API_TOKEN
+print(f"Replicate API Token 설정됨: {REPLICATE_API_TOKEN[:10]}...")
 
-def find_input_url(event):
-    """Find input URL from ALL possible locations"""
-    # All possible keys for URL/image data
-    possible_keys = [
-        'enhanced_image', 'enhancedImage', 'input_url', 'inputUrl',
-        'image_url', 'imageUrl', 'url', 'image', 'img',
-        'output_image', 'outputImage', 'result', 'data',
-        'thumbnail', 'photo', 'file', 'content', 'base64',
-        'image_base64', 'imageBase64', 'base64Image'
-    ]
+def find_input_data(data):
+    """재귀적으로 모든 가능한 경로에서 입력 데이터 찾기"""
     
-    def check_value(value):
-        """Check if value is URL or base64 data"""
-        if isinstance(value, str) and len(value) > 100:
-            # Check if it's URL
-            if value.startswith(('http://', 'https://', 'data:image')):
-                return True
-            # Check if it looks like base64 (could be without data: prefix)
-            if all(c in 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=' for c in value[:100]):
-                return True
-        return False
+    # 전체 구조 로깅 (디버깅용)
+    print(f"전체 입력 데이터 구조: {json.dumps(data, indent=2)[:1000]}")
     
-    def search_dict(d, path=""):
-        """Recursively search dictionary for URL/image data"""
-        if not isinstance(d, dict):
-            return None
-            
-        # Check all possible keys
-        for key in possible_keys:
-            if key in d:
-                if check_value(d[key]):
-                    print(f"Found URL/image at: {path}{key}")
-                    return d[key]
+    # 직접 접근 시도
+    if isinstance(data, dict):
+        # 최상위 레벨 체크
+        if 'input' in data:
+            return data['input']
         
-        # Check ALL keys (not just known ones)
-        for key, value in d.items():
-            if check_value(value):
-                print(f"Found URL/image at: {path}{key}")
-                return value
-            elif isinstance(value, dict):
-                result = search_dict(value, f"{path}{key}.")
+        # 일반적인 RunPod 구조들
+        common_paths = [
+            ['job', 'input'],
+            ['data', 'input'],
+            ['payload', 'input'],
+            ['body', 'input'],
+            ['request', 'input']
+        ]
+        
+        for path in common_paths:
+            current = data
+            for key in path:
+                if isinstance(current, dict) and key in current:
+                    current = current[key]
+                else:
+                    break
+            else:
+                return current
+    
+    # 재귀적 탐색
+    def recursive_search(obj, target_keys=['input', 'url', 'image_url', 'imageUrl']):
+        if isinstance(obj, dict):
+            for key in target_keys:
+                if key in obj:
+                    return obj[key]
+            
+            for value in obj.values():
+                result = recursive_search(value, target_keys)
+                if result:
+                    return result
+        elif isinstance(obj, list):
+            for item in obj:
+                result = recursive_search(item, target_keys)
                 if result:
                     return result
         
         return None
     
-    # Search main event
-    result = search_dict(event)
-    if result:
-        return result
-    
-    # If not found, dump structure for debugging
-    print("No URL/image found - dumping structure")
-    print(f"Event type: {type(event)}")
-    print(f"Event keys: {list(event.keys()) if isinstance(event, dict) else 'Not dict'}")
-    if isinstance(event, dict):
-        for key, value in event.items():
-            if isinstance(value, dict):
-                print(f"  {key}: {list(value.keys())}")
-            elif isinstance(value, str):
-                print(f"  {key}: string (length: {len(value)})")
-            else:
-                print(f"  {key}: {type(value)}")
-    
-    return None
+    result = recursive_search(data)
+    print(f"재귀 탐색 결과: {result}")
+    return result
 
-def load_image_from_url(url):
-    """Load image from URL, data URL, or raw base64"""
-    try:
-        if url.startswith('data:'):
-            # Handle data URL
-            header, encoded = url.split(',', 1)
-            data = base64.b64decode(encoded + '==')  # Add padding just in case
-            image = Image.open(BytesIO(data))
-        elif url.startswith(('http://', 'https://')):
-            # Handle HTTP URL
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            }
-            response = requests.get(url, headers=headers, stream=True)
+def download_image_from_url(url):
+    """URL에서 이미지를 다운로드하여 PIL Image 객체로 반환"""
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Accept': 'image/webp,image/apng,image/*,*/*;q=0.8'
+    }
+    
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            response = requests.get(url, headers=headers, timeout=30)
             response.raise_for_status()
-            image = Image.open(BytesIO(response.content))
-        else:
-            # Assume it's raw base64
-            print("Treating as raw base64 data")
-            # Add padding if needed
-            padding = 4 - (len(url) % 4)
-            if padding != 4:
-                url += '=' * padding
-            data = base64.b64decode(url)
-            image = Image.open(BytesIO(data))
-        
-        # Convert to RGB if needed
-        if image.mode not in ('RGB', 'RGBA'):
-            image = image.convert('RGB')
-        
-        print(f"Image loaded successfully: {image.size}")
-        return image
-    except Exception as e:
-        print(f"Error loading image: {str(e)}")
-        raise
+            
+            # 컨텐츠 타입 확인
+            content_type = response.headers.get('content-type', '')
+            if 'image' not in content_type and not url.lower().endswith(('.jpg', '.jpeg', '.png', '.webp')):
+                print(f"경고: 이미지가 아닌 컨텐츠 타입: {content_type}")
+            
+            return Image.open(BytesIO(response.content))
+            
+        except Exception as e:
+            print(f"다운로드 시도 {attempt + 1}/{max_retries} 실패: {str(e)}")
+            if attempt < max_retries - 1:
+                time.sleep(2)
+            else:
+                raise
 
-def detect_wedding_rings(image):
-    """Detect wedding rings and find center point"""
-    # Convert PIL to OpenCV
-    img_cv = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
+def remove_background_with_replicate(image):
+    """Replicate API를 사용하여 배경 제거"""
+    # PIL Image를 base64로 변환
+    buffered = BytesIO()
+    image.save(buffered, format="PNG")
+    img_base64 = base64.b64encode(buffered.getvalue()).decode()
     
-    # Create detection image (max 1500px for speed)
-    height, width = img_cv.shape[:2]
-    scale = 1.0
-    if max(height, width) > 1500:
-        scale = 1500 / max(height, width)
-        new_width = int(width * scale)
-        new_height = int(height * scale)
-        detect_img = cv2.resize(img_cv, (new_width, new_height))
+    # Replicate 모델 실행
+    model = replicate.models.get("cjwbw/rembg")
+    version = model.versions.get("fb8af171cfa1616ddcf1242c093f9c46bcada5ad4cf6f2fbe8b81b330ec5c003")
+    
+    input_data = {
+        "image": f"data:image/png;base64,{img_base64}"
+    }
+    
+    print("Replicate API 호출 중...")
+    output = version.predict(**input_data)
+    
+    # 결과 다운로드
+    if isinstance(output, str) and output.startswith('http'):
+        response = requests.get(output)
+        return Image.open(BytesIO(response.content))
+    elif isinstance(output, str) and 'base64,' in output:
+        img_data = output.split('base64,')[1]
+        return Image.open(BytesIO(base64.b64decode(img_data)))
     else:
-        detect_img = img_cv
-    
-    # Convert to grayscale
-    gray = cv2.cvtColor(detect_img, cv2.COLOR_BGR2GRAY)
-    
-    # Apply bilateral filter to reduce noise while keeping edges
-    gray = cv2.bilateralFilter(gray, 9, 75, 75)
-    
-    # Detect circles (rings)
-    circles = cv2.HoughCircles(
-        gray,
-        cv2.HOUGH_GRADIENT,
-        dp=1,
-        minDist=50,
-        param1=50,
-        param2=30,
-        minRadius=int(20 * scale),
-        maxRadius=int(200 * scale)
-    )
-    
-    if circles is not None:
-        circles = np.uint16(np.around(circles))
-        # Scale back to original size
-        circles[0, :, :2] = circles[0, :, :2] / scale
-        
-        # Find center of rings
-        if len(circles[0]) >= 2:
-            # Use center of two largest circles
-            sorted_circles = sorted(circles[0], key=lambda x: x[2], reverse=True)
-            center_x = int((sorted_circles[0][0] + sorted_circles[1][0]) / 2)
-            center_y = int((sorted_circles[0][1] + sorted_circles[1][1]) / 2)
-        else:
-            # Use center of largest circle
-            center_x = int(circles[0][0][0])
-            center_y = int(circles[0][0][1])
-        
-        print(f"Rings detected at ({center_x}, {center_y})")
-        return center_x, center_y, True
-    
-    # Fallback to image center
-    print("No rings detected, using center")
-    return width // 2, height // 2, False
+        # 이미 PIL Image인 경우
+        return output
 
-def detect_metal_color_conservative(image, ring_area=None):
-    """Detect metal color with white/white_gold priority"""
+def create_thumbnail(image, size=(500, 500)):
+    """정사각형 썸네일 생성"""
+    # 배경이 제거된 이미지를 정사각형으로 만들기
     img_array = np.array(image)
     
-    # Focus on ring area if provided
-    if ring_area:
-        x, y, w, h = ring_area
-        img_array = img_array[y:y+h, x:x+w]
-    
-    # Convert to HSV
-    hsv = cv2.cvtColor(img_array, cv2.COLOR_RGB2HSV)
-    
-    # Also check RGB values for white detection
-    avg_color = np.mean(img_array.reshape(-1, 3), axis=0)
-    brightness = np.mean(avg_color)
-    
-    # 1. WHITE/WHITE_GOLD DETECTION FIRST (Priority)
-    # Very bright and low saturation = white gold
-    white_lower = np.array([0, 0, 200])      # Any hue, low sat, high value
-    white_upper = np.array([180, 30, 255])   # Saturation max 30!
-    white_mask = cv2.inRange(hsv, white_lower, white_upper)
-    white_pixels = cv2.countNonZero(white_mask)
-    
-    # If very bright and low saturation, it's white/white_gold
-    if brightness > 200 and white_pixels > (img_array.shape[0] * img_array.shape[1] * 0.3):
-        return 'white'  # 무도금화이트
-    
-    # 2. ROSE GOLD DETECTION
-    # Pink/rose tones
-    rose_lower1 = np.array([0, 50, 100])    # Red side
-    rose_upper1 = np.array([10, 150, 255])
-    rose_lower2 = np.array([170, 50, 100])  # Red wraparound
-    rose_upper2 = np.array([180, 150, 255])
-    
-    rose_mask1 = cv2.inRange(hsv, rose_lower1, rose_upper1)
-    rose_mask2 = cv2.inRange(hsv, rose_lower2, rose_upper2)
-    rose_mask = cv2.bitwise_or(rose_mask1, rose_mask2)
-    rose_pixels = cv2.countNonZero(rose_mask)
-    
-    # 3. YELLOW GOLD DETECTION (Conservative)
-    # Only strong yellow/gold colors
-    yellow_lower = np.array([20, 100, 100])   # Saturation min 100!
-    yellow_upper = np.array([30, 255, 200])   # Not too bright
-    yellow_mask = cv2.inRange(hsv, yellow_lower, yellow_upper)
-    yellow_pixels = cv2.countNonZero(yellow_mask)
-    
-    # Decision logic
-    total_pixels = img_array.shape[0] * img_array.shape[1]
-    
-    # Need significant yellow with high saturation for yellow gold
-    if yellow_pixels > (total_pixels * 0.2):
-        # Double check saturation
-        yellow_region = hsv[yellow_mask > 0]
-        if len(yellow_region) > 0:
-            avg_saturation = np.mean(yellow_region[:, 1])
-            if avg_saturation > 100:  # High saturation = real gold color
-                return 'yellow_gold'
-    
-    # Rose gold check
-    if rose_pixels > (total_pixels * 0.15):
-        return 'rose_gold'
-    
-    # Default to white for any ambiguous cases
-    return 'white'
-
-def create_professional_thumbnail(image, center_x, center_y, metal_color):
-    """Create professional quality thumbnail with proper crop and enhancement"""
-    width, height = image.size
-    
-    # Calculate crop box (1000x1300 centered on rings)
-    left = max(0, center_x - THUMBNAIL_WIDTH // 2)
-    top = max(0, center_y - THUMBNAIL_HEIGHT // 2)
-    right = min(width, left + THUMBNAIL_WIDTH)
-    bottom = min(height, top + THUMBNAIL_HEIGHT)
-    
-    # Adjust if hitting boundaries
-    if right - left < THUMBNAIL_WIDTH:
-        if left == 0:
-            right = min(width, THUMBNAIL_WIDTH)
+    # 알파 채널이 있는지 확인
+    if img_array.shape[2] == 4:
+        # 알파 채널을 사용하여 객체의 경계 찾기
+        alpha = img_array[:, :, 3]
+        coords = cv2.findNonZero(alpha)
+        x, y, w, h = cv2.boundingRect(coords)
+        
+        # 객체 주변에 여백 추가 (10%)
+        padding = int(max(w, h) * 0.1)
+        x = max(0, x - padding)
+        y = max(0, y - padding)
+        w = min(img_array.shape[1] - x, w + 2 * padding)
+        h = min(img_array.shape[0] - y, h + 2 * padding)
+        
+        # 정사각형으로 만들기
+        if w > h:
+            diff = w - h
+            y = max(0, y - diff // 2)
+            h = w
         else:
-            left = max(0, right - THUMBNAIL_WIDTH)
-    
-    if bottom - top < THUMBNAIL_HEIGHT:
-        if top == 0:
-            bottom = min(height, THUMBNAIL_HEIGHT)
-        else:
-            top = max(0, bottom - THUMBNAIL_HEIGHT)
-    
-    # Crop
-    cropped = image.crop((left, top, right, bottom))
-    
-    # Resize to exact dimensions if needed
-    if cropped.size != (THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT):
-        cropped = cropped.resize((THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT), Image.Resampling.LANCZOS)
-    
-    # Apply color-specific enhancement
-    if metal_color == 'white':
-        # White/White Gold - bright and cool
-        enhancer = ImageEnhance.Brightness(cropped)
-        enhanced = enhancer.enhance(1.25)  # Very bright
+            diff = h - w
+            x = max(0, x - diff // 2)
+            w = h
         
-        enhancer = ImageEnhance.Color(enhanced)
-        enhanced = enhancer.enhance(0.9)  # Slightly desaturated
-        
-        # Cool tone adjustment using numpy
-        img_array = np.array(enhanced)
-        img_array[:,:,0] = np.clip(img_array[:,:,0] * 0.98, 0, 255)  # Reduce red
-        img_array[:,:,2] = np.clip(img_array[:,:,2] * 1.02, 0, 255)  # Increase blue
-        enhanced = Image.fromarray(img_array.astype('uint8'))
-        
-    elif metal_color == 'rose_gold':
-        # Rose Gold - warm pink tones
-        enhancer = ImageEnhance.Brightness(cropped)
-        enhanced = enhancer.enhance(1.15)
-        
-        enhancer = ImageEnhance.Color(enhanced)
-        enhanced = enhancer.enhance(1.1)  # Enhance pink tones
-        
-    else:  # yellow_gold
-        # Yellow Gold - warm and rich
-        enhancer = ImageEnhance.Brightness(cropped)
-        enhanced = enhancer.enhance(1.1)
-        
-        enhancer = ImageEnhance.Color(enhanced)
-        enhanced = enhancer.enhance(1.05)
+        # 크롭
+        cropped = img_array[y:y+h, x:x+w]
+        cropped_img = Image.fromarray(cropped)
+    else:
+        cropped_img = image
     
-    # Common enhancements for all
-    # Contrast
-    enhancer = ImageEnhance.Contrast(enhanced)
-    enhanced = enhancer.enhance(1.15)
+    # 리사이즈
+    thumbnail = cropped_img.resize(size, Image.Resampling.LANCZOS)
     
-    # Sharpness for detail
-    enhancer = ImageEnhance.Sharpness(enhanced)
-    enhanced = enhancer.enhance(1.8)  # Strong sharpening
+    # 흰색 배경 추가
+    if thumbnail.mode == 'RGBA':
+        background = Image.new('RGB', size, (255, 255, 255))
+        background.paste(thumbnail, (0, 0), thumbnail)
+        thumbnail = background
     
-    # Edge enhancement
-    enhanced = enhanced.filter(ImageFilter.UnsharpMask(radius=2, percent=150, threshold=3))
-    
-    return enhanced
+    return thumbnail
 
-def handler(job):
-    """RunPod handler function"""
-    print(f"=== Thumbnail Handler {VERSION} Started ===")
+def image_to_base64(image, format='JPEG'):
+    """PIL Image를 base64 문자열로 변환"""
+    buffered = BytesIO()
+    if format == 'JPEG' and image.mode == 'RGBA':
+        rgb_image = Image.new('RGB', image.size, (255, 255, 255))
+        rgb_image.paste(image, mask=image.split()[3])
+        image = rgb_image
     
+    image.save(buffered, format=format, quality=95)
+    img_base64 = base64.b64encode(buffered.getvalue()).decode()
+    
+    # Make.com을 위해 padding 제거
+    img_base64_no_padding = img_base64.rstrip('=')
+    
+    print(f"Base64 길이 (padding 제거): {len(img_base64_no_padding)}")
+    
+    return img_base64_no_padding
+
+def handler(event):
+    """Thumbnail 핸들러 함수"""
     try:
-        # Find input URL
-        input_url = find_input_url(job)
-        if not input_url:
-            print(f"ERROR: No input URL found in job structure")
-            print(f"Job type: {type(job)}")
-            print(f"Job keys: {list(job.keys()) if isinstance(job, dict) else 'Not dict'}")
-            
-            # Deep structure dump
-            if isinstance(job, dict):
-                for key, value in job.items():
-                    print(f"\n--- Key: {key} ---")
-                    if isinstance(value, dict):
-                        print(f"  Type: dict, Keys: {list(value.keys())}")
-                        for k, v in value.items():
-                            if isinstance(v, str):
-                                print(f"    {k}: string (length: {len(v)}, starts: {v[:50]}...)")
-                            elif isinstance(v, dict):
-                                print(f"    {k}: dict with keys: {list(v.keys())}")
-                            else:
-                                print(f"    {k}: {type(v)}")
-                    elif isinstance(value, str):
-                        print(f"  Type: string (length: {len(value)}, starts: {value[:50]}...)")
-                    else:
-                        print(f"  Type: {type(value)}")
-            
-            return {
-                "output": {
-                    "error": "No input URL found in any known location",
-                    "success": False,
-                    "version": VERSION,
-                    "checked_structure": True
-                }
-            }
+        print("Thumbnail 이벤트 수신:", json.dumps(event, indent=2)[:500])
         
-        print(f"Found URL/data, length: {len(input_url)}")
-        print(f"URL type: {'data URL' if input_url.startswith('data:') else 'HTTP URL' if input_url.startswith('http') else 'raw base64'}")
+        # 입력 데이터 찾기
+        input_data = find_input_data(event)
         
-        # Load image
-        try:
-            image = load_image_from_url(input_url)
-            print(f"Image loaded: {image.size}")
-        except Exception as e:
-            return {
-                "output": {
-                    "error": f"Failed to load image: {str(e)}",
-                    "success": False,
-                    "version": VERSION
-                }
-            }
+        if not input_data:
+            raise ValueError("입력 데이터를 찾을 수 없습니다")
         
-        # Detect rings
-        center_x, center_y, rings_found = detect_wedding_rings(image)
+        # URL 추출
+        image_url = None
+        if isinstance(input_data, dict):
+            image_url = input_data.get('url') or input_data.get('image_url') or input_data.get('imageUrl')
+        elif isinstance(input_data, str):
+            image_url = input_data
         
-        # Detect metal color (conservative, white-first)
-        ring_area = (
-            max(0, center_x - 200),
-            max(0, center_y - 200),
-            400, 400
-        )
-        metal_color = detect_metal_color_conservative(image, ring_area)
-        print(f"Detected metal color: {metal_color}")
+        if not image_url:
+            raise ValueError(f"이미지 URL을 찾을 수 없습니다. 입력: {input_data}")
         
-        # Create professional thumbnail
-        thumbnail = create_professional_thumbnail(image, center_x, center_y, metal_color)
+        print(f"이미지 URL: {image_url}")
         
-        # Convert to base64
-        buffer = BytesIO()
-        thumbnail.save(buffer, format='JPEG', quality=95)
-        buffer.seek(0)
+        # 이미지 다운로드
+        image = download_image_from_url(image_url)
+        print(f"이미지 다운로드 완료: {image.size}")
         
-        # Base64 encode with padding (for Google Script)
-        thumb_base64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
+        # 배경 제거
+        no_bg_image = remove_background_with_replicate(image)
+        print("배경 제거 완료")
         
+        # 썸네일 생성
+        thumbnail = create_thumbnail(no_bg_image)
+        print(f"썸네일 생성 완료: {thumbnail.size}")
+        
+        # base64 변환 (padding 제거)
+        thumbnail_base64 = image_to_base64(thumbnail)
+        
+        # 중첩된 output 구조로 반환
         return {
             "output": {
-                "success": True,
-                "thumbnail": thumb_base64,
-                "detected_color": metal_color,
-                "rings_found": rings_found,
-                "crop_center": f"({center_x}, {center_y})",
-                "version": VERSION,
-                "message": "Professional thumbnail created successfully"
+                "thumbnail": thumbnail_base64,
+                "size": thumbnail.size,
+                "format": "base64_no_padding"
             }
         }
         
     except Exception as e:
-        print(f"Handler error: {str(e)}")
-        print(traceback.format_exc())
+        print(f"Thumbnail 오류 발생: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        
         return {
             "output": {
                 "error": str(e),
-                "success": False,
-                "version": VERSION,
-                "traceback": traceback.format_exc()
+                "status": "failed"
             }
         }
 
+# RunPod 핸들러 등록
 runpod.serverless.start({"handler": handler})
