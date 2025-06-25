@@ -9,16 +9,18 @@ from PIL import Image, ImageEnhance, ImageFilter
 import numpy as np
 import cv2
 
-VERSION = "43"
+VERSION = "44"
 
 def handler(event: Dict[str, Any]) -> Dict[str, Any]:
     """
     RunPod serverless handler for wedding ring thumbnail creation
-    v43: Fixed masking detection and inpainting
+    v44: Ultra sensitive masking detection
     """
     print(f"Thumbnail Handler v{VERSION} starting...")
+    print(f"Event type: {type(event)}")
+    print(f"Event keys: {list(event.keys()) if isinstance(event, dict) else 'Not a dict'}")
     
-    thumbnail_handler = ThumbnailHandlerV43()
+    thumbnail_handler = ThumbnailHandlerV44()
     
     try:
         # Find input URL with flexible search
@@ -26,11 +28,15 @@ def handler(event: Dict[str, Any]) -> Dict[str, Any]:
         
         if not input_url:
             print("ERROR: No input URL found")
-            print(f"Event structure (first 500 chars): {str(event)[:500]}")
-            return thumbnail_handler.create_error_response("No input URL found")
+            print(f"Full event (first 1000 chars): {str(event)[:1000]}")
+            return thumbnail_handler.create_error_response("No input URL found. Please check the input structure.")
+        
+        print(f"Found input URL, type: {'data URL' if input_url.startswith('data:') else 'HTTP URL'}")
         
         # Process the image
         result = thumbnail_handler.process_image(input_url)
+        
+        print(f"Result status: {result.get('output', {}).get('status')}")
         return result
         
     except Exception as e:
@@ -39,7 +45,7 @@ def handler(event: Dict[str, Any]) -> Dict[str, Any]:
         return thumbnail_handler.create_error_response(f"Handler error: {str(e)}")
 
 
-class ThumbnailHandlerV43:
+class ThumbnailHandlerV44:
     def __init__(self):
         self.version = VERSION
         self.thumbnail_size = (1000, 1300)
@@ -49,7 +55,8 @@ class ThumbnailHandlerV43:
         # Priority keys to check
         keys_to_check = [
             'enhanced_image', 'image_url', 'url', 'image',
-            'input_url', 'input_image', 'input'
+            'input_url', 'input_image', 'input', 'enhancedImage',
+            'imageUrl', 'img'
         ]
         
         # Direct check
@@ -122,6 +129,8 @@ class ThumbnailHandlerV43:
             if url.startswith('data:'):
                 # Handle data URL
                 header, data = url.split(',', 1)
+                # Remove any whitespace
+                data = ''.join(data.split())
                 # Add padding if needed
                 padding = 4 - len(data) % 4
                 if padding != 4:
@@ -151,120 +160,119 @@ class ThumbnailHandlerV43:
             print(f"ERROR loading image: {str(e)}")
             raise
     
-    def detect_black_frame_multi_method(self, img: Image.Image) -> Dict[str, Any]:
-        """Detect black frame using multiple methods (based on v31 success)"""
+    def detect_black_frame_ultra_sensitive(self, img: Image.Image) -> Dict[str, Any]:
+        """Ultra sensitive black frame detection"""
         img_np = np.array(img)
         gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
         h, w = gray.shape
         
+        print(f"Image size for detection: {w}x{h}")
+        
         results = []
         
-        # Method 1: Ultra-sensitive black detection
-        threshold = 25  # Very low threshold
-        binary = (gray < threshold).astype(np.uint8) * 255
-        
-        # Check edges
-        edge_thickness = 0
-        for edge_name, edge_pixels in [
-            ('top', binary[:100, :]),
-            ('bottom', binary[-100:, :]),
-            ('left', binary[:, :100]),
-            ('right', binary[:, -100:])
-        ]:
-            if np.mean(edge_pixels) > 200:  # Mostly white (inverted)
-                edge_thickness = max(edge_thickness, 100)
-        
-        if edge_thickness > 0:
-            results.append({
-                'method': 'ultra_sensitive',
-                'detected': True,
-                'thickness': edge_thickness
-            })
-        
-        # Method 2: Contour-based detection
-        _, thresh = cv2.threshold(gray, 40, 255, cv2.THRESH_BINARY)
-        contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        
-        for contour in contours:
-            x, y, cw, ch = cv2.boundingRect(contour)
-            area = cw * ch
+        # Method 1: Super Ultra-sensitive black detection
+        for threshold in [15, 20, 25, 30, 35, 40]:  # Start from very low threshold
+            binary = (gray < threshold).astype(np.uint8) * 255
             
-            # Check if it's a large rectangle touching edges
-            if area > 0.3 * w * h:
-                if x == 0 or y == 0 or x + cw == w or y + ch == h:
-                    # Calculate thickness
-                    thickness = min(x, y, w - (x + cw), h - (y + ch))
-                    if thickness < 0:
-                        thickness = 100  # Default if calculation fails
-                    
+            # Check all edges with varying depths
+            for check_depth in [50, 100, 150, 200]:
+                if check_depth > min(h, w) // 4:
+                    continue
+                
+                # Check each edge
+                edge_black = {
+                    'top': np.mean(binary[:check_depth, :]) > 200,
+                    'bottom': np.mean(binary[-check_depth:, :]) > 200,
+                    'left': np.mean(binary[:, :check_depth]) > 200,
+                    'right': np.mean(binary[:, -check_depth:]) > 200
+                }
+                
+                # If at least 3 edges are black
+                if sum(edge_black.values()) >= 3:
                     results.append({
-                        'method': 'contour',
+                        'method': f'ultra_sensitive_t{threshold}_d{check_depth}',
                         'detected': True,
-                        'thickness': thickness
+                        'thickness': check_depth
                     })
+                    print(f"Detected with threshold {threshold}, depth {check_depth}")
                     break
         
-        # Method 3: Multi-line edge scan
-        scan_lines = 10
-        edge_scores = {'top': [], 'bottom': [], 'left': [], 'right': []}
+        # Method 2: Gradient detection for sharp edges
+        sobelx = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)
+        sobely = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3)
+        gradient = np.sqrt(sobelx**2 + sobely**2)
         
-        for i in range(scan_lines):
-            offset = i * 10
-            
-            # Top edge
-            if np.mean(gray[offset, :]) < 30:
-                edge_scores['top'].append(offset + 10)
-            
-            # Bottom edge
-            if np.mean(gray[h - offset - 1, :]) < 30:
-                edge_scores['bottom'].append(offset + 10)
-            
-            # Left edge
-            if np.mean(gray[:, offset]) < 30:
-                edge_scores['left'].append(offset + 10)
-            
-            # Right edge
-            if np.mean(gray[:, w - offset - 1]) < 30:
-                edge_scores['right'].append(offset + 10)
+        # Look for strong gradients at edges
+        edge_gradient_strength = {
+            'top': np.mean(gradient[:50, :]),
+            'bottom': np.mean(gradient[-50:, :]),
+            'left': np.mean(gradient[:, :50]),
+            'right': np.mean(gradient[:, -50:])
+        }
         
-        # If multiple edges detected
-        detected_edges = sum(1 for scores in edge_scores.values() if len(scores) > 3)
-        if detected_edges >= 2:
-            avg_thickness = sum(
-                max(scores) for scores in edge_scores.values() if scores
-            ) / max(1, sum(1 for scores in edge_scores.values() if scores))
-            
+        strong_edges = sum(1 for v in edge_gradient_strength.values() if v > 50)
+        if strong_edges >= 3:
             results.append({
-                'method': 'multi_line',
+                'method': 'gradient_detection',
                 'detected': True,
-                'thickness': int(avg_thickness)
+                'thickness': 100  # Estimate
             })
+            print("Detected with gradient method")
         
-        # Method 4: Histogram analysis
-        hist = cv2.calcHist([gray], [0], None, [256], [0, 256])
-        dark_pixels = np.sum(hist[:30])
-        total_pixels = w * h
-        dark_ratio = dark_pixels / total_pixels
+        # Method 3: Corner darkness check
+        corner_size = 200
+        corners = [
+            gray[:corner_size, :corner_size],  # Top-left
+            gray[:corner_size, -corner_size:],  # Top-right
+            gray[-corner_size:, :corner_size],  # Bottom-left
+            gray[-corner_size:, -corner_size:]  # Bottom-right
+        ]
         
-        if dark_ratio > 0.1:  # More than 10% very dark pixels
-            # Estimate thickness based on ratio
-            estimated_thickness = int(min(w, h) * dark_ratio / 4)
+        dark_corners = sum(1 for corner in corners if np.mean(corner) < 40)
+        if dark_corners >= 3:
             results.append({
-                'method': 'histogram',
+                'method': 'corner_darkness',
                 'detected': True,
-                'thickness': estimated_thickness
+                'thickness': 150  # Estimate
             })
+            print("Detected with corner darkness method")
         
-        # Combine results
-        if len(results) >= 2:  # At least 2 methods agree
-            avg_thickness = sum(r['thickness'] for r in results) / len(results)
+        # Method 4: Morphological analysis
+        kernel = np.ones((5, 5), np.uint8)
+        _, binary = cv2.threshold(gray, 30, 255, cv2.THRESH_BINARY)
+        closed = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
+        
+        # Find large black regions
+        num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(255 - closed, connectivity=8)
+        
+        for i in range(1, num_labels):
+            x, y, width, height, area = stats[i]
+            # Check if it's a frame-like structure
+            if area > 0.2 * w * h:  # Large area
+                if x == 0 or y == 0 or x + width == w or y + height == h:  # Touches edge
+                    thickness = min(x, y, w - (x + width), h - (y + height))
+                    if thickness < 0:
+                        thickness = 100
+                    results.append({
+                        'method': 'morphological',
+                        'detected': True,
+                        'thickness': abs(thickness)
+                    })
+                    print("Detected with morphological method")
+                    break
+        
+        # If ANY method detected a frame, return positive
+        if results:
+            avg_thickness = int(np.mean([r['thickness'] for r in results]))
+            print(f"Black frame DETECTED by {len(results)} methods, avg thickness: {avg_thickness}")
             return {
                 'detected': True,
-                'thickness': int(avg_thickness),
+                'thickness': avg_thickness,
                 'confidence': len(results) / 4.0,
                 'methods': [r['method'] for r in results]
             }
         
+        print("No black frame detected by any method")
         return {
             'detected': False,
             'thickness': 0,
@@ -275,7 +283,7 @@ class ThumbnailHandlerV43:
     def remove_black_frame_with_replicate(self, img: Image.Image, thickness: int) -> Image.Image:
         """Remove black frame using Replicate API inpainting"""
         try:
-            print(f"Removing black frame with thickness: {thickness}")
+            print(f"Starting Replicate inpainting for black frame removal, thickness: {thickness}")
             
             # Create mask for inpainting
             img_np = np.array(img)
@@ -284,14 +292,16 @@ class ThumbnailHandlerV43:
             # Create mask (white where we want to inpaint)
             mask = np.zeros((h, w), dtype=np.uint8)
             
-            # Mark edges for inpainting (with some expansion)
-            expand = 10  # Expand mask slightly
-            t = thickness + expand
+            # Expand thickness for better results
+            t = min(thickness + 30, min(h, w) // 4)  # Don't take more than 1/4 of image
             
+            # Create frame mask
             mask[:t, :] = 255  # Top
             mask[-t:, :] = 255  # Bottom
             mask[:, :t] = 255  # Left
             mask[:, -t:] = 255  # Right
+            
+            print(f"Mask created with expanded thickness: {t}")
             
             # Save images for Replicate
             img_buffer = BytesIO()
@@ -303,52 +313,76 @@ class ThumbnailHandlerV43:
             mask_img.save(mask_buffer, format='PNG')
             mask_buffer.seek(0)
             
-            # Run inpainting
+            print("Calling Replicate API...")
+            
+            # Run inpainting with Replicate
             output = replicate.run(
                 "stability-ai/stable-diffusion-inpainting:95b7223104132402a9ae91cc677285bc5eb997834bd2349fa486f53910fd68b3",
                 input={
                     "image": img_buffer,
                     "mask": mask_buffer,
-                    "prompt": "clean white background, professional product photography background, bright studio lighting",
-                    "negative_prompt": "black frame, black border, dark edges, shadows, vignette",
-                    "num_inference_steps": 25,
-                    "guidance_scale": 7.5,
-                    "scheduler": "K_EULER"
+                    "prompt": "clean white background, professional product photography background, pure white studio background, bright even lighting",
+                    "negative_prompt": "black frame, black border, dark edges, shadows, vignette, darkness, gray areas",
+                    "num_inference_steps": 30,  # Increased for better quality
+                    "guidance_scale": 8.5,
+                    "scheduler": "K_EULER_ANCESTRAL"
                 }
             )
             
             # Get result
             if output and len(output) > 0:
                 result_url = output[0] if isinstance(output, list) else output
+                print(f"Replicate returned URL: {result_url}")
+                
                 response = requests.get(result_url)
                 response.raise_for_status()
                 
                 inpainted = Image.open(BytesIO(response.content))
+                print("Inpainting successful, checking results...")
                 
                 # Verify black frame is gone
-                check = self.detect_black_frame_multi_method(inpainted)
+                check = self.detect_black_frame_ultra_sensitive(inpainted)
                 if not check['detected']:
-                    print("Black frame successfully removed")
+                    print("Black frame successfully removed!")
                     return inpainted
                 else:
-                    print("Black frame still detected after inpainting, using crop fallback")
+                    print("Black frame still detected after inpainting, using aggressive crop")
+            else:
+                print("No output from Replicate")
             
         except Exception as e:
             print(f"Replicate inpainting error: {str(e)}")
+            print(f"Error type: {type(e).__name__}")
         
-        # Fallback: aggressive crop
-        return self.crop_black_frame(img, thickness + 20)
+        # Fallback: very aggressive crop
+        print("Using fallback aggressive crop")
+        return self.crop_black_frame(img, thickness + 50)
     
     def crop_black_frame(self, img: Image.Image, thickness: int) -> Image.Image:
-        """Fallback: crop out black frame"""
+        """Fallback: aggressively crop out black frame"""
         width, height = img.size
+        # Add extra margin to ensure complete removal
+        crop_margin = thickness + 20
         crop_box = (
-            thickness,
-            thickness,
-            width - thickness,
-            height - thickness
+            crop_margin,
+            crop_margin,
+            width - crop_margin,
+            height - crop_margin
         )
-        return img.crop(crop_box)
+        
+        # Ensure valid crop box
+        if crop_box[2] > crop_box[0] and crop_box[3] > crop_box[1]:
+            return img.crop(crop_box)
+        else:
+            # If crop would be invalid, return center portion
+            center_crop = min(width, height) // 2
+            crop_box = (
+                width // 2 - center_crop // 2,
+                height // 2 - center_crop // 2,
+                width // 2 + center_crop // 2,
+                height // 2 + center_crop // 2
+            )
+            return img.crop(crop_box)
     
     def apply_color_correction(self, img: Image.Image) -> Image.Image:
         """Apply color correction after masking removal"""
@@ -373,24 +407,30 @@ class ThumbnailHandlerV43:
         gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
         
         # Use edge detection to find ring
-        edges = cv2.Canny(gray, 50, 150)
+        edges = cv2.Canny(gray, 30, 100)  # Lower thresholds for better detection
+        
+        # Dilate to connect edges
+        kernel = np.ones((3, 3), np.uint8)
+        edges = cv2.dilate(edges, kernel, iterations=2)
         
         # Find contours
         contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         
         if contours:
-            # Get bounding box of all contours
+            # Get bounding box of all significant contours
             x_min, y_min = img.width, img.height
             x_max, y_max = 0, 0
             
             for contour in contours:
-                x, y, w, h = cv2.boundingRect(contour)
-                x_min = min(x_min, x)
-                y_min = min(y_min, y)
-                x_max = max(x_max, x + w)
-                y_max = max(y_max, y + h)
+                area = cv2.contourArea(contour)
+                if area > 100:  # Filter out tiny contours
+                    x, y, w, h = cv2.boundingRect(contour)
+                    x_min = min(x_min, x)
+                    y_min = min(y_min, y)
+                    x_max = max(x_max, x + w)
+                    y_max = max(y_max, y + h)
             
-            # Add small padding (3%)
+            # Add very small padding (3%)
             padding = 0.03
             pad_x = int((x_max - x_min) * padding)
             pad_y = int((y_max - y_min) * padding)
@@ -401,12 +441,13 @@ class ThumbnailHandlerV43:
             y_max = min(img.height, y_max + pad_y)
             
             # Crop
-            img = img.crop((x_min, y_min, x_max, y_max))
+            if x_max > x_min and y_max > y_min:
+                img = img.crop((x_min, y_min, x_max, y_max))
         
         # Resize to target size
         img = img.resize(self.thumbnail_size, Image.Resampling.LANCZOS)
         
-        # Apply detail enhancement
+        # Apply strong detail enhancement
         enhancer = ImageEnhance.Sharpness(img)
         img = enhancer.enhance(1.6)  # Strong sharpness for thumbnails
         
@@ -416,27 +457,31 @@ class ThumbnailHandlerV43:
         """Main processing pipeline"""
         try:
             # Load image
+            print("Loading image...")
             img = self.load_image_from_url(input_url)
+            print(f"Image loaded: {img.size}, mode: {img.mode}")
             
             # Convert to RGB
             if img.mode != 'RGB':
                 img = img.convert('RGB')
             
-            # Detect black frame
-            detection = self.detect_black_frame_multi_method(img)
+            # Detect black frame with ultra-sensitive detection
+            print("Detecting black frame...")
+            detection = self.detect_black_frame_ultra_sensitive(img)
             
             # Remove black frame if detected
             if detection['detected']:
-                print(f"Black frame detected: {detection}")
+                print(f"Black frame detected with confidence {detection['confidence']}: {detection}")
                 img = self.remove_black_frame_with_replicate(img, detection['thickness'])
                 # Apply color correction after masking removal
                 img = self.apply_color_correction(img)
             else:
-                print("No black frame detected")
+                print("No black frame detected, applying color correction directly")
                 # Apply color correction directly
                 img = self.apply_color_correction(img)
             
             # Create tight thumbnail
+            print("Creating thumbnail...")
             thumbnail = self.create_tight_thumbnail(img)
             
             # Save to buffer
@@ -444,11 +489,12 @@ class ThumbnailHandlerV43:
             thumbnail.save(buffer, format='JPEG', quality=95, optimize=True)
             buffer.seek(0)
             
-            # Encode without padding
+            # Encode without padding for Make.com
             thumbnail_base64 = base64.b64encode(buffer.getvalue()).decode('utf-8').rstrip('=')
+            print(f"Thumbnail base64 length: {len(thumbnail_base64)}")
             
             # Return with correct structure
-            return {
+            result = {
                 "output": {
                     "thumbnail": f"data:image/jpeg;base64,{thumbnail_base64}",
                     "status": "success",
@@ -457,14 +503,19 @@ class ThumbnailHandlerV43:
                     "inpainting_applied": detection['detected'],
                     "mask_created": detection['detected'],
                     "frame_thickness": detection.get('thickness', 0),
+                    "detection_confidence": detection.get('confidence', 0),
                     "detection_methods": detection.get('methods', []),
                     "thumbnail_size": f"{self.thumbnail_size[0]}x{self.thumbnail_size[1]}",
                     "message": "Thumbnail created successfully"
                 }
             }
             
+            print("Returning success response")
+            return result
+            
         except Exception as e:
             print(f"ERROR in process_image: {str(e)}")
+            print(f"Traceback: {traceback.format_exc()}")
             return self.create_error_response(f"Processing error: {str(e)}")
     
     def create_error_response(self, error_message: str) -> Dict[str, Any]:
@@ -477,6 +528,7 @@ class ThumbnailHandlerV43:
             }
         }
 
+
 # For RunPod
 if __name__ == "__main__":
-    print(f"Thumbnail Handler v{VERSION} loaded successfully
+    print(f"Thumbnail Handler v{VERSION} loaded successfully")
