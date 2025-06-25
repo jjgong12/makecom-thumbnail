@@ -6,19 +6,7 @@ import time
 from io import BytesIO
 from PIL import Image, ImageEnhance, ImageOps
 import numpy as np
-import replicate
-import os
 import cv2
-
-# Replicate API 설정 - 환경변수에서 가져오기
-REPLICATE_API_TOKEN = os.environ.get("REPLICATE_API_TOKEN", "")
-if not REPLICATE_API_TOKEN:
-    # 환경변수가 없으면 직접 설정 (백업용)
-    REPLICATE_API_TOKEN = "r8_8pH3riHZWKr6UwhUjVqHoNDrWqpOdek2nwdRa"
-
-# Replicate 클라이언트 초기화
-replicate_client = replicate.Client(api_token=REPLICATE_API_TOKEN)
-print(f"Replicate API Token 설정됨: {REPLICATE_API_TOKEN[:10]}...")
 
 def find_input_data(data):
     """재귀적으로 모든 가능한 경로에서 입력 데이터 찾기"""
@@ -115,50 +103,63 @@ def base64_to_image(base64_string):
     img_data = base64.b64decode(base64_string)
     return Image.open(BytesIO(img_data))
 
-def remove_background_with_replicate(image):
-    """Replicate API를 사용하여 배경 제거"""
-    try:
-        # PIL Image를 base64로 변환
-        buffered = BytesIO()
-        image.save(buffered, format="PNG")
-        img_base64 = base64.b64encode(buffered.getvalue()).decode()
-        
-        # Replicate 실행 (새로운 방식)
-        print("Replicate API 호출 중...")
-        
-        output = replicate_client.run(
-            "cjwbw/rembg:fb8af171cfa1616ddcf1242c093f9c46bcada5ad4cf6f2fbe8b81b330ec5c003",
-            input={
-                "image": f"data:image/png;base64,{img_base64}"
-            }
-        )
-        
-        # 결과 처리
-        if isinstance(output, str):
-            if output.startswith('http'):
-                # URL인 경우 다운로드
-                response = requests.get(output)
-                return Image.open(BytesIO(response.content))
-            elif 'base64,' in output:
-                # Base64 데이터인 경우
-                img_data = output.split('base64,')[1]
-                return Image.open(BytesIO(base64.b64decode(img_data)))
-        
-        # 이미 PIL Image인 경우
-        return output
-        
-    except Exception as e:
-        print(f"Replicate API 오류: {str(e)}")
-        print("토큰을 확인하세요. RunPod 환경변수에 REPLICATE_API_TOKEN을 설정해야 합니다.")
-        raise
+def apply_basic_enhancement(image):
+    """Enhancement와 동일한 기본 보정 적용"""
+    # RGB로 변환 (RGBA인 경우)
+    if image.mode == 'RGBA':
+        background = Image.new('RGB', image.size, (255, 255, 255))
+        background.paste(image, mask=image.split()[3])
+        image = background
+    elif image.mode != 'RGB':
+        image = image.convert('RGB')
+    
+    # 1단계: 전체적으로 밝게 (35%)
+    brightness = ImageEnhance.Brightness(image)
+    image = brightness.enhance(1.35)
+    
+    # 2단계: 대비 약간 감소
+    contrast = ImageEnhance.Contrast(image)
+    image = contrast.enhance(0.9)
+    
+    # 3단계: 채도 감소
+    color = ImageEnhance.Color(image)
+    image = color.enhance(0.7)
+    
+    # 4단계: 감마 보정
+    img_array = np.array(image)
+    
+    for i in range(3):
+        channel = img_array[:, :, i].astype(np.float32) / 255.0
+        channel = np.power(channel, 0.6)
+        channel = np.where(channel > 0.6, 
+                          channel + (1 - channel) * 0.15,
+                          channel * 1.05)
+        channel = np.clip(channel, 0, 1)
+        img_array[:, :, i] = (channel * 255).astype(np.uint8)
+    
+    # 5단계: 화이트 오버레이 (3%)
+    white_overlay = np.ones_like(img_array) * 255
+    alpha = 0.03
+    img_array = (img_array * (1 - alpha) + white_overlay * alpha).astype(np.uint8)
+    
+    enhanced_image = Image.fromarray(img_array)
+    
+    # 6단계: 추가 밝기 (5%)
+    brightness2 = ImageEnhance.Brightness(enhanced_image)
+    enhanced_image = brightness2.enhance(1.05)
+    
+    # 7단계: 샤프니스
+    sharpness = ImageEnhance.Sharpness(enhanced_image)
+    enhanced_image = sharpness.enhance(1.1)
+    
+    return enhanced_image
 
 def detect_ring_color(image):
     """반지 색상 감지 - 무도금화이트 우선 감지"""
     img_array = np.array(image)
     
-    # RGB인 경우만 처리 (RGBA는 RGB로 변환)
+    # RGB인 경우만 처리
     if len(img_array.shape) == 3 and img_array.shape[2] == 4:
-        # 흰색 배경에 합성
         rgb_image = Image.new('RGB', image.size, (255, 255, 255))
         rgb_image.paste(image, mask=image.split()[3])
         img_array = np.array(rgb_image)
@@ -276,71 +277,32 @@ def apply_color_specific_enhancement(image, color):
     
     return enhanced
 
-def create_thumbnail_with_color(image, detected_color, size=(1000, 1300)):
-    """1000x1300 썸네일 생성 with 색상별 보정"""
-    print(f"썸네일 생성 시작 - 색상: {detected_color}")
+def create_thumbnail_with_crop(image, size=(1000, 1300)):
+    """이미지를 1000x1300으로 크롭 (중앙 기준)"""
+    print(f"썸네일 크롭 시작 - 원본 크기: {image.size}")
     
-    # 배경이 제거된 이미지 처리
-    img_array = np.array(image)
+    # 목표 비율
+    target_ratio = 1000 / 1300  # 0.769
+    img_width, img_height = image.size
+    current_ratio = img_width / img_height
     
-    # 알파 채널이 있는지 확인
-    if img_array.shape[2] == 4:
-        # 알파 채널을 사용하여 객체의 경계 찾기
-        alpha = img_array[:, :, 3]
-        coords = cv2.findNonZero(alpha)
-        
-        if coords is not None:
-            x, y, w, h = cv2.boundingRect(coords)
-            
-            # 객체 주변에 여백 추가 (15%)
-            padding = int(max(w, h) * 0.15)
-            x = max(0, x - padding)
-            y = max(0, y - padding)
-            w = min(img_array.shape[1] - x, w + 2 * padding)
-            h = min(img_array.shape[0] - y, h + 2 * padding)
-            
-            # 1000:1300 비율로 맞추기
-            target_ratio = 1000 / 1300  # 0.769
-            current_ratio = w / h
-            
-            if current_ratio > target_ratio:
-                # 너무 넓음 - 높이를 늘려야 함
-                new_h = int(w / target_ratio)
-                diff = new_h - h
-                y = max(0, y - diff // 2)
-                h = new_h
-            else:
-                # 너무 높음 - 너비를 늘려야 함
-                new_w = int(h * target_ratio)
-                diff = new_w - w
-                x = max(0, x - diff // 2)
-                w = new_w
-            
-            # 경계 체크
-            x = max(0, x)
-            y = max(0, y)
-            w = min(img_array.shape[1] - x, w)
-            h = min(img_array.shape[0] - y, h)
-            
-            # 크롭
-            cropped = img_array[y:y+h, x:x+w]
-            cropped_img = Image.fromarray(cropped)
-        else:
-            cropped_img = image
+    # 크롭할 영역 계산
+    if current_ratio > target_ratio:
+        # 이미지가 너무 넓음 - 좌우를 자름
+        new_width = int(img_height * target_ratio)
+        x_offset = (img_width - new_width) // 2
+        crop_box = (x_offset, 0, x_offset + new_width, img_height)
     else:
-        cropped_img = image
+        # 이미지가 너무 높음 - 상하를 자름
+        new_height = int(img_width / target_ratio)
+        y_offset = (img_height - new_height) // 2
+        crop_box = (0, y_offset, img_width, y_offset + new_height)
+    
+    # 크롭
+    cropped = image.crop(crop_box)
     
     # 리사이즈
-    thumbnail = cropped_img.resize(size, Image.Resampling.LANCZOS)
-    
-    # 흰색 배경 추가
-    if thumbnail.mode == 'RGBA':
-        background = Image.new('RGB', size, (255, 255, 255))
-        background.paste(thumbnail, (0, 0), thumbnail)
-        thumbnail = background
-    
-    # 색상별 디테일 보정 적용
-    thumbnail = apply_color_specific_enhancement(thumbnail, detected_color)
+    thumbnail = cropped.resize(size, Image.Resampling.LANCZOS)
     
     return thumbnail
 
@@ -401,17 +363,21 @@ def handler(event):
         
         print(f"이미지 로드 완료: {image.size}")
         
-        # 색상 감지 (배경 제거 전에 원본에서)
-        detected_color = detect_ring_color(image)
+        # 1. Enhancement 기본 보정 적용
+        enhanced_image = apply_basic_enhancement(image)
+        print("기본 보정 적용 완료")
+        
+        # 2. 1000x1300으로 크롭
+        thumbnail = create_thumbnail_with_crop(enhanced_image)
+        print(f"썸네일 크롭 완료: {thumbnail.size}")
+        
+        # 3. 크롭된 이미지에서 색상 감지
+        detected_color = detect_ring_color(thumbnail)
         print(f"감지된 반지 색상: {detected_color}")
         
-        # 배경 제거
-        no_bg_image = remove_background_with_replicate(image)
-        print("배경 제거 완료")
-        
-        # 썸네일 생성 (색상 정보 전달)
-        thumbnail = create_thumbnail_with_color(no_bg_image, detected_color)
-        print(f"썸네일 생성 완료: {thumbnail.size}")
+        # 4. 색상별 추가 보정 적용
+        thumbnail = apply_color_specific_enhancement(thumbnail, detected_color)
+        print("색상별 보정 적용 완료")
         
         # base64 변환 (padding 제거)
         thumbnail_base64 = image_to_base64(thumbnail)
@@ -422,7 +388,8 @@ def handler(event):
                 "thumbnail": thumbnail_base64,
                 "size": list(thumbnail.size),
                 "detected_color": detected_color,
-                "format": "base64_no_padding"
+                "format": "base64_no_padding",
+                "process": "enhancement_crop_detect_enhance_v57"
             }
         }
         
