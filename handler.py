@@ -17,7 +17,10 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-VERSION = "Thumbnail_V62_TransparentBG"
+VERSION = "Thumbnail_V64_ENV_PRIORITY"
+
+# V64: Get API token from environment variable FIRST
+REPLICATE_API_TOKEN = os.environ.get('REPLICATE_API_TOKEN', 'r8_6cksfxEmLxWlYxjW4K1FEbnZMEEmlQw2UeNNY')
 
 def create_session():
     """Create a session with retry strategy"""
@@ -521,6 +524,11 @@ def process_thumbnail(job):
         if not replicate_token and isinstance(job_input, dict):
             replicate_token = job_input.get('replicate_api_token', '')
         
+        # V64: Use environment variable token if no token provided
+        if not replicate_token:
+            replicate_token = REPLICATE_API_TOKEN
+            logger.info("Using Replicate API token from environment variable")
+        
         if not image_data:
             return {
                 "output": {
@@ -532,7 +540,7 @@ def process_thumbnail(job):
         if not replicate_token:
             return {
                 "output": {
-                    "error": "Replicate API token is required",
+                    "error": "Replicate API token is required (not found in input or environment)",
                     "status": "error"
                 }
             }
@@ -598,7 +606,7 @@ def process_thumbnail(job):
             result_base64 = image_base64
             status_message = "Background removal failed - returning original"
         else:
-            status_message = "Thumbnail created with transparent background - V62"
+            status_message = "Thumbnail created with transparent background - V64"
         
         # Step 4: Apply final processing
         # Decode the result
