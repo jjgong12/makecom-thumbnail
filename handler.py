@@ -93,16 +93,15 @@ def base64_to_image(base64_str: str) -> Image.Image:
     return Image.open(io.BytesIO(image_data)).convert('RGB')
 
 def apply_basic_enhancement(image: Image.Image) -> Image.Image:
-    """Apply V60 basic enhancement matching Enhancement Handler"""
+    """Apply V61 basic enhancement matching Enhancement Handler - Natural tone"""
     # Convert to numpy array
     img_array = np.array(image).astype(np.float32) / 255.0
     
-    # V60 adjustments
-    brightness = 1.45  # 45% brightness increase
+    # V61 adjustments - natural tone
+    brightness = 1.25  # Reduced from 1.45
     contrast = 1.05
-    gamma = 0.6
-    saturation = 0.65  # 35% saturation decrease
-    additional_brightness = 0.02  # 2% additional brightness
+    gamma = 0.8  # Increased from 0.6 for natural look
+    saturation = 0.8  # 20% saturation decrease instead of 35%
     
     # Apply brightness
     img_array = img_array * brightness
@@ -121,8 +120,11 @@ def apply_basic_enhancement(image: Image.Image) -> Image.Image:
     img_array_uint8 = cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2RGB)
     img_array = img_array_uint8.astype(np.float32) / 255.0
     
-    # Apply additional brightness
-    img_array = img_array + additional_brightness
+    # Apply subtle LAB brightening
+    lab = cv2.cvtColor((img_array * 255).astype(np.uint8), cv2.COLOR_RGB2LAB).astype(np.float32)
+    lab[:,:,0] = lab[:,:,0] * 1.05  # Subtle brightening
+    lab = np.clip(lab, 0, 255)
+    img_array = cv2.cvtColor(lab.astype(np.uint8), cv2.COLOR_LAB2RGB).astype(np.float32) / 255.0
     
     # Ensure values are in valid range
     img_array = np.clip(img_array, 0, 1)
@@ -193,67 +195,67 @@ def detect_ring_color(image: Image.Image) -> str:
             return '화이트골드'
 
 def apply_color_specific_enhancement(image: Image.Image, detected_color: str) -> Image.Image:
-    """Apply color-specific enhancement to thumbnail"""
+    """Apply color-specific enhancement to thumbnail - V61 natural tone"""
     print(f"Applying enhancement for: {detected_color}")
     
-    # Base enhancements
+    # Base enhancements - more subtle for natural look
     enhancer = ImageEnhance.Brightness(image)
     
     if detected_color == '무도금화이트':
-        # Brightest enhancement for white
-        image = enhancer.enhance(1.25)
+        # Moderate enhancement for white
+        image = enhancer.enhance(1.15)  # Reduced from 1.25
         # Cool tone adjustment
         img_array = np.array(image).astype(np.float32)
-        img_array[:,:,2] *= 1.05  # Slight blue enhancement
-        img_array[:,:,0] *= 0.98  # Slight red reduction
+        img_array[:,:,2] *= 1.03  # Subtle blue enhancement
+        img_array[:,:,0] *= 0.99  # Very slight red reduction
         img_array = np.clip(img_array, 0, 255).astype(np.uint8)
         image = Image.fromarray(img_array)
-        # Extra contrast for white metals
+        # Moderate contrast
         contrast = ImageEnhance.Contrast(image)
-        image = contrast.enhance(1.1)
+        image = contrast.enhance(1.05)  # Reduced from 1.1
         
     elif detected_color == '로즈골드':
         # Warm pink enhancement
-        image = enhancer.enhance(1.15)
+        image = enhancer.enhance(1.1)  # Reduced from 1.15
         # Enhance red/pink tones
         img_array = np.array(image).astype(np.float32)
-        img_array[:,:,0] *= 1.12  # Red enhancement
-        img_array[:,:,1] *= 1.02  # Slight green
+        img_array[:,:,0] *= 1.08  # Red enhancement (reduced from 1.12)
+        img_array[:,:,1] *= 1.01  # Very slight green
         img_array = np.clip(img_array, 0, 255).astype(np.uint8)
         image = Image.fromarray(img_array)
-        # Enhance saturation for rose gold
+        # Moderate saturation
         saturation = ImageEnhance.Color(image)
-        image = saturation.enhance(1.1)
+        image = saturation.enhance(1.05)  # Reduced from 1.1
         
     elif detected_color == '옐로우골드':
         # Golden enhancement
-        image = enhancer.enhance(1.1)
+        image = enhancer.enhance(1.08)  # Reduced from 1.1
         # Enhance yellow/gold tones
         img_array = np.array(image).astype(np.float32)
-        img_array[:,:,0] *= 1.08  # Red
-        img_array[:,:,1] *= 1.06  # Green
-        img_array[:,:,2] *= 0.96  # Reduce blue
+        img_array[:,:,0] *= 1.05  # Red (reduced)
+        img_array[:,:,1] *= 1.04  # Green (reduced)
+        img_array[:,:,2] *= 0.98  # Slight blue reduction
         img_array = np.clip(img_array, 0, 255).astype(np.uint8)
         image = Image.fromarray(img_array)
-        # Warm saturation
+        # Subtle saturation
         saturation = ImageEnhance.Color(image)
-        image = saturation.enhance(1.08)
+        image = saturation.enhance(1.04)  # Reduced from 1.08
         
     else:  # 화이트골드
         # Neutral bright enhancement
-        image = enhancer.enhance(1.2)
-        # Slight cool tone
+        image = enhancer.enhance(1.12)  # Reduced from 1.2
+        # Very slight cool tone
         img_array = np.array(image).astype(np.float32)
-        img_array[:,:,2] *= 1.02  # Slight blue
+        img_array[:,:,2] *= 1.01  # Very subtle blue
         img_array = np.clip(img_array, 0, 255).astype(np.uint8)
         image = Image.fromarray(img_array)
     
-    # Final sharpness enhancement for all
+    # Final sharpness enhancement - moderate for natural look
     sharpness = ImageEnhance.Sharpness(image)
-    image = sharpness.enhance(1.8)
+    image = sharpness.enhance(1.5)  # Reduced from 1.8
     
-    # Edge enhancement
-    image = image.filter(ImageFilter.UnsharpMask(radius=2, percent=150, threshold=3))
+    # Gentle edge enhancement
+    image = image.filter(ImageFilter.UnsharpMask(radius=1.5, percent=120, threshold=3))
     
     return image
 
@@ -293,27 +295,32 @@ def create_thumbnail_with_crop(image: Image.Image) -> Image.Image:
     
     return image
 
-def handler(event: Dict[str, Any]) -> Dict[str, Any]:
-    """Main handler function for RunPod thumbnail"""
+def handler(job: Dict[str, Any]) -> Dict[str, Any]:
+    """Main handler function for RunPod thumbnail - Fixed parameter name"""
     try:
-        print(f"Thumbnail V60 received event: {json.dumps(event, indent=2)[:500]}...")
+        # Get job input
+        job_input = job.get("input", {})
+        print(f"Thumbnail V61 received input: {json.dumps(job_input, indent=2)[:500]}...")
         
         # Find input data (enhanced image)
-        input_data = find_input_data(event)
+        input_data = find_input_data(job_input)
+        
+        # If not found in job_input, try the whole job dict
+        if not input_data:
+            input_data = find_input_data(job)
         
         if not input_data:
-            # Try direct access
-            if 'input' in event:
-                input_data = event['input'].get('enhanced_image') or event['input'].get('image')
-            
-            if not input_data:
-                print("Failed to find input data. Event structure:")
-                print(json.dumps(event, indent=2)[:1000])
+            # Last resort - check if job_input itself is the image data
+            if isinstance(job_input, str) and len(job_input) > 100:
+                input_data = job_input
+            else:
+                print("Failed to find input data. Job structure:")
+                print(json.dumps(job, indent=2)[:1000])
                 return {
                     "output": {
                         "error": "No enhanced image found",
                         "status": "failed",
-                        "version": "v60"
+                        "version": "v61"
                     }
                 }
         
@@ -331,7 +338,7 @@ def handler(event: Dict[str, Any]) -> Dict[str, Any]:
                 image = base64_to_image(input_data)
         elif isinstance(input_data, dict):
             # Try to find image in dict
-            for key in ['enhanced_image', 'image', 'base64', 'url', 'data']:
+            for key in ['enhanced_image', 'enhancedImage', 'image', 'base64', 'url', 'data']:
                 if key in input_data:
                     if isinstance(input_data[key], str):
                         if input_data[key].startswith('http'):
@@ -345,7 +352,7 @@ def handler(event: Dict[str, Any]) -> Dict[str, Any]:
                 "output": {
                     "error": "Failed to load image from input",
                     "status": "failed",
-                    "version": "v60"
+                    "version": "v61"
                 }
             }
         
@@ -353,7 +360,7 @@ def handler(event: Dict[str, Any]) -> Dict[str, Any]:
         
         # Step 1: Apply basic enhancement (matching Enhancement Handler)
         enhanced_image = apply_basic_enhancement(image)
-        print("Basic enhancement applied (V60)")
+        print("Basic enhancement applied (V61 natural tone)")
         
         # Step 2: Create 1000x1300 thumbnail
         thumbnail = create_thumbnail_with_crop(enhanced_image)
@@ -389,14 +396,14 @@ def handler(event: Dict[str, Any]) -> Dict[str, Any]:
                 "size": list(thumbnail.size),
                 "detected_color": detected_color,
                 "original_size": list(image.size),
-                "version": "v60_complete",
+                "version": "v61_natural",
                 "status": "success",
-                "process": "enhancement_crop_detect_enhance_v60"
+                "process": "enhancement_crop_detect_enhance_v61"
             }
         }
         
     except Exception as e:
-        print(f"Error in Thumbnail V60: {str(e)}")
+        print(f"Error in Thumbnail V61: {str(e)}")
         import traceback
         traceback.print_exc()
         
@@ -404,7 +411,7 @@ def handler(event: Dict[str, Any]) -> Dict[str, Any]:
             "output": {
                 "error": str(e),
                 "status": "failed",
-                "version": "v60",
+                "version": "v61",
                 "traceback": traceback.format_exc()
             }
         }
