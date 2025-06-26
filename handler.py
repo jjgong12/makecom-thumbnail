@@ -13,7 +13,7 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-VERSION = "V83-UltraWhite"
+VERSION = "V84-Lighting"
 
 def find_input_data(data):
     """Find input data recursively - matches Enhancement handler"""
@@ -125,7 +125,7 @@ def detect_ring_color(image):
         return "화이트골드"
 
 def apply_basic_enhancement(image):
-    """Apply basic enhancement matching Enhancement V83"""
+    """Apply basic enhancement matching Enhancement V84"""
     if image.mode != 'RGB':
         if image.mode == 'RGBA':
             background = Image.new('RGB', image.size, (255, 255, 255))
@@ -134,9 +134,9 @@ def apply_basic_enhancement(image):
         else:
             image = image.convert('RGB')
     
-    # Match Enhancement V83 basic settings
+    # Match Enhancement V84 basic settings - BRIGHTER
     brightness = ImageEnhance.Brightness(image)
-    image = brightness.enhance(1.12)
+    image = brightness.enhance(1.18)  # Match V84
     
     contrast = ImageEnhance.Contrast(image)
     image = contrast.enhance(1.08)
@@ -146,40 +146,10 @@ def apply_basic_enhancement(image):
     
     return image
 
-def create_thumbnail_with_aspect_ratio(image, target_width=1000, target_height=1300):
-    """Create thumbnail maintaining aspect ratio with padding"""
-    original_width, original_height = image.size
-    
-    # Calculate scaling to fit within target dimensions
-    width_ratio = target_width / original_width
-    height_ratio = target_height / original_height
-    
-    # Use the smaller ratio to ensure the image fits within bounds
-    scale_ratio = min(width_ratio, height_ratio)
-    
-    # Calculate new dimensions
-    new_width = int(original_width * scale_ratio)
-    new_height = int(original_height * scale_ratio)
-    
-    # Resize image maintaining aspect ratio
-    resized = image.resize((new_width, new_height), Image.Resampling.LANCZOS)
-    
-    # Create white background
-    thumbnail = Image.new('RGB', (target_width, target_height), (255, 255, 255))
-    
-    # Calculate position to center the image
-    left = (target_width - new_width) // 2
-    top = (target_height - new_height) // 2
-    
-    # Paste resized image onto white background
-    thumbnail.paste(resized, (left, top))
-    
-    return thumbnail
-
 def apply_color_specific_enhancement(image, detected_color):
-    """Apply color-specific enhancement - ULTRA PURE WHITE for unplated V83"""
+    """Apply color-specific enhancement - ULTRA PURE WHITE for unplated V84"""
     if detected_color == "무도금화이트":
-        # ULTRA PURE WHITE - maximum whiteness V83
+        # ULTRA PURE WHITE - maximum whiteness
         brightness = ImageEnhance.Brightness(image)
         image = brightness.enhance(1.4)  # More brightness
         
@@ -238,26 +208,37 @@ def apply_color_specific_enhancement(image, detected_color):
     
     return image
 
-def apply_center_vignette(image):
-    """Apply VERY subtle center vignette"""
+def apply_lighting_effect(image):
+    """Apply subtle spotlight/lighting effect"""
     width, height = image.size
     
-    # Create radial gradient
+    # Create radial gradient for spotlight
     x = np.linspace(-1, 1, width)
     y = np.linspace(-1, 1, height)
     X, Y = np.meshgrid(x, y)
     
-    # Distance from center
-    distance = np.sqrt(X**2 + Y**2)
+    # Offset spotlight slightly up and left for natural lighting
+    X_offset = X + 0.2  # Slight left offset
+    Y_offset = Y + 0.3  # Slight up offset
     
-    # Ultra subtle vignette
-    vignette = 1 - (0.01 * np.clip(distance - 0.5, 0, 1))  # Even more subtle
-    vignette = np.clip(vignette, 0.99, 1.0)
+    # Distance from offset center
+    distance = np.sqrt(X_offset**2 + Y_offset**2)
     
-    # Apply vignette
+    # Create spotlight effect (brighter in center)
+    spotlight = 1 + 0.15 * np.exp(-distance**2 * 1.5)  # Gaussian spotlight
+    spotlight = np.clip(spotlight, 1.0, 1.15)  # Max 15% brightness increase
+    
+    # Apply spotlight
     img_array = np.array(image)
     for i in range(3):
-        img_array[:, :, i] = img_array[:, :, i] * vignette
+        img_array[:, :, i] = np.clip(img_array[:, :, i] * spotlight, 0, 255)
+    
+    # Add subtle highlight on upper area (simulate light reflection)
+    highlight_mask = np.exp(-Y * 3) * 0.05  # Top highlight
+    highlight_mask = np.clip(highlight_mask, 0, 0.05)
+    
+    for i in range(3):
+        img_array[:, :, i] = np.clip(img_array[:, :, i] + highlight_mask * 255, 0, 255)
     
     return Image.fromarray(img_array.astype(np.uint8))
 
@@ -310,11 +291,11 @@ def handler(event):
         
         logger.info(f"Image loaded: {image.size}")
         
-        # 1. Apply basic enhancement (matching Enhancement handler)
+        # 1. Apply basic enhancement (matching Enhancement V84)
         enhanced_image = apply_basic_enhancement(image)
         
-        # 2. Create thumbnail with aspect ratio preservation (no distortion!)
-        thumbnail = create_thumbnail_with_aspect_ratio(enhanced_image, 1000, 1300)
+        # 2. Simple resize from 2000x2600 to 1000x1300 (no padding needed!)
+        thumbnail = enhanced_image.resize((1000, 1300), Image.Resampling.LANCZOS)
         
         # 3. Detect color with improved logic
         detected_color = detect_ring_color(thumbnail)
@@ -323,12 +304,12 @@ def handler(event):
         # 4. Apply color-specific enhancement (ULTRA PURE WHITE for unplated)
         thumbnail = apply_color_specific_enhancement(thumbnail, detected_color)
         
-        # 5. Apply very subtle vignette
-        thumbnail = apply_center_vignette(thumbnail)
+        # 5. Apply lighting effect (spotlight)
+        thumbnail = apply_lighting_effect(thumbnail)
         
-        # 6. Very minimal final brightness
+        # 6. Additional overall brightness boost for V84 (match Enhancement)
         brightness = ImageEnhance.Brightness(thumbnail)
-        thumbnail = brightness.enhance(1.01)
+        thumbnail = brightness.enhance(1.05)  # Extra 5% brightness
         
         # 7. Light sharpness for details
         sharpness = ImageEnhance.Sharpness(thumbnail)
@@ -345,8 +326,7 @@ def handler(event):
                 "detected_color": detected_color,
                 "format": "base64_no_padding",
                 "version": VERSION,
-                "status": "success",
-                "note": "Aspect ratio preserved with white padding"
+                "status": "success"
             }
         }
         
