@@ -13,7 +13,7 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-VERSION = "V86-BetterColorDetection"
+VERSION = "V87-ExtendedTolerance"
 
 def find_input_data(data):
     """Find input data recursively - matches Enhancement handler"""
@@ -133,7 +133,7 @@ def detect_ring_color(image):
             return "화이트골드"
 
 def apply_basic_enhancement(image):
-    """Apply basic enhancement matching Enhancement V86"""
+    """Apply basic enhancement matching Enhancement V87"""
     if image.mode != 'RGB':
         if image.mode == 'RGBA':
             background = Image.new('RGB', image.size, (255, 255, 255))
@@ -142,39 +142,39 @@ def apply_basic_enhancement(image):
         else:
             image = image.convert('RGB')
     
-    # Match Enhancement V86 basic settings - REDUCED
+    # Match Enhancement V87 basic settings
     brightness = ImageEnhance.Brightness(image)
-    image = brightness.enhance(1.08)  # Match V86 (reduced)
+    image = brightness.enhance(1.08)  # Match V87
     
     contrast = ImageEnhance.Contrast(image)
-    image = contrast.enhance(1.05)  # Match V86
+    image = contrast.enhance(1.05)  # Match V87
     
     color = ImageEnhance.Color(image)
-    image = color.enhance(1.03)  # Match V86
+    image = color.enhance(1.03)  # Match V87
     
     return image
 
 def apply_color_specific_enhancement(image, detected_color):
-    """Apply color-specific enhancement - REDUCED WHITE OVERLAY for V86"""
+    """Apply color-specific enhancement - MINIMAL WHITE OVERLAY for V87"""
     if detected_color == "무도금화이트":
-        # REDUCED WHITE EFFECT
+        # MINIMAL WHITE EFFECT - Really tiny amount!
         brightness = ImageEnhance.Brightness(image)
-        image = brightness.enhance(1.25)  # Reduced from 1.4
+        image = brightness.enhance(1.15)  # Moderate brightness
         
         color = ImageEnhance.Color(image)
-        image = color.enhance(0.1)  # Slightly more color
+        image = color.enhance(0.2)  # Keep some color
         
         contrast = ImageEnhance.Contrast(image)
-        image = contrast.enhance(0.9)
+        image = contrast.enhance(0.95)  # Very soft contrast
         
-        # REDUCED white mixing - 30% instead of 60%
+        # MINIMAL white mixing - only 10%!
         img_array = np.array(image)
-        img_array = img_array * 0.7 + 255 * 0.3  # Only 30% white
+        img_array = img_array * 0.9 + 255 * 0.1  # Only 10% white overlay
         image = Image.fromarray(img_array.astype(np.uint8))
         
-        # Smaller additional boost
+        # Small additional boost
         brightness = ImageEnhance.Brightness(image)
-        image = brightness.enhance(1.08)  # Reduced from 1.15
+        image = brightness.enhance(1.05)  # Very small boost
         
     elif detected_color == "옐로우골드":
         # Yellow gold - warm enhancement
@@ -217,7 +217,7 @@ def apply_color_specific_enhancement(image, detected_color):
     return image
 
 def apply_lighting_effect(image):
-    """Apply subtle spotlight/lighting effect - REDUCED for V86"""
+    """Apply subtle spotlight/lighting effect - REDUCED for V87"""
     width, height = image.size
     
     # Create radial gradient for spotlight
@@ -254,8 +254,8 @@ def create_thumbnail_smart(image, target_width=1000, target_height=1300):
     """Create thumbnail with smart handling for ~2000x2600 input"""
     original_width, original_height = image.size
     
-    # Check if input is approximately 2000x2600 (±5 pixels)
-    if (1995 <= original_width <= 2005 and 2595 <= original_height <= 2605):
+    # Check if input is approximately 2000x2600 (±8 pixels) - EXTENDED!
+    if (1992 <= original_width <= 2008 and 2592 <= original_height <= 2608):
         # Force resize to exact 1000x1300 without padding
         logger.info(f"Input {original_width}x{original_height} detected as ~2000x2600, forcing exact resize")
         return image.resize((target_width, target_height), Image.Resampling.LANCZOS)
@@ -338,23 +338,23 @@ def handler(event):
         
         logger.info(f"Image loaded: {image.size}")
         
-        # 1. Apply basic enhancement (matching Enhancement V86)
+        # 1. Apply basic enhancement (matching Enhancement V87)
         enhanced_image = apply_basic_enhancement(image)
         
-        # 2. Smart thumbnail creation (no padding for ~2000x2600)
+        # 2. Smart thumbnail creation (no padding for ~2000x2600 ±8px)
         thumbnail = create_thumbnail_smart(enhanced_image, 1000, 1300)
         
-        # 3. Detect color with improved logic (matching Enhancement V86)
+        # 3. Detect color with improved logic (matching Enhancement V87)
         detected_color = detect_ring_color(thumbnail)
         logger.info(f"Detected color: {detected_color}")
         
-        # 4. Apply color-specific enhancement (REDUCED white overlay)
+        # 4. Apply color-specific enhancement (MINIMAL white overlay)
         thumbnail = apply_color_specific_enhancement(thumbnail, detected_color)
         
         # 5. Apply lighting effect (REDUCED spotlight)
         thumbnail = apply_lighting_effect(thumbnail)
         
-        # 6. NO additional brightness boost for V86
+        # 6. NO additional brightness boost for V87
         # Removed the brightness.enhance(1.02)
         
         # 7. Light sharpness for details (reduced)
