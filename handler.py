@@ -13,7 +13,7 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-VERSION = "V84-Lighting"
+VERSION = "V85-NoPadding"
 
 def find_input_data(data):
     """Find input data recursively - matches Enhancement handler"""
@@ -125,7 +125,7 @@ def detect_ring_color(image):
         return "화이트골드"
 
 def apply_basic_enhancement(image):
-    """Apply basic enhancement matching Enhancement V84"""
+    """Apply basic enhancement matching Enhancement V85"""
     if image.mode != 'RGB':
         if image.mode == 'RGBA':
             background = Image.new('RGB', image.size, (255, 255, 255))
@@ -134,9 +134,9 @@ def apply_basic_enhancement(image):
         else:
             image = image.convert('RGB')
     
-    # Match Enhancement V84 basic settings - BRIGHTER
+    # Match Enhancement V85 basic settings - REDUCED
     brightness = ImageEnhance.Brightness(image)
-    image = brightness.enhance(1.18)  # Match V84
+    image = brightness.enhance(1.14)  # Match V85 (reduced)
     
     contrast = ImageEnhance.Contrast(image)
     image = contrast.enhance(1.08)
@@ -147,7 +147,7 @@ def apply_basic_enhancement(image):
     return image
 
 def apply_color_specific_enhancement(image, detected_color):
-    """Apply color-specific enhancement - ULTRA PURE WHITE for unplated V84"""
+    """Apply color-specific enhancement - ULTRA PURE WHITE for unplated V85"""
     if detected_color == "무도금화이트":
         # ULTRA PURE WHITE - maximum whiteness
         brightness = ImageEnhance.Brightness(image)
@@ -242,6 +242,45 @@ def apply_lighting_effect(image):
     
     return Image.fromarray(img_array.astype(np.uint8))
 
+def create_thumbnail_smart(image, target_width=1000, target_height=1300):
+    """Create thumbnail with smart handling for ~2000x2600 input"""
+    original_width, original_height = image.size
+    
+    # Check if input is approximately 2000x2600 (±5 pixels)
+    if (1995 <= original_width <= 2005 and 2595 <= original_height <= 2605):
+        # Force resize to exact 1000x1300 without padding
+        logger.info(f"Input {original_width}x{original_height} detected as ~2000x2600, forcing exact resize")
+        return image.resize((target_width, target_height), Image.Resampling.LANCZOS)
+    else:
+        # For other sizes, maintain aspect ratio with padding
+        logger.info(f"Input {original_width}x{original_height} not ~2000x2600, using aspect ratio preservation")
+        
+        # Calculate scaling to fit within target dimensions
+        width_ratio = target_width / original_width
+        height_ratio = target_height / original_height
+        
+        # Use the smaller ratio to ensure the image fits within bounds
+        scale_ratio = min(width_ratio, height_ratio)
+        
+        # Calculate new dimensions
+        new_width = int(original_width * scale_ratio)
+        new_height = int(original_height * scale_ratio)
+        
+        # Resize image maintaining aspect ratio
+        resized = image.resize((new_width, new_height), Image.Resampling.LANCZOS)
+        
+        # Create white background
+        thumbnail = Image.new('RGB', (target_width, target_height), (255, 255, 255))
+        
+        # Calculate position to center the image
+        left = (target_width - new_width) // 2
+        top = (target_height - new_height) // 2
+        
+        # Paste resized image onto white background
+        thumbnail.paste(resized, (left, top))
+        
+        return thumbnail
+
 def image_to_base64(image):
     """Convert image to base64 without padding for Make.com"""
     buffered = BytesIO()
@@ -291,11 +330,11 @@ def handler(event):
         
         logger.info(f"Image loaded: {image.size}")
         
-        # 1. Apply basic enhancement (matching Enhancement V84)
+        # 1. Apply basic enhancement (matching Enhancement V85)
         enhanced_image = apply_basic_enhancement(image)
         
-        # 2. Simple resize from 2000x2600 to 1000x1300 (no padding needed!)
-        thumbnail = enhanced_image.resize((1000, 1300), Image.Resampling.LANCZOS)
+        # 2. Smart thumbnail creation (no padding for ~2000x2600)
+        thumbnail = create_thumbnail_smart(enhanced_image, 1000, 1300)
         
         # 3. Detect color with improved logic
         detected_color = detect_ring_color(thumbnail)
@@ -307,9 +346,9 @@ def handler(event):
         # 5. Apply lighting effect (spotlight)
         thumbnail = apply_lighting_effect(thumbnail)
         
-        # 6. Additional overall brightness boost for V84 (match Enhancement)
+        # 6. Minimal overall brightness boost for V85 (reduced to match Enhancement)
         brightness = ImageEnhance.Brightness(thumbnail)
-        thumbnail = brightness.enhance(1.05)  # Extra 5% brightness
+        thumbnail = brightness.enhance(1.02)  # Reduced from 1.05
         
         # 7. Light sharpness for details
         sharpness = ImageEnhance.Sharpness(thumbnail)
