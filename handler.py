@@ -13,7 +13,7 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-VERSION = "V79-NaturalColor"
+VERSION = "V80-SmallRing"
 
 def find_input_data(data):
     """Find input data recursively - matches Enhancement handler"""
@@ -70,7 +70,7 @@ def detect_ring_color(image):
     
     center_region = img_array[y1:y2, x1:x2]
     
-    # Convert to HSV for better color analysis
+    # Convert to HSV
     hsv = cv2.cvtColor(center_region, cv2.COLOR_RGB2HSV)
     
     # Calculate average values
@@ -93,38 +93,31 @@ def detect_ring_color(image):
         r_norm = g_norm = b_norm = 1.0
     
     # Calculate color ratios
-    rg_ratio = r_mean / (g_mean + 1)  # Red to Green ratio
-    rb_ratio = r_mean / (b_mean + 1)  # Red to Blue ratio
-    gb_ratio = g_mean / (b_mean + 1)  # Green to Blue ratio
+    rg_ratio = r_mean / (g_mean + 1)
+    rb_ratio = r_mean / (b_mean + 1)
+    gb_ratio = g_mean / (b_mean + 1)
     
-    # ULTRA-CONSERVATIVE YELLOW GOLD - Only pure gold colors
-    # Must have ALL conditions met for yellow gold
+    # ULTRA-CONSERVATIVE YELLOW GOLD
     is_pure_gold = (
-        avg_hue >= 25 and avg_hue <= 32 and  # Very narrow hue range for pure gold
-        avg_saturation > 80 and  # Very high saturation required
-        avg_value > 120 and avg_value < 200 and  # Not too bright, not too dark
-        gb_ratio > 1.4 and  # Strong green/blue ratio
-        r_mean > 180 and g_mean > 140 and  # High red and green values
-        b_mean < 100  # Low blue for pure gold
+        avg_hue >= 25 and avg_hue <= 32 and
+        avg_saturation > 80 and
+        avg_value > 120 and avg_value < 200 and
+        gb_ratio > 1.4 and
+        r_mean > 180 and g_mean > 140 and
+        b_mean < 100
     )
     
     if is_pure_gold:
         return "옐로우골드"
-    
-    # Rose gold detection - clear pink/red tones
     elif rg_ratio > 1.2 and rb_ratio > 1.3 and avg_hue < 15:
         return "로즈골드"
-    
-    # White gold - cool metallic
     elif avg_saturation < 50 and avg_value > 180 and b_norm > r_norm:
         return "화이트골드"
-    
-    # DEFAULT: 무도금화이트 for everything else
     else:
         return "무도금화이트"
 
 def apply_basic_enhancement(image):
-    """Apply basic enhancement matching Enhancement V79"""
+    """Apply basic enhancement matching Enhancement V80"""
     if image.mode != 'RGB':
         if image.mode == 'RGBA':
             background = Image.new('RGB', image.size, (255, 255, 255))
@@ -133,7 +126,7 @@ def apply_basic_enhancement(image):
         else:
             image = image.convert('RGB')
     
-    # Match Enhancement V79 basic settings
+    # Match Enhancement V80 basic settings - IMPORTANT!
     brightness = ImageEnhance.Brightness(image)
     image = brightness.enhance(1.12)
     
@@ -146,11 +139,11 @@ def apply_basic_enhancement(image):
     return image
 
 def create_thumbnail_with_crop(image, target_size=(1000, 1300)):
-    """Create thumbnail with minimal 10% crop"""
+    """Create thumbnail with reduced 5% crop for smaller ring"""
     original_width, original_height = image.size
     
-    # 10% crop from each side
-    crop_percentage = 0.1
+    # 5% crop from each side (reduced from 10%)
+    crop_percentage = 0.05  # Changed from 0.1 to 0.05
     crop_width = int(original_width * crop_percentage)
     crop_height = int(original_height * crop_percentage)
     
@@ -163,7 +156,7 @@ def create_thumbnail_with_crop(image, target_size=(1000, 1300)):
     # Crop image
     cropped = image.crop((left, top, right, bottom))
     
-    # Resize to target
+    # Resize to target with high quality
     thumbnail = cropped.resize(target_size, Image.Resampling.LANCZOS)
     
     return thumbnail
@@ -171,35 +164,28 @@ def create_thumbnail_with_crop(image, target_size=(1000, 1300)):
 def apply_color_specific_enhancement(image, detected_color):
     """Apply color-specific enhancement - Natural colors"""
     if detected_color == "무도금화이트":
-        # Natural white enhancement - preserve original colors
-        
-        # Step 1: Gentle brightness increase
+        # Natural white enhancement
         brightness = ImageEnhance.Brightness(image)
-        image = brightness.enhance(1.08)  # Much gentler than before
+        image = brightness.enhance(1.08)
         
-        # Step 2: Preserve natural colors
         color = ImageEnhance.Color(image)
         image = color.enhance(0.7)  # Keep 70% of original color
         
-        # Step 3: Very slight contrast
         contrast = ImageEnhance.Contrast(image)
-        image = contrast.enhance(1.03)  # Minimal contrast
-        
-        # NO RGB adjustments - keep natural balance
+        image = contrast.enhance(1.03)
         
     elif detected_color == "옐로우골드":
         # Yellow gold - warm enhancement
         brightness = ImageEnhance.Brightness(image)
-        image = brightness.enhance(1.06)  # Gentle
+        image = brightness.enhance(1.06)
         
-        # Enhance warm tones moderately
         color = ImageEnhance.Color(image)
         image = color.enhance(1.12)
         
         # Subtle warmth
         img_array = np.array(image)
-        img_array[:, :, 0] = np.clip(img_array[:, :, 0] * 1.03, 0, 255)  # Red
-        img_array[:, :, 1] = np.clip(img_array[:, :, 1] * 1.02, 0, 255)  # Green
+        img_array[:, :, 0] = np.clip(img_array[:, :, 0] * 1.03, 0, 255)
+        img_array[:, :, 1] = np.clip(img_array[:, :, 1] * 1.02, 0, 255)
         image = Image.fromarray(img_array.astype(np.uint8))
         
     elif detected_color == "로즈골드":
@@ -207,13 +193,12 @@ def apply_color_specific_enhancement(image, detected_color):
         brightness = ImageEnhance.Brightness(image)
         image = brightness.enhance(1.05)
         
-        # Maintain natural pink
         color = ImageEnhance.Color(image)
         image = color.enhance(1.05)
         
         # Very subtle pink tone
         img_array = np.array(image)
-        img_array[:, :, 0] = np.clip(img_array[:, :, 0] * 1.02, 0, 255)  # Subtle red
+        img_array[:, :, 0] = np.clip(img_array[:, :, 0] * 1.02, 0, 255)
         image = Image.fromarray(img_array.astype(np.uint8))
         
     elif detected_color == "화이트골드":
@@ -221,11 +206,8 @@ def apply_color_specific_enhancement(image, detected_color):
         brightness = ImageEnhance.Brightness(image)
         image = brightness.enhance(1.06)
         
-        # Slight desaturation for metallic look
         color = ImageEnhance.Color(image)
         image = color.enhance(0.85)
-        
-        # NO blue boost - keep natural
     
     return image
 
@@ -242,8 +224,8 @@ def apply_center_vignette(image):
     distance = np.sqrt(X**2 + Y**2)
     
     # Ultra subtle vignette
-    vignette = 1 - (0.015 * np.clip(distance - 0.5, 0, 1))  # Even lighter
-    vignette = np.clip(vignette, 0.985, 1.0)  # Minimum brightness 98.5%
+    vignette = 1 - (0.015 * np.clip(distance - 0.5, 0, 1))
+    vignette = np.clip(vignette, 0.985, 1.0)
     
     # Apply vignette
     img_array = np.array(image)
@@ -301,10 +283,10 @@ def handler(event):
         
         logger.info(f"Image loaded: {image.size}")
         
-        # 1. Apply basic enhancement (matching Enhancement handler)
+        # 1. Apply basic enhancement (matching Enhancement handler) - IMPORTANT!
         enhanced_image = apply_basic_enhancement(image)
         
-        # 2. Create thumbnail with minimal crop (10%)
+        # 2. Create thumbnail with 5% crop for smaller ring (90% size)
         thumbnail = create_thumbnail_with_crop(enhanced_image)
         
         # 3. Detect color with ultra-conservative logic
@@ -319,11 +301,11 @@ def handler(event):
         
         # 6. Very minimal final brightness
         brightness = ImageEnhance.Brightness(thumbnail)
-        thumbnail = brightness.enhance(1.01)  # Almost nothing
+        thumbnail = brightness.enhance(1.01)
         
         # 7. Light sharpness for details
         sharpness = ImageEnhance.Sharpness(thumbnail)
-        thumbnail = sharpness.enhance(1.15)  # Slightly reduced
+        thumbnail = sharpness.enhance(1.15)
         
         # Convert to base64
         thumbnail_base64 = image_to_base64(thumbnail)
