@@ -13,7 +13,7 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-VERSION = "V80-SmallRing"
+VERSION = "V81-ColorFix"
 
 def find_input_data(data):
     """Find input data recursively - matches Enhancement handler"""
@@ -55,7 +55,7 @@ def base64_to_image(base64_string):
     return Image.open(BytesIO(img_data))
 
 def detect_ring_color(image):
-    """Ultra-conservative yellow gold detection - only pure gold colors"""
+    """Improved color detection - better white gold vs unplated white distinction"""
     img_array = np.array(image)
     height, width = img_array.shape[:2]
     
@@ -97,27 +97,35 @@ def detect_ring_color(image):
     rb_ratio = r_mean / (b_mean + 1)
     gb_ratio = g_mean / (b_mean + 1)
     
+    # Color variance (how different are RGB channels)
+    rgb_variance = np.var([r_mean, g_mean, b_mean])
+    
     # ULTRA-CONSERVATIVE YELLOW GOLD
-    is_pure_gold = (
-        avg_hue >= 25 and avg_hue <= 32 and
+    if (avg_hue >= 25 and avg_hue <= 32 and
         avg_saturation > 80 and
         avg_value > 120 and avg_value < 200 and
         gb_ratio > 1.4 and
         r_mean > 180 and g_mean > 140 and
-        b_mean < 100
-    )
-    
-    if is_pure_gold:
+        b_mean < 100):
         return "옐로우골드"
+    
+    # ROSE GOLD
     elif rg_ratio > 1.2 and rb_ratio > 1.3 and avg_hue < 15:
         return "로즈골드"
-    elif avg_saturation < 50 and avg_value > 180 and b_norm > r_norm:
-        return "화이트골드"
-    else:
+    
+    # WHITE GOLD vs UNPLATED WHITE distinction
+    # White gold: has some warmth/color, metallic sheen
+    # Unplated white: very low saturation, high brightness, almost pure white
+    elif avg_saturation < 15 and avg_value > 200 and rgb_variance < 50:
+        # Very low saturation + very high brightness + low variance = unplated white
         return "무도금화이트"
+    
+    else:
+        # Everything else is white gold (has some color/warmth)
+        return "화이트골드"
 
 def apply_basic_enhancement(image):
-    """Apply basic enhancement matching Enhancement V80"""
+    """Apply basic enhancement matching Enhancement V81"""
     if image.mode != 'RGB':
         if image.mode == 'RGBA':
             background = Image.new('RGB', image.size, (255, 255, 255))
@@ -126,7 +134,7 @@ def apply_basic_enhancement(image):
         else:
             image = image.convert('RGB')
     
-    # Match Enhancement V80 basic settings - IMPORTANT!
+    # Match Enhancement V81 basic settings
     brightness = ImageEnhance.Brightness(image)
     image = brightness.enhance(1.12)
     
@@ -142,8 +150,8 @@ def create_thumbnail_with_crop(image, target_size=(1000, 1300)):
     """Create thumbnail with reduced 5% crop for smaller ring"""
     original_width, original_height = image.size
     
-    # 5% crop from each side (reduced from 10%)
-    crop_percentage = 0.05  # Changed from 0.1 to 0.05
+    # 5% crop from each side
+    crop_percentage = 0.05
     crop_width = int(original_width * crop_percentage)
     crop_height = int(original_height * crop_percentage)
     
@@ -162,17 +170,23 @@ def create_thumbnail_with_crop(image, target_size=(1000, 1300)):
     return thumbnail
 
 def apply_color_specific_enhancement(image, detected_color):
-    """Apply color-specific enhancement - Natural colors"""
+    """Apply color-specific enhancement - Fixed for true white"""
     if detected_color == "무도금화이트":
-        # Natural white enhancement
+        # TRUE WHITE - almost pure white like paper
         brightness = ImageEnhance.Brightness(image)
-        image = brightness.enhance(1.08)
+        image = brightness.enhance(1.25)  # Much brighter
         
         color = ImageEnhance.Color(image)
-        image = color.enhance(0.7)  # Keep 70% of original color
+        image = color.enhance(0.2)  # Remove almost all color (20% only)
         
         contrast = ImageEnhance.Contrast(image)
-        image = contrast.enhance(1.03)
+        image = contrast.enhance(0.95)  # Slightly reduce contrast for softer white
+        
+        # Additional whitening
+        img_array = np.array(image)
+        # Push all channels toward white
+        img_array = img_array * 0.7 + 255 * 0.3  # Mix with pure white
+        image = Image.fromarray(img_array.astype(np.uint8))
         
     elif detected_color == "옐로우골드":
         # Yellow gold - warm enhancement
@@ -202,12 +216,15 @@ def apply_color_specific_enhancement(image, detected_color):
         image = Image.fromarray(img_array.astype(np.uint8))
         
     elif detected_color == "화이트골드":
-        # White gold - cool metallic
+        # White gold - cool metallic (less extreme than unplated)
         brightness = ImageEnhance.Brightness(image)
-        image = brightness.enhance(1.06)
+        image = brightness.enhance(1.08)
         
         color = ImageEnhance.Color(image)
-        image = color.enhance(0.85)
+        image = color.enhance(0.75)  # Keep some color unlike unplated
+        
+        contrast = ImageEnhance.Contrast(image)
+        image = contrast.enhance(1.05)
     
     return image
 
@@ -283,17 +300,17 @@ def handler(event):
         
         logger.info(f"Image loaded: {image.size}")
         
-        # 1. Apply basic enhancement (matching Enhancement handler) - IMPORTANT!
+        # 1. Apply basic enhancement (matching Enhancement handler)
         enhanced_image = apply_basic_enhancement(image)
         
         # 2. Create thumbnail with 5% crop for smaller ring (90% size)
         thumbnail = create_thumbnail_with_crop(enhanced_image)
         
-        # 3. Detect color with ultra-conservative logic
+        # 3. Detect color with improved logic
         detected_color = detect_ring_color(thumbnail)
         logger.info(f"Detected color: {detected_color}")
         
-        # 4. Apply color-specific enhancement (Natural colors)
+        # 4. Apply color-specific enhancement (Fixed for true white)
         thumbnail = apply_color_specific_enhancement(thumbnail, detected_color)
         
         # 5. Apply very subtle vignette
