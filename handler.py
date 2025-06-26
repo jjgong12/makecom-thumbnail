@@ -13,7 +13,7 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-VERSION = "V90-2PercentWhiteOnlyUnplated"
+VERSION = "V91-1PercentWhiteOnlyUnplated"
 
 def find_input_data(data):
     """Find input data recursively - matches Enhancement handler"""
@@ -55,7 +55,7 @@ def base64_to_image(base64_string):
     return Image.open(BytesIO(img_data))
 
 def detect_ring_color(image):
-    """Improved color detection - CONSERVATIVE white gold, BROAD unplated white"""
+    """Improved color detection - VERY CONSERVATIVE white gold, VERY BROAD unplated white"""
     img_array = np.array(image)
     height, width = img_array.shape[:2]
     
@@ -113,27 +113,19 @@ def detect_ring_color(image):
     elif rg_ratio > 1.2 and rb_ratio > 1.3 and avg_hue < 15:
         return "로즈골드"
     
-    # EXPANDED UNPLATED WHITE DETECTION
-    # More generous criteria for unplated white
-    elif avg_saturation < 25 and avg_value > 180 and rgb_variance < 100:
-        # Expanded: saturation < 25 (was 15), value > 180 (was 200), variance < 100 (was 50)
-        return "무도금화이트"
-    
-    # CONSERVATIVE WHITE GOLD
-    # Only truly white metals with very low saturation
-    elif avg_saturation < 10 and avg_value > 200 and rgb_variance < 30:
-        # Very strict: must be almost pure white
+    # VERY CONSERVATIVE WHITE GOLD - Much stricter
+    # Only perfect white metals with extremely low saturation
+    elif avg_saturation < 5 and avg_value > 220 and rgb_variance < 20:
+        # VERY strict: saturation < 5, value > 220, variance < 20
         return "화이트골드"
     
+    # DEFAULT TO UNPLATED WHITE for everything else
+    # This includes all borderline cases
     else:
-        # Default to unplated white for anything else whitish
-        if avg_saturation < 40 and avg_value > 150:
-            return "무도금화이트"
-        else:
-            return "화이트골드"
+        return "무도금화이트"
 
 def apply_basic_enhancement(image):
-    """Apply basic enhancement matching Enhancement V90"""
+    """Apply basic enhancement matching Enhancement V91"""
     if image.mode != 'RGB':
         if image.mode == 'RGBA':
             background = Image.new('RGB', image.size, (255, 255, 255))
@@ -142,7 +134,7 @@ def apply_basic_enhancement(image):
         else:
             image = image.convert('RGB')
     
-    # Match Enhancement V90 basic settings
+    # Match Enhancement V91 basic settings
     brightness = ImageEnhance.Brightness(image)
     image = brightness.enhance(1.08)
     
@@ -155,26 +147,26 @@ def apply_basic_enhancement(image):
     return image
 
 def apply_color_specific_enhancement(image, detected_color):
-    """Apply color-specific enhancement - 2% WHITE OVERLAY FOR UNPLATED WHITE ONLY"""
+    """Apply color-specific enhancement - 1% WHITE OVERLAY FOR UNPLATED WHITE ONLY"""
     if detected_color == "무도금화이트":
-        # ULTRA MINIMAL WHITE EFFECT - Only 2%!
+        # ULTRA MINIMAL WHITE EFFECT - Only 1%!
         brightness = ImageEnhance.Brightness(image)
-        image = brightness.enhance(1.10)  # Further reduced
+        image = brightness.enhance(1.08)  # Further reduced
         
         color = ImageEnhance.Color(image)
-        image = color.enhance(0.4)  # Keep even more color
+        image = color.enhance(0.5)  # Keep more color
         
         contrast = ImageEnhance.Contrast(image)
         image = contrast.enhance(1.0)  # No contrast change
         
-        # ULTRA MINIMAL white mixing - only 2%!
+        # ULTRA MINIMAL white mixing - only 1%!
         img_array = np.array(image)
-        img_array = img_array * 0.98 + 255 * 0.02  # Only 2% white overlay
+        img_array = img_array * 0.99 + 255 * 0.01  # Only 1% white overlay
         image = Image.fromarray(img_array.astype(np.uint8))
         
-        # Tiny additional boost
+        # Very tiny additional boost
         brightness = ImageEnhance.Brightness(image)
-        image = brightness.enhance(1.02)  # Even smaller boost
+        image = brightness.enhance(1.01)  # Minimal boost
         
     elif detected_color == "옐로우골드":
         # Yellow gold - NO white overlay, warm enhancement only
@@ -338,7 +330,7 @@ def handler(event):
         
         logger.info(f"Image loaded: {image.size}")
         
-        # 1. Apply basic enhancement (matching Enhancement V90)
+        # 1. Apply basic enhancement (matching Enhancement V91)
         enhanced_image = apply_basic_enhancement(image)
         
         # 2. Smart thumbnail creation (no padding for ~2000x2600 ±150px)
@@ -348,7 +340,7 @@ def handler(event):
         detected_color = detect_ring_color(thumbnail)
         logger.info(f"Detected color: {detected_color}")
         
-        # 4. Apply color-specific enhancement (2% white overlay for unplated white only)
+        # 4. Apply color-specific enhancement (1% white overlay for unplated white only)
         thumbnail = apply_color_specific_enhancement(thumbnail, detected_color)
         
         # 5. Apply lighting effect (reduced)
