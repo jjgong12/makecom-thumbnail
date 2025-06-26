@@ -13,7 +13,7 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-VERSION = "V81-ColorFix"
+VERSION = "V82-AspectFix"
 
 def find_input_data(data):
     """Find input data recursively - matches Enhancement handler"""
@@ -125,7 +125,7 @@ def detect_ring_color(image):
         return "화이트골드"
 
 def apply_basic_enhancement(image):
-    """Apply basic enhancement matching Enhancement V81"""
+    """Apply basic enhancement matching Enhancement V82"""
     if image.mode != 'RGB':
         if image.mode == 'RGBA':
             background = Image.new('RGB', image.size, (255, 255, 255))
@@ -134,7 +134,7 @@ def apply_basic_enhancement(image):
         else:
             image = image.convert('RGB')
     
-    # Match Enhancement V81 basic settings
+    # Match Enhancement V82 basic settings
     brightness = ImageEnhance.Brightness(image)
     image = brightness.enhance(1.12)
     
@@ -146,47 +146,58 @@ def apply_basic_enhancement(image):
     
     return image
 
-def create_thumbnail_with_crop(image, target_size=(1000, 1300)):
-    """Create thumbnail with reduced 5% crop for smaller ring"""
+def create_thumbnail_with_aspect_ratio(image, target_width=1000, target_height=1300):
+    """Create thumbnail maintaining aspect ratio with padding"""
     original_width, original_height = image.size
     
-    # 5% crop from each side
-    crop_percentage = 0.05
-    crop_width = int(original_width * crop_percentage)
-    crop_height = int(original_height * crop_percentage)
+    # Calculate scaling to fit within target dimensions
+    width_ratio = target_width / original_width
+    height_ratio = target_height / original_height
     
-    # Calculate crop box
-    left = crop_width
-    top = crop_height
-    right = original_width - crop_width
-    bottom = original_height - crop_height
+    # Use the smaller ratio to ensure the image fits within bounds
+    scale_ratio = min(width_ratio, height_ratio)
     
-    # Crop image
-    cropped = image.crop((left, top, right, bottom))
+    # Calculate new dimensions
+    new_width = int(original_width * scale_ratio)
+    new_height = int(original_height * scale_ratio)
     
-    # Resize to target with high quality
-    thumbnail = cropped.resize(target_size, Image.Resampling.LANCZOS)
+    # Resize image maintaining aspect ratio
+    resized = image.resize((new_width, new_height), Image.Resampling.LANCZOS)
+    
+    # Create white background
+    thumbnail = Image.new('RGB', (target_width, target_height), (255, 255, 255))
+    
+    # Calculate position to center the image
+    left = (target_width - new_width) // 2
+    top = (target_height - new_height) // 2
+    
+    # Paste resized image onto white background
+    thumbnail.paste(resized, (left, top))
     
     return thumbnail
 
 def apply_color_specific_enhancement(image, detected_color):
-    """Apply color-specific enhancement - Fixed for true white"""
+    """Apply color-specific enhancement - ULTRA WHITE for unplated"""
     if detected_color == "무도금화이트":
-        # TRUE WHITE - almost pure white like paper
+        # ULTRA WHITE - maximum whiteness
         brightness = ImageEnhance.Brightness(image)
-        image = brightness.enhance(1.25)  # Much brighter
+        image = brightness.enhance(1.35)  # Even brighter
         
         color = ImageEnhance.Color(image)
-        image = color.enhance(0.2)  # Remove almost all color (20% only)
+        image = color.enhance(0.1)  # Almost no color (10% only)
         
         contrast = ImageEnhance.Contrast(image)
-        image = contrast.enhance(0.95)  # Slightly reduce contrast for softer white
+        image = contrast.enhance(0.9)  # Softer contrast
         
-        # Additional whitening
+        # Heavy whitening
         img_array = np.array(image)
-        # Push all channels toward white
-        img_array = img_array * 0.7 + 255 * 0.3  # Mix with pure white
+        # Mix 50% with pure white
+        img_array = img_array * 0.5 + 255 * 0.5
         image = Image.fromarray(img_array.astype(np.uint8))
+        
+        # Additional brightness boost
+        brightness = ImageEnhance.Brightness(image)
+        image = brightness.enhance(1.1)
         
     elif detected_color == "옐로우골드":
         # Yellow gold - warm enhancement
@@ -241,8 +252,8 @@ def apply_center_vignette(image):
     distance = np.sqrt(X**2 + Y**2)
     
     # Ultra subtle vignette
-    vignette = 1 - (0.015 * np.clip(distance - 0.5, 0, 1))
-    vignette = np.clip(vignette, 0.985, 1.0)
+    vignette = 1 - (0.01 * np.clip(distance - 0.5, 0, 1))  # Even more subtle
+    vignette = np.clip(vignette, 0.99, 1.0)
     
     # Apply vignette
     img_array = np.array(image)
@@ -303,14 +314,14 @@ def handler(event):
         # 1. Apply basic enhancement (matching Enhancement handler)
         enhanced_image = apply_basic_enhancement(image)
         
-        # 2. Create thumbnail with 5% crop for smaller ring (90% size)
-        thumbnail = create_thumbnail_with_crop(enhanced_image)
+        # 2. Create thumbnail with aspect ratio preservation (no distortion!)
+        thumbnail = create_thumbnail_with_aspect_ratio(enhanced_image, 1000, 1300)
         
         # 3. Detect color with improved logic
         detected_color = detect_ring_color(thumbnail)
         logger.info(f"Detected color: {detected_color}")
         
-        # 4. Apply color-specific enhancement (Fixed for true white)
+        # 4. Apply color-specific enhancement (ULTRA WHITE for unplated)
         thumbnail = apply_color_specific_enhancement(thumbnail, detected_color)
         
         # 5. Apply very subtle vignette
