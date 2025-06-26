@@ -13,7 +13,7 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-VERSION = "V87-ExtendedTolerance"
+VERSION = "V88-ExtendedTolerance150px"
 
 def find_input_data(data):
     """Find input data recursively - matches Enhancement handler"""
@@ -133,7 +133,7 @@ def detect_ring_color(image):
             return "화이트골드"
 
 def apply_basic_enhancement(image):
-    """Apply basic enhancement matching Enhancement V87"""
+    """Apply basic enhancement matching Enhancement V88"""
     if image.mode != 'RGB':
         if image.mode == 'RGBA':
             background = Image.new('RGB', image.size, (255, 255, 255))
@@ -142,44 +142,44 @@ def apply_basic_enhancement(image):
         else:
             image = image.convert('RGB')
     
-    # Match Enhancement V87 basic settings
+    # Match Enhancement V88 basic settings
     brightness = ImageEnhance.Brightness(image)
-    image = brightness.enhance(1.08)  # Match V87
+    image = brightness.enhance(1.08)
     
     contrast = ImageEnhance.Contrast(image)
-    image = contrast.enhance(1.05)  # Match V87
+    image = contrast.enhance(1.05)
     
     color = ImageEnhance.Color(image)
-    image = color.enhance(1.03)  # Match V87
+    image = color.enhance(1.03)
     
     return image
 
 def apply_color_specific_enhancement(image, detected_color):
-    """Apply color-specific enhancement - MINIMAL WHITE OVERLAY for V87"""
+    """Apply color-specific enhancement - ONLY 5% WHITE OVERLAY for V88"""
     if detected_color == "무도금화이트":
-        # MINIMAL WHITE EFFECT - Really tiny amount!
+        # ULTRA MINIMAL WHITE EFFECT - Only 5%!
         brightness = ImageEnhance.Brightness(image)
-        image = brightness.enhance(1.15)  # Moderate brightness
+        image = brightness.enhance(1.12)  # Slightly reduced
         
         color = ImageEnhance.Color(image)
-        image = color.enhance(0.2)  # Keep some color
+        image = color.enhance(0.3)  # Keep more color
         
         contrast = ImageEnhance.Contrast(image)
-        image = contrast.enhance(0.95)  # Very soft contrast
+        image = contrast.enhance(1.0)  # No contrast change
         
-        # MINIMAL white mixing - only 10%!
+        # ULTRA MINIMAL white mixing - only 5%!
         img_array = np.array(image)
-        img_array = img_array * 0.9 + 255 * 0.1  # Only 10% white overlay
+        img_array = img_array * 0.95 + 255 * 0.05  # Only 5% white overlay
         image = Image.fromarray(img_array.astype(np.uint8))
         
-        # Small additional boost
+        # Very small additional boost
         brightness = ImageEnhance.Brightness(image)
-        image = brightness.enhance(1.05)  # Very small boost
+        image = brightness.enhance(1.03)  # Tiny boost
         
     elif detected_color == "옐로우골드":
         # Yellow gold - warm enhancement
         brightness = ImageEnhance.Brightness(image)
-        image = brightness.enhance(1.04)  # Reduced
+        image = brightness.enhance(1.04)
         
         color = ImageEnhance.Color(image)
         image = color.enhance(1.1)
@@ -193,10 +193,10 @@ def apply_color_specific_enhancement(image, detected_color):
     elif detected_color == "로즈골드":
         # Rose gold - pink enhancement
         brightness = ImageEnhance.Brightness(image)
-        image = brightness.enhance(1.03)  # Reduced
+        image = brightness.enhance(1.03)
         
         color = ImageEnhance.Color(image)
-        image = color.enhance(1.04)  # Reduced
+        image = color.enhance(1.04)
         
         # Very subtle pink tone
         img_array = np.array(image)
@@ -204,20 +204,20 @@ def apply_color_specific_enhancement(image, detected_color):
         image = Image.fromarray(img_array.astype(np.uint8))
         
     elif detected_color == "화이트골드":
-        # White gold - cool metallic (less extreme than unplated)
+        # White gold - cool metallic
         brightness = ImageEnhance.Brightness(image)
-        image = brightness.enhance(1.06)  # Reduced
+        image = brightness.enhance(1.06)
         
         color = ImageEnhance.Color(image)
-        image = color.enhance(0.8)  # Keep more color
+        image = color.enhance(0.8)
         
         contrast = ImageEnhance.Contrast(image)
-        image = contrast.enhance(1.03)  # Reduced
+        image = contrast.enhance(1.03)
     
     return image
 
 def apply_lighting_effect(image):
-    """Apply subtle spotlight/lighting effect - REDUCED for V87"""
+    """Apply subtle spotlight/lighting effect"""
     width, height = image.size
     
     # Create radial gradient for spotlight
@@ -226,24 +226,24 @@ def apply_lighting_effect(image):
     X, Y = np.meshgrid(x, y)
     
     # Offset spotlight slightly up and left for natural lighting
-    X_offset = X + 0.2  # Slight left offset
-    Y_offset = Y + 0.3  # Slight up offset
+    X_offset = X + 0.2
+    Y_offset = Y + 0.3
     
     # Distance from offset center
     distance = np.sqrt(X_offset**2 + Y_offset**2)
     
-    # Create spotlight effect (brighter in center) - REDUCED
-    spotlight = 1 + 0.1 * np.exp(-distance**2 * 1.5)  # Reduced from 0.15 to 0.1
-    spotlight = np.clip(spotlight, 1.0, 1.1)  # Max 10% brightness increase
+    # Create spotlight effect (brighter in center)
+    spotlight = 1 + 0.08 * np.exp(-distance**2 * 1.5)  # Reduced to 0.08
+    spotlight = np.clip(spotlight, 1.0, 1.08)  # Max 8% brightness increase
     
     # Apply spotlight
     img_array = np.array(image)
     for i in range(3):
         img_array[:, :, i] = np.clip(img_array[:, :, i] * spotlight, 0, 255)
     
-    # Add subtle highlight on upper area (simulate light reflection) - REDUCED
-    highlight_mask = np.exp(-Y * 3) * 0.03  # Reduced from 0.05 to 0.03
-    highlight_mask = np.clip(highlight_mask, 0, 0.03)
+    # Add subtle highlight on upper area
+    highlight_mask = np.exp(-Y * 3) * 0.02  # Reduced to 0.02
+    highlight_mask = np.clip(highlight_mask, 0, 0.02)
     
     for i in range(3):
         img_array[:, :, i] = np.clip(img_array[:, :, i] + highlight_mask * 255, 0, 255)
@@ -254,8 +254,8 @@ def create_thumbnail_smart(image, target_width=1000, target_height=1300):
     """Create thumbnail with smart handling for ~2000x2600 input"""
     original_width, original_height = image.size
     
-    # Check if input is approximately 2000x2600 (±8 pixels) - EXTENDED!
-    if (1992 <= original_width <= 2008 and 2592 <= original_height <= 2608):
+    # Check if input is approximately 2000x2600 (±150 pixels) - GREATLY EXTENDED!
+    if (1850 <= original_width <= 2150 and 2450 <= original_height <= 2750):
         # Force resize to exact 1000x1300 without padding
         logger.info(f"Input {original_width}x{original_height} detected as ~2000x2600, forcing exact resize")
         return image.resize((target_width, target_height), Image.Resampling.LANCZOS)
@@ -338,28 +338,25 @@ def handler(event):
         
         logger.info(f"Image loaded: {image.size}")
         
-        # 1. Apply basic enhancement (matching Enhancement V87)
+        # 1. Apply basic enhancement (matching Enhancement V88)
         enhanced_image = apply_basic_enhancement(image)
         
-        # 2. Smart thumbnail creation (no padding for ~2000x2600 ±8px)
+        # 2. Smart thumbnail creation (no padding for ~2000x2600 ±150px)
         thumbnail = create_thumbnail_smart(enhanced_image, 1000, 1300)
         
-        # 3. Detect color with improved logic (matching Enhancement V87)
+        # 3. Detect color with improved logic
         detected_color = detect_ring_color(thumbnail)
         logger.info(f"Detected color: {detected_color}")
         
-        # 4. Apply color-specific enhancement (MINIMAL white overlay)
+        # 4. Apply color-specific enhancement (ONLY 5% white overlay)
         thumbnail = apply_color_specific_enhancement(thumbnail, detected_color)
         
-        # 5. Apply lighting effect (REDUCED spotlight)
+        # 5. Apply lighting effect (reduced)
         thumbnail = apply_lighting_effect(thumbnail)
         
-        # 6. NO additional brightness boost for V87
-        # Removed the brightness.enhance(1.02)
-        
-        # 7. Light sharpness for details (reduced)
+        # 6. Light sharpness for details
         sharpness = ImageEnhance.Sharpness(thumbnail)
-        thumbnail = sharpness.enhance(1.1)  # Reduced from 1.15
+        thumbnail = sharpness.enhance(1.1)
         
         # Convert to base64
         thumbnail_base64 = image_to_base64(thumbnail)
