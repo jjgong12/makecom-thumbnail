@@ -13,7 +13,7 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-VERSION = "V78-ColorFixed"
+VERSION = "V79-NaturalColor"
 
 def find_input_data(data):
     """Find input data recursively - matches Enhancement handler"""
@@ -124,7 +124,7 @@ def detect_ring_color(image):
         return "무도금화이트"
 
 def apply_basic_enhancement(image):
-    """Apply basic enhancement matching Enhancement V78"""
+    """Apply basic enhancement matching Enhancement V79"""
     if image.mode != 'RGB':
         if image.mode == 'RGBA':
             background = Image.new('RGB', image.size, (255, 255, 255))
@@ -133,7 +133,7 @@ def apply_basic_enhancement(image):
         else:
             image = image.convert('RGB')
     
-    # Match Enhancement V78 basic settings
+    # Match Enhancement V79 basic settings
     brightness = ImageEnhance.Brightness(image)
     image = brightness.enhance(1.12)
     
@@ -169,81 +169,68 @@ def create_thumbnail_with_crop(image, target_size=(1000, 1300)):
     return thumbnail
 
 def apply_color_specific_enhancement(image, detected_color):
-    """Apply color-specific enhancement - Maintain colors properly"""
+    """Apply color-specific enhancement - Natural colors"""
     if detected_color == "무도금화이트":
-        # White enhancement - maintain some color to avoid B&W look
+        # Natural white enhancement - preserve original colors
         
-        # Step 1: Moderate brightness increase
+        # Step 1: Gentle brightness increase
         brightness = ImageEnhance.Brightness(image)
-        image = brightness.enhance(1.15)  # Reduced from 1.25
+        image = brightness.enhance(1.08)  # Much gentler than before
         
-        # Step 2: Light saturation reduction - KEEP SOME COLOR
+        # Step 2: Preserve natural colors
         color = ImageEnhance.Color(image)
-        image = color.enhance(0.4)  # Changed from 0.1 to 0.4 - maintain color
+        image = color.enhance(0.7)  # Keep 70% of original color
         
-        # Step 3: Slight contrast adjustment
+        # Step 3: Very slight contrast
         contrast = ImageEnhance.Contrast(image)
-        image = contrast.enhance(1.02)  # Slight increase
+        image = contrast.enhance(1.03)  # Minimal contrast
         
-        # Step 4: Light white balance adjustment
-        img_array = np.array(image).astype(np.float32)
-        
-        # Very subtle white balance - don't make it completely neutral
-        img_array[:, :, 0] = img_array[:, :, 0] * 0.98  # Tiny red reduction
-        img_array[:, :, 1] = img_array[:, :, 1] * 0.99  # Tiny green reduction
-        img_array[:, :, 2] = img_array[:, :, 2] * 1.01  # Tiny blue increase
-        
-        # Clip and convert
-        img_array = np.clip(img_array, 0, 255).astype(np.uint8)
-        image = Image.fromarray(img_array)
+        # NO RGB adjustments - keep natural balance
         
     elif detected_color == "옐로우골드":
         # Yellow gold - warm enhancement
         brightness = ImageEnhance.Brightness(image)
-        image = brightness.enhance(1.08)
+        image = brightness.enhance(1.06)  # Gentle
         
-        # Enhance warm tones
+        # Enhance warm tones moderately
         color = ImageEnhance.Color(image)
-        image = color.enhance(1.15)  # Stronger color for gold
+        image = color.enhance(1.12)
         
-        # Add warmth
+        # Subtle warmth
         img_array = np.array(image)
-        img_array[:, :, 0] = np.clip(img_array[:, :, 0] * 1.05, 0, 255)  # Red
-        img_array[:, :, 1] = np.clip(img_array[:, :, 1] * 1.03, 0, 255)  # Green
-        image = Image.fromarray(img_array)
+        img_array[:, :, 0] = np.clip(img_array[:, :, 0] * 1.03, 0, 255)  # Red
+        img_array[:, :, 1] = np.clip(img_array[:, :, 1] * 1.02, 0, 255)  # Green
+        image = Image.fromarray(img_array.astype(np.uint8))
         
     elif detected_color == "로즈골드":
         # Rose gold - pink enhancement
         brightness = ImageEnhance.Brightness(image)
-        image = brightness.enhance(1.06)
+        image = brightness.enhance(1.05)
         
-        # Maintain color saturation
+        # Maintain natural pink
         color = ImageEnhance.Color(image)
-        image = color.enhance(1.08)
+        image = color.enhance(1.05)
         
-        # Subtle pink tone
+        # Very subtle pink tone
         img_array = np.array(image)
-        img_array[:, :, 0] = np.clip(img_array[:, :, 0] * 1.04, 0, 255)  # Red boost
-        image = Image.fromarray(img_array)
+        img_array[:, :, 0] = np.clip(img_array[:, :, 0] * 1.02, 0, 255)  # Subtle red
+        image = Image.fromarray(img_array.astype(np.uint8))
         
     elif detected_color == "화이트골드":
         # White gold - cool metallic
         brightness = ImageEnhance.Brightness(image)
-        image = brightness.enhance(1.08)
+        image = brightness.enhance(1.06)
         
-        # Slight desaturation but keep metallic look
+        # Slight desaturation for metallic look
         color = ImageEnhance.Color(image)
-        image = color.enhance(0.8)  # Not too low
+        image = color.enhance(0.85)
         
-        # Very subtle cool tone
-        img_array = np.array(image)
-        img_array[:, :, 2] = np.clip(img_array[:, :, 2] * 1.02, 0, 255)  # Slight blue
-        image = Image.fromarray(img_array)
+        # NO blue boost - keep natural
     
     return image
 
 def apply_center_vignette(image):
-    """Apply very subtle center vignette"""
+    """Apply VERY subtle center vignette"""
     width, height = image.size
     
     # Create radial gradient
@@ -254,9 +241,9 @@ def apply_center_vignette(image):
     # Distance from center
     distance = np.sqrt(X**2 + Y**2)
     
-    # Very subtle vignette (0.02 strength - even lighter)
-    vignette = 1 - (0.02 * np.clip(distance - 0.5, 0, 1))
-    vignette = np.clip(vignette, 0.98, 1.0)  # Minimum brightness 98%
+    # Ultra subtle vignette
+    vignette = 1 - (0.015 * np.clip(distance - 0.5, 0, 1))  # Even lighter
+    vignette = np.clip(vignette, 0.985, 1.0)  # Minimum brightness 98.5%
     
     # Apply vignette
     img_array = np.array(image)
@@ -324,19 +311,19 @@ def handler(event):
         detected_color = detect_ring_color(thumbnail)
         logger.info(f"Detected color: {detected_color}")
         
-        # 4. Apply color-specific enhancement (Maintain colors)
+        # 4. Apply color-specific enhancement (Natural colors)
         thumbnail = apply_color_specific_enhancement(thumbnail, detected_color)
         
         # 5. Apply very subtle vignette
         thumbnail = apply_center_vignette(thumbnail)
         
-        # 6. Final brightness boost for clean look
+        # 6. Very minimal final brightness
         brightness = ImageEnhance.Brightness(thumbnail)
-        thumbnail = brightness.enhance(1.03)  # Slight increase
+        thumbnail = brightness.enhance(1.01)  # Almost nothing
         
-        # 7. Final sharpness for crisp details
+        # 7. Light sharpness for details
         sharpness = ImageEnhance.Sharpness(thumbnail)
-        thumbnail = sharpness.enhance(1.2)
+        thumbnail = sharpness.enhance(1.15)  # Slightly reduced
         
         # Convert to base64
         thumbnail_base64 = image_to_base64(thumbnail)
