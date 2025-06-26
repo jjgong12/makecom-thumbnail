@@ -13,7 +13,7 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-VERSION = "V76-NoBlueBoost"
+VERSION = "V77-PureRGB"
 
 def find_input_data(data):
     """Find input data recursively - matches Enhancement handler"""
@@ -124,7 +124,7 @@ def detect_ring_color(image):
         return "무도금화이트"
 
 def apply_basic_enhancement(image):
-    """Apply basic enhancement matching Enhancement V76"""
+    """Apply basic enhancement matching Enhancement V77"""
     if image.mode != 'RGB':
         if image.mode == 'RGBA':
             background = Image.new('RGB', image.size, (255, 255, 255))
@@ -133,7 +133,7 @@ def apply_basic_enhancement(image):
         else:
             image = image.convert('RGB')
     
-    # Match Enhancement V76 basic settings
+    # Match Enhancement V77 basic settings
     brightness = ImageEnhance.Brightness(image)
     image = brightness.enhance(1.12)
     
@@ -169,36 +169,49 @@ def create_thumbnail_with_crop(image, target_size=(1000, 1300)):
     return thumbnail
 
 def apply_color_specific_enhancement(image, detected_color):
-    """Apply light color-specific enhancement for thumbnail - NO BLUE BOOST"""
+    """Apply color-specific enhancement - Pure RGB processing only"""
     if detected_color == "무도금화이트":
-        # Pure white enhancement WITHOUT blue boost
-        img_array = np.array(image)
+        # Pure white enhancement using only PIL/RGB operations
+        # NO LAB conversion, NO blue boost
         
-        # Convert to LAB for better white control
-        lab = cv2.cvtColor(img_array, cv2.COLOR_RGB2LAB).astype(np.float32)
+        # Step 1: Increase brightness significantly
+        brightness = ImageEnhance.Brightness(image)
+        image = brightness.enhance(1.25)  # Strong brightness
         
-        # Increase lightness moderately
-        lab[:, :, 0] = np.clip(lab[:, :, 0] * 1.15, 0, 255)  # Reduced from 1.2
+        # Step 2: Reduce saturation to near zero for pure white
+        color = ImageEnhance.Color(image)
+        image = color.enhance(0.1)  # Almost no color
         
-        # Reduce color channels moderately (not too much)
-        lab[:, :, 1] = lab[:, :, 1] * 0.5  # Keep as is
-        lab[:, :, 2] = lab[:, :, 2] * 0.5  # Keep as is
+        # Step 3: Slight contrast adjustment
+        contrast = ImageEnhance.Contrast(image)
+        image = contrast.enhance(0.95)  # Soften contrast slightly
         
-        # Convert back
-        lab = lab.astype(np.uint8)
-        img_array = cv2.cvtColor(lab, cv2.COLOR_LAB2RGB)
+        # Step 4: RGB level adjustment for neutral white
+        img_array = np.array(image).astype(np.float32)
+        
+        # Balance RGB channels to remove any color cast
+        r_avg = np.mean(img_array[:, :, 0])
+        g_avg = np.mean(img_array[:, :, 1])
+        b_avg = np.mean(img_array[:, :, 2])
+        
+        # Find the average brightness
+        avg_brightness = (r_avg + g_avg + b_avg) / 3
+        
+        # Normalize each channel to the average
+        if r_avg > 0:
+            img_array[:, :, 0] = img_array[:, :, 0] * (avg_brightness / r_avg)
+        if g_avg > 0:
+            img_array[:, :, 1] = img_array[:, :, 1] * (avg_brightness / g_avg)
+        if b_avg > 0:
+            img_array[:, :, 2] = img_array[:, :, 2] * (avg_brightness / b_avg)
+        
+        # Clip values and convert back
+        img_array = np.clip(img_array, 0, 255).astype(np.uint8)
         image = Image.fromarray(img_array)
         
-        # Moderate brightness
+        # Final brightness adjustment
         brightness = ImageEnhance.Brightness(image)
-        image = brightness.enhance(1.08)  # Reduced from 1.1
-        
-        # Reduce saturation moderately
-        color = ImageEnhance.Color(image)
-        image = color.enhance(0.4)  # Increased from 0.2 for more natural look
-        
-        # NO BLUE BOOST - This was causing the blue tint!
-        # img_array[:, :, 2] = np.clip(img_array[:, :, 2] * 1.1, 0, 255)  # REMOVED
+        image = brightness.enhance(1.05)
         
     elif detected_color == "옐로우골드":
         # Only for pure gold colors - warm enhancement
@@ -216,10 +229,19 @@ def apply_color_specific_enhancement(image, detected_color):
         brightness = ImageEnhance.Brightness(image)
         image = brightness.enhance(1.03)
         
+        # Subtle pink tone
+        img_array = np.array(image)
+        img_array[:, :, 0] = np.clip(img_array[:, :, 0] * 1.02, 0, 255)  # Slight red boost
+        image = Image.fromarray(img_array)
+        
     elif detected_color == "화이트골드":
         # Light cool enhancement
         brightness = ImageEnhance.Brightness(image)
         image = brightness.enhance(1.06)
+        
+        # Very subtle cool tone
+        color = ImageEnhance.Color(image)
+        image = color.enhance(0.95)
     
     return image
 
@@ -235,9 +257,9 @@ def apply_center_vignette(image):
     # Distance from center
     distance = np.sqrt(X**2 + Y**2)
     
-    # Very subtle vignette (0.05 strength)
-    vignette = 1 - (0.05 * np.clip(distance - 0.5, 0, 1))
-    vignette = np.clip(vignette, 0.95, 1.0)  # Minimum brightness 95%
+    # Very subtle vignette (0.03 strength - even more subtle)
+    vignette = 1 - (0.03 * np.clip(distance - 0.5, 0, 1))
+    vignette = np.clip(vignette, 0.97, 1.0)  # Minimum brightness 97%
     
     # Apply vignette
     img_array = np.array(image)
@@ -305,7 +327,7 @@ def handler(event):
         detected_color = detect_ring_color(thumbnail)
         logger.info(f"Detected color: {detected_color}")
         
-        # 4. Apply color-specific enhancement (NO BLUE BOOST)
+        # 4. Apply color-specific enhancement (Pure RGB, no LAB)
         thumbnail = apply_color_specific_enhancement(thumbnail, detected_color)
         
         # 5. Apply very subtle vignette
