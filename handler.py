@@ -13,7 +13,7 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-VERSION = "V96-2.0PercentWhiteOverlay"
+VERSION = "V97-2.0PercentWhiteOverlay-Color0.7"
 
 def find_input_data(data):
     """Find input data recursively - matches Enhancement handler"""
@@ -145,7 +145,7 @@ def apply_color_specific_enhancement(image, is_unplated_white, filename):
         image = brightness.enhance(1.08)
         
         color = ImageEnhance.Color(image)
-        image = color.enhance(0.5)  # Keep more color
+        image = color.enhance(0.7)  # Keep more color
         
         contrast = ImageEnhance.Contrast(image)
         image = contrast.enhance(1.0)  # No contrast change
