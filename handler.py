@@ -13,7 +13,7 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-VERSION = "V92-FilenameBasedDetection"
+VERSION = "V93-FixedFilenameDetection"
 
 def find_input_data(data):
     """Find input data recursively - matches Enhancement handler"""
@@ -31,28 +31,37 @@ def find_input_data(data):
                     return result
     return data
 
-def find_filename(data):
-    """Extract filename from input data"""
+def find_filename(data, depth=0):
+    """Extract filename from input data - IMPROVED for Make.com"""
+    if depth > 5:  # Prevent infinite recursion
+        return None
+        
     if isinstance(data, dict):
-        # Check common filename keys
-        filename_keys = ['filename', 'file_name', 'name', 'fileName', 'file']
+        # Check common filename keys - EXPANDED LIST
+        filename_keys = ['filename', 'file_name', 'name', 'fileName', 'file', 
+                        'originalName', 'original_name', 'image_name', 'imageName']
+        
+        # Log the keys at current level for debugging
+        if depth == 0:
+            logger.info(f"Top level keys: {list(data.keys())[:20]}")  # First 20 keys
         
         for key in filename_keys:
             if key in data and isinstance(data[key], str):
+                logger.info(f"Found filename at key '{key}': {data[key]}")
                 return data[key]
         
-        # Check in input
-        if 'input' in data and isinstance(data['input'], dict):
-            for key in filename_keys:
-                if key in data['input'] and isinstance(data['input'][key], str):
-                    return data['input'][key]
-        
-        # Recursive search for filename
+        # Deep recursive search through ALL keys
         for key, value in data.items():
             if isinstance(value, dict):
-                result = find_filename(value)
+                result = find_filename(value, depth + 1)
                 if result:
                     return result
+            elif isinstance(value, list) and len(value) > 0:
+                for item in value:
+                    if isinstance(item, dict):
+                        result = find_filename(item, depth + 1)
+                        if result:
+                            return result
     
     return None
 
@@ -82,25 +91,31 @@ def base64_to_image(base64_string):
 def detect_if_unplated_white(filename: str) -> bool:
     """Check if filename indicates unplated white (contains 'c')"""
     if not filename:
+        logger.warning("No filename found, defaulting to standard enhancement")
         return False
     
     # Convert to lowercase for case-insensitive check
     filename_lower = filename.lower()
+    logger.info(f"Checking filename pattern: {filename_lower}")
     
-    # Check patterns: ac_001, bc_001, c_001, etc.
-    # Look for 'c_' or 'c.' patterns
-    if 'c_' in filename_lower or 'c.' in filename_lower:
-        return True
-    
-    # Also check if filename starts with 'c' followed by number
+    # Check for ac_, bc_, dc_, etc. patterns
     import re
-    if re.match(r'^c\d', filename_lower):
-        return True
+    # Pattern: any letter followed by c_ or just c_
+    pattern1 = re.search(r'[a-z]?c_', filename_lower)
+    # Pattern: any letter followed by c. or just c.
+    pattern2 = re.search(r'[a-z]?c\.', filename_lower)
+    # Pattern: c followed by number
+    pattern3 = re.match(r'^c\d', filename_lower)
     
-    return False
+    is_unplated = bool(pattern1 or pattern2 or pattern3)
+    
+    logger.info(f"Pattern check - ac_/bc_/c_: {bool(pattern1)}, c.: {bool(pattern2)}, c+digit: {bool(pattern3)}")
+    logger.info(f"Is unplated white: {is_unplated}")
+    
+    return is_unplated
 
 def apply_basic_enhancement(image):
-    """Apply basic enhancement matching Enhancement V92"""
+    """Apply basic enhancement matching Enhancement V93"""
     if image.mode != 'RGB':
         if image.mode == 'RGBA':
             background = Image.new('RGB', image.size, (255, 255, 255))
@@ -109,7 +124,7 @@ def apply_basic_enhancement(image):
         else:
             image = image.convert('RGB')
     
-    # Match Enhancement V92 basic settings
+    # Match Enhancement V93 basic settings
     brightness = ImageEnhance.Brightness(image)
     image = brightness.enhance(1.08)
     
@@ -124,29 +139,29 @@ def apply_basic_enhancement(image):
 def apply_color_specific_enhancement(image, is_unplated_white, filename):
     """Apply enhancement - 1% WHITE OVERLAY ONLY FOR UNPLATED WHITE (filename with 'c')"""
     
-    logger.info(f"Filename: {filename}, Is unplated white: {is_unplated_white}")
+    logger.info(f"Applying enhancement - Filename: {filename}, Is unplated white: {is_unplated_white}")
     
     if is_unplated_white:
-        # ULTRA MINIMAL WHITE EFFECT - Only 1%!
+        # ULTRA MINIMAL WHITE EFFECT - Only 1%! (MATCHING V91)
         logger.info("Applying unplated white enhancement (1% white overlay)")
         
         brightness = ImageEnhance.Brightness(image)
-        image = brightness.enhance(1.08)
+        image = brightness.enhance(1.08)  # V91 setting
         
         color = ImageEnhance.Color(image)
-        image = color.enhance(0.5)
+        image = color.enhance(0.5)  # V91 setting - Keep more color
         
         contrast = ImageEnhance.Contrast(image)
-        image = contrast.enhance(1.0)
+        image = contrast.enhance(1.0)  # V91 setting - No contrast change
         
-        # ULTRA MINIMAL white mixing - only 1%!
+        # ULTRA MINIMAL white mixing - only 1%! (V91 SETTING)
         img_array = np.array(image)
-        img_array = img_array * 0.99 + 255 * 0.01
+        img_array = img_array * 0.99 + 255 * 0.01  # Only 1% white overlay
         image = Image.fromarray(img_array.astype(np.uint8))
         
         # Very tiny additional boost
         brightness = ImageEnhance.Brightness(image)
-        image = brightness.enhance(1.01)
+        image = brightness.enhance(1.01)  # V91 setting - Minimal boost
         
     else:
         # For all other colors - NO white overlay
@@ -198,7 +213,7 @@ def create_thumbnail_smart(image, target_width=1000, target_height=1300):
     """Create thumbnail with smart handling for ~2000x2600 input (±200 pixels)"""
     original_width, original_height = image.size
     
-    # Check if input is approximately 2000x2600 (±200 pixels) - EXTENDED TO ±200!
+    # Check if input is approximately 2000x2600 (±200 pixels)
     if (1800 <= original_width <= 2200 and 2400 <= original_height <= 2800):
         # Force resize to exact 1000x1300 without padding
         logger.info(f"Input {original_width}x{original_height} detected as ~2000x2600, forcing exact resize")
@@ -254,16 +269,23 @@ def handler(event):
     """Thumbnail handler function"""
     try:
         logger.info(f"Thumbnail {VERSION} started")
+        logger.info(f"Input data type: {type(event)}")
+        
+        # Find filename FIRST - IMPROVED
+        filename = find_filename(event)
+        if filename:
+            logger.info(f"Successfully extracted filename: {filename}")
+        else:
+            logger.warning("Could not extract filename from input")
+            # Log the structure for debugging
+            if isinstance(event, dict):
+                logger.info(f"Event structure keys: {list(event.keys())[:10]}")
         
         # Find input data
         input_data = find_input_data(event)
         
         if not input_data:
             raise ValueError("No input data found")
-        
-        # Find filename
-        filename = find_filename(event)
-        logger.info(f"Extracted filename: {filename}")
         
         # Get image
         image = None
@@ -286,7 +308,7 @@ def handler(event):
         
         logger.info(f"Image loaded: {image.size}")
         
-        # 1. Apply basic enhancement (matching Enhancement V92)
+        # 1. Apply basic enhancement (matching Enhancement V93)
         enhanced_image = apply_basic_enhancement(image)
         
         # 2. Smart thumbnail creation (no padding for ~2000x2600 ±200px)
@@ -295,7 +317,7 @@ def handler(event):
         # 3. Check if unplated white based on filename
         is_unplated_white = detect_if_unplated_white(filename)
         detected_type = "무도금화이트" if is_unplated_white else "기타색상"
-        logger.info(f"Detected type: {detected_type}")
+        logger.info(f"Final detection - Type: {detected_type}, Filename: {filename}")
         
         # 4. Apply color-specific enhancement (1% white overlay only for 'c' filenames)
         thumbnail = apply_color_specific_enhancement(thumbnail, is_unplated_white, filename)
