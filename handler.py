@@ -13,7 +13,7 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-VERSION = "V105-20PercentWhiteOverlay"
+VERSION = "V106-1.5PercentWhiteOverlay-EnhancedFilename"
 
 def find_input_data(data):
     """Find input data recursively - matches Enhancement handler"""
@@ -31,37 +31,83 @@ def find_input_data(data):
                     return result
     return data
 
-def find_filename(data, depth=0):
-    """Extract filename from input data - IMPROVED for Make.com"""
-    if depth > 5:  # Prevent infinite recursion
+def find_filename_enhanced(data, depth=0):
+    """Enhanced filename extraction for Make.com - checks EVERYWHERE"""
+    if depth > 10:  # Increased depth limit
         return None
+    
+    found_filenames = []
+    
+    def extract_filenames(obj, current_depth):
+        """Recursively extract all potential filenames"""
+        if current_depth > 10:
+            return
+            
+        if isinstance(obj, dict):
+            # Extended list of filename keys
+            filename_keys = [
+                'filename', 'file_name', 'fileName', 'name', 'file',
+                'originalName', 'original_name', 'originalFileName', 'original_file_name',
+                'image_name', 'imageName', 'imageFileName', 'image_file_name',
+                'ring_filename', 'ringFilename', 'product_name', 'productName',
+                'title', 'label', 'id', 'identifier', 'reference'
+            ]
+            
+            # Check all keys
+            for key, value in obj.items():
+                # Check if key itself looks like a filename pattern
+                if isinstance(value, str) and any(pattern in value.lower() for pattern in ['ac_', 'bc_', 'a_', 'b_', 'c_']):
+                    if len(value) < 100:  # Reasonable filename length
+                        found_filenames.append(value)
+                        logger.info(f"Found potential filename in value: {value}")
+                
+                # Check known filename keys
+                if key.lower() in [k.lower() for k in filename_keys]:
+                    if isinstance(value, str) and value and len(value) < 100:
+                        found_filenames.append(value)
+                        logger.info(f"Found filename at key '{key}': {value}")
+                
+                # Recursive search
+                if isinstance(value, dict):
+                    extract_filenames(value, current_depth + 1)
+                elif isinstance(value, list):
+                    for item in value:
+                        extract_filenames(item, current_depth + 1)
+                elif isinstance(value, str):
+                    # Check if the string itself might contain JSON
+                    if value.startswith('{') and value.endswith('}'):
+                        try:
+                            parsed = json.loads(value)
+                            extract_filenames(parsed, current_depth + 1)
+                        except:
+                            pass
         
-    if isinstance(data, dict):
-        # Check common filename keys - EXPANDED LIST
-        filename_keys = ['filename', 'file_name', 'name', 'fileName', 'file', 
-                        'originalName', 'original_name', 'image_name', 'imageName']
-        
-        # Log the keys at current level for debugging
-        if depth == 0:
-            logger.info(f"Top level keys: {list(data.keys())[:20]}")  # First 20 keys
-        
-        for key in filename_keys:
-            if key in data and isinstance(data[key], str):
-                logger.info(f"Found filename at key '{key}': {data[key]}")
-                return data[key]
-        
-        # Deep recursive search through ALL keys
-        for key, value in data.items():
-            if isinstance(value, dict):
-                result = find_filename(value, depth + 1)
-                if result:
-                    return result
-            elif isinstance(value, list) and len(value) > 0:
-                for item in value:
-                    if isinstance(item, dict):
-                        result = find_filename(item, depth + 1)
-                        if result:
-                            return result
+        elif isinstance(obj, list):
+            for item in obj:
+                extract_filenames(item, current_depth)
+    
+    # Start extraction
+    extract_filenames(data, 0)
+    
+    # Filter and prioritize filenames
+    valid_filenames = []
+    for fname in found_filenames:
+        # Check if it looks like our ring filename pattern
+        if any(pattern in fname.lower() for pattern in ['ac_', 'bc_', 'a_', 'b_', 'c_']):
+            valid_filenames.append(fname)
+    
+    if valid_filenames:
+        # Return the most likely filename (first one with our pattern)
+        filename = valid_filenames[0]
+        logger.info(f"Selected filename: {filename} from {len(valid_filenames)} candidates")
+        return filename
+    
+    # Log all keys at root level for debugging
+    if depth == 0 and isinstance(data, dict):
+        logger.info(f"Root level keys: {list(data.keys())}")
+        # Also log some values to see structure
+        for key in list(data.keys())[:5]:
+            logger.info(f"Key '{key}' type: {type(data[key])}")
     
     return None
 
@@ -111,7 +157,7 @@ def detect_if_unplated_white(filename: str) -> bool:
     return is_unplated
 
 def apply_basic_enhancement(image):
-    """Apply basic enhancement matching Enhancement V105"""
+    """Apply basic enhancement matching Enhancement V106"""
     if image.mode != 'RGB':
         if image.mode == 'RGBA':
             background = Image.new('RGB', image.size, (255, 255, 255))
@@ -120,7 +166,7 @@ def apply_basic_enhancement(image):
         else:
             image = image.convert('RGB')
     
-    # Match Enhancement V105 basic settings
+    # Match Enhancement V106 basic settings
     brightness = ImageEnhance.Brightness(image)
     image = brightness.enhance(1.08)
     
@@ -133,34 +179,34 @@ def apply_basic_enhancement(image):
     return image
 
 def apply_color_specific_enhancement(image, is_unplated_white, filename):
-    """Apply enhancement - 20% WHITE OVERLAY with adjusted settings"""
+    """Apply enhancement - 1.5% WHITE OVERLAY (reduced from 20%)"""
     
     logger.info(f"Applying enhancement - Filename: {filename}, Is unplated white: {is_unplated_white}")
     
     if is_unplated_white:
-        # V105: 20% WHITE OVERLAY
-        logger.info("Applying unplated white enhancement (20% white overlay)")
+        # V106: 1.5% WHITE OVERLAY
+        logger.info("Applying unplated white enhancement (1.5% white overlay)")
         
-        # First brightness adjustment
+        # Moderate brightness adjustment
         brightness = ImageEnhance.Brightness(image)
-        image = brightness.enhance(1.15)  # Increased more
+        image = brightness.enhance(1.08)
         
-        # Reduce color saturation more aggressively
+        # Slight color desaturation
         color = ImageEnhance.Color(image)
-        image = color.enhance(0.80)  # More desaturation
+        image = color.enhance(0.95)
         
         # Keep contrast neutral
         contrast = ImageEnhance.Contrast(image)
-        image = contrast.enhance(0.98)
+        image = contrast.enhance(1.0)
         
-        # 20% white mixing
+        # 1.5% white mixing
         img_array = np.array(image)
-        img_array = img_array * 0.80 + 255 * 0.20  # 20% white overlay
+        img_array = img_array * 0.985 + 255 * 0.015  # 1.5% white overlay
         image = Image.fromarray(img_array.astype(np.uint8))
         
-        # Final brightness boost
+        # Small final brightness boost
         brightness = ImageEnhance.Brightness(image)
-        image = brightness.enhance(1.05)  # More boost
+        image = brightness.enhance(1.02)
         
     else:
         # For all other colors (a_, b_ patterns) - NO white overlay
@@ -310,15 +356,13 @@ def handler(event):
         logger.info(f"Thumbnail {VERSION} started")
         logger.info(f"Input data type: {type(event)}")
         
-        # Find filename FIRST - IMPROVED
-        filename = find_filename(event)
+        # Use enhanced filename detection
+        filename = find_filename_enhanced(event)
         if filename:
             logger.info(f"Successfully extracted filename: {filename}")
         else:
-            logger.warning("Could not extract filename from input")
-            # Log the structure for debugging
-            if isinstance(event, dict):
-                logger.info(f"Event structure keys: {list(event.keys())[:10]}")
+            logger.warning("Could not extract filename from input - will use default enhancement")
+            # Continue processing even without filename
         
         # Find input data
         input_data = find_input_data(event)
@@ -347,7 +391,7 @@ def handler(event):
         
         logger.info(f"Image loaded: {image.size}")
         
-        # 1. Apply basic enhancement (matching Enhancement V105)
+        # 1. Apply basic enhancement (matching Enhancement V106)
         enhanced_image = apply_basic_enhancement(image)
         
         # 2. Smart thumbnail creation with CENTER CROP for 90% fill
@@ -361,7 +405,7 @@ def handler(event):
         detected_type = "무도금화이트" if is_unplated_white else "기타색상"
         logger.info(f"Final detection - Type: {detected_type}, Filename: {filename}")
         
-        # 5. Apply color-specific enhancement (20% white overlay with adjusted settings)
+        # 5. Apply color-specific enhancement (1.5% white overlay)
         thumbnail = apply_color_specific_enhancement(thumbnail, is_unplated_white, filename)
         
         # 6. Apply lighting effect
