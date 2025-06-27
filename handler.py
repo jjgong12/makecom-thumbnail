@@ -13,7 +13,7 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-VERSION = "V111-5PercentWhiteOverlay-UnifiedBrightness"
+VERSION = "V112-10PercentWhiteOverlay-CleanBackground"
 
 def find_input_data(data):
     """Find input data recursively - matches Enhancement handler"""
@@ -157,7 +157,7 @@ def detect_if_unplated_white(filename: str) -> bool:
     return is_unplated
 
 def apply_basic_enhancement(image):
-    """Apply basic enhancement matching Enhancement V111 - brighter"""
+    """Apply basic enhancement matching Enhancement V112"""
     if image.mode != 'RGB':
         if image.mode == 'RGBA':
             background = Image.new('RGB', image.size, (255, 255, 255))
@@ -166,9 +166,9 @@ def apply_basic_enhancement(image):
         else:
             image = image.convert('RGB')
     
-    # Match Enhancement V111 basic settings - brighter
+    # Match Enhancement V112 basic settings
     brightness = ImageEnhance.Brightness(image)
-    image = brightness.enhance(1.10)  # Increased from 1.09
+    image = brightness.enhance(1.10)
     
     contrast = ImageEnhance.Contrast(image)
     image = contrast.enhance(1.05)
@@ -179,11 +179,11 @@ def apply_basic_enhancement(image):
     return image
 
 def apply_color_specific_enhancement(image, is_unplated_white, filename):
-    """Apply enhancement - 5% WHITE OVERLAY with unified brightness settings"""
+    """Apply enhancement - 10% WHITE OVERLAY with unified brightness settings"""
     
     logger.info(f"Applying enhancement - Filename: {filename}, Is unplated white: {is_unplated_white}")
     
-    # V111: Unified brightness settings for ALL colors
+    # V112: Unified brightness settings for ALL colors
     # First brightness adjustment (same for all)
     brightness = ImageEnhance.Brightness(image)
     image = brightness.enhance(1.14)  # Same for all colors
@@ -198,10 +198,10 @@ def apply_color_specific_enhancement(image, is_unplated_white, filename):
     
     # Apply white overlay ONLY for unplated white
     if is_unplated_white:
-        # V111: 5% white overlay
-        logger.info("Applying unplated white enhancement (5% white overlay)")
+        # V112: 10% white overlay
+        logger.info("Applying unplated white enhancement (10% white overlay)")
         img_array = np.array(image)
-        img_array = img_array * 0.95 + 255 * 0.05  # 5% white overlay
+        img_array = img_array * 0.90 + 255 * 0.10  # 10% white overlay
         image = Image.fromarray(img_array.astype(np.uint8))
     else:
         logger.info("Standard enhancement (no white overlay)")
@@ -211,62 +211,6 @@ def apply_color_specific_enhancement(image, is_unplated_white, filename):
     image = brightness.enhance(1.05)  # Same for all colors
     
     return image
-
-def apply_background_whitening(image):
-    """Apply background whitening effect"""
-    img_array = np.array(image)
-    
-    # Create a subtle vignette that brightens the edges
-    height, width = img_array.shape[:2]
-    x = np.linspace(-1, 1, width)
-    y = np.linspace(-1, 1, height)
-    X, Y = np.meshgrid(x, y)
-    
-    # Distance from center
-    distance = np.sqrt(X**2 + Y**2)
-    
-    # Invert for edge brightening (brighter at edges)
-    edge_mask = np.clip(distance * 0.5, 0, 1)  # 0 at center, 1 at edges
-    
-    # Apply white overlay to edges
-    for i in range(3):
-        img_array[:, :, i] = img_array[:, :, i] * (1 - edge_mask * 0.08) + 255 * edge_mask * 0.08
-    
-    return Image.fromarray(img_array.astype(np.uint8))
-
-def apply_lighting_effect(image):
-    """Apply subtle spotlight/lighting effect"""
-    width, height = image.size
-    
-    # Create radial gradient for spotlight
-    x = np.linspace(-1, 1, width)
-    y = np.linspace(-1, 1, height)
-    X, Y = np.meshgrid(x, y)
-    
-    # Offset spotlight slightly up and left for natural lighting
-    X_offset = X + 0.2
-    Y_offset = Y + 0.3
-    
-    # Distance from offset center
-    distance = np.sqrt(X_offset**2 + Y_offset**2)
-    
-    # Create spotlight effect (brighter in center)
-    spotlight = 1 + 0.08 * np.exp(-distance**2 * 1.5)
-    spotlight = np.clip(spotlight, 1.0, 1.08)
-    
-    # Apply spotlight
-    img_array = np.array(image)
-    for i in range(3):
-        img_array[:, :, i] = np.clip(img_array[:, :, i] * spotlight, 0, 255)
-    
-    # Add subtle highlight on upper area
-    highlight_mask = np.exp(-Y * 3) * 0.02
-    highlight_mask = np.clip(highlight_mask, 0, 0.02)
-    
-    for i in range(3):
-        img_array[:, :, i] = np.clip(img_array[:, :, i] + highlight_mask * 255, 0, 255)
-    
-    return Image.fromarray(img_array.astype(np.uint8))
 
 def create_thumbnail_smart_center_crop(image, target_width=1000, target_height=1300):
     """Create thumbnail with center crop for ~2000x2600 input to fill 90% of frame"""
@@ -383,25 +327,23 @@ def handler(event):
         
         logger.info(f"Image loaded: {image.size}")
         
-        # 1. Apply basic enhancement (matching Enhancement V111)
+        # 1. Apply basic enhancement (matching Enhancement V112)
         enhanced_image = apply_basic_enhancement(image)
         
         # 2. Smart thumbnail creation with CENTER CROP for 90% fill
         thumbnail = create_thumbnail_smart_center_crop(enhanced_image, 1000, 1300)
         
-        # 3. Apply background whitening FIRST
-        thumbnail = apply_background_whitening(thumbnail)
+        # 3. REMOVED apply_background_whitening() - causes gradient background
         
         # 4. Check if unplated white based on filename
         is_unplated_white = detect_if_unplated_white(filename)
         detected_type = "무도금화이트" if is_unplated_white else "기타색상"
         logger.info(f"Final detection - Type: {detected_type}, Filename: {filename}")
         
-        # 5. Apply color-specific enhancement (5% white overlay with unified brightness)
+        # 5. Apply color-specific enhancement (10% white overlay with unified brightness)
         thumbnail = apply_color_specific_enhancement(thumbnail, is_unplated_white, filename)
         
-        # 6. Apply lighting effect
-        thumbnail = apply_lighting_effect(thumbnail)
+        # 6. REMOVED apply_lighting_effect() - causes uneven lighting
         
         # 7. Light sharpness for details
         sharpness = ImageEnhance.Sharpness(thumbnail)
