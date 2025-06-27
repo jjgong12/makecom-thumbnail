@@ -13,7 +13,7 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-VERSION = "V106-1.5PercentWhiteOverlay-EnhancedFilename"
+VERSION = "V109-2.5PercentWhiteOverlay"
 
 def find_input_data(data):
     """Find input data recursively - matches Enhancement handler"""
@@ -157,7 +157,7 @@ def detect_if_unplated_white(filename: str) -> bool:
     return is_unplated
 
 def apply_basic_enhancement(image):
-    """Apply basic enhancement matching Enhancement V106"""
+    """Apply basic enhancement matching Enhancement V109"""
     if image.mode != 'RGB':
         if image.mode == 'RGBA':
             background = Image.new('RGB', image.size, (255, 255, 255))
@@ -166,7 +166,7 @@ def apply_basic_enhancement(image):
         else:
             image = image.convert('RGB')
     
-    # Match Enhancement V106 basic settings
+    # Match Enhancement V109 basic settings
     brightness = ImageEnhance.Brightness(image)
     image = brightness.enhance(1.08)
     
@@ -179,34 +179,34 @@ def apply_basic_enhancement(image):
     return image
 
 def apply_color_specific_enhancement(image, is_unplated_white, filename):
-    """Apply enhancement - 1.5% WHITE OVERLAY (reduced from 20%)"""
+    """Apply enhancement - 2.5% WHITE OVERLAY"""
     
     logger.info(f"Applying enhancement - Filename: {filename}, Is unplated white: {is_unplated_white}")
     
     if is_unplated_white:
-        # V106: 1.5% WHITE OVERLAY
-        logger.info("Applying unplated white enhancement (1.5% white overlay)")
+        # V109: 2.5% WHITE OVERLAY
+        logger.info("Applying unplated white enhancement (2.5% white overlay)")
         
-        # Moderate brightness adjustment
+        # Brighter adjustment for unplated white
         brightness = ImageEnhance.Brightness(image)
-        image = brightness.enhance(1.08)
+        image = brightness.enhance(1.10)  # Increased from 1.08
         
         # Slight color desaturation
         color = ImageEnhance.Color(image)
-        image = color.enhance(0.95)
+        image = color.enhance(0.93)  # Slightly less desaturation than before
         
         # Keep contrast neutral
         contrast = ImageEnhance.Contrast(image)
         image = contrast.enhance(1.0)
         
-        # 1.5% white mixing
+        # 2.5% white mixing
         img_array = np.array(image)
-        img_array = img_array * 0.985 + 255 * 0.015  # 1.5% white overlay
+        img_array = img_array * 0.975 + 255 * 0.025  # 2.5% white overlay
         image = Image.fromarray(img_array.astype(np.uint8))
         
-        # Small final brightness boost
+        # Final brightness boost
         brightness = ImageEnhance.Brightness(image)
-        image = brightness.enhance(1.02)
+        image = brightness.enhance(1.03)  # Slightly more boost
         
     else:
         # For all other colors (a_, b_ patterns) - NO white overlay
@@ -391,7 +391,7 @@ def handler(event):
         
         logger.info(f"Image loaded: {image.size}")
         
-        # 1. Apply basic enhancement (matching Enhancement V106)
+        # 1. Apply basic enhancement (matching Enhancement V109)
         enhanced_image = apply_basic_enhancement(image)
         
         # 2. Smart thumbnail creation with CENTER CROP for 90% fill
@@ -405,7 +405,7 @@ def handler(event):
         detected_type = "무도금화이트" if is_unplated_white else "기타색상"
         logger.info(f"Final detection - Type: {detected_type}, Filename: {filename}")
         
-        # 5. Apply color-specific enhancement (1.5% white overlay)
+        # 5. Apply color-specific enhancement (2.5% white overlay)
         thumbnail = apply_color_specific_enhancement(thumbnail, is_unplated_white, filename)
         
         # 6. Apply lighting effect
