@@ -13,7 +13,7 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-VERSION = "V103-10PercentWhiteOverlay"
+VERSION = "V104-CenterCrop90Percent"
 
 def find_input_data(data):
     """Find input data recursively - matches Enhancement handler"""
@@ -111,7 +111,7 @@ def detect_if_unplated_white(filename: str) -> bool:
     return is_unplated
 
 def apply_basic_enhancement(image):
-    """Apply basic enhancement matching Enhancement V103"""
+    """Apply basic enhancement matching Enhancement V104"""
     if image.mode != 'RGB':
         if image.mode == 'RGBA':
             background = Image.new('RGB', image.size, (255, 255, 255))
@@ -120,7 +120,7 @@ def apply_basic_enhancement(image):
         else:
             image = image.convert('RGB')
     
-    # Match Enhancement V103 basic settings
+    # Match Enhancement V104 basic settings
     brightness = ImageEnhance.Brightness(image)
     image = brightness.enhance(1.08)
     
@@ -133,31 +133,34 @@ def apply_basic_enhancement(image):
     return image
 
 def apply_color_specific_enhancement(image, is_unplated_white, filename):
-    """Apply enhancement - 10% WHITE OVERLAY ONLY FOR UNPLATED WHITE (ac_, bc_ patterns)"""
+    """Apply enhancement - 10% WHITE OVERLAY with adjusted settings"""
     
     logger.info(f"Applying enhancement - Filename: {filename}, Is unplated white: {is_unplated_white}")
     
     if is_unplated_white:
-        # V103: 10% WHITE EFFECT
+        # V104: Keep 10% WHITE but adjust other settings
         logger.info("Applying unplated white enhancement (10% white overlay)")
         
+        # First brightness adjustment
         brightness = ImageEnhance.Brightness(image)
-        image = brightness.enhance(1.12)  # Increased from 1.10
+        image = brightness.enhance(1.15)  # Increased more
         
+        # Reduce color saturation more aggressively
         color = ImageEnhance.Color(image)
-        image = color.enhance(0.85)  # Reduced saturation more
+        image = color.enhance(0.80)  # More desaturation
         
+        # Keep contrast neutral
         contrast = ImageEnhance.Contrast(image)
-        image = contrast.enhance(0.95)  # Slight contrast reduction
+        image = contrast.enhance(0.98)
         
-        # V103: 10% white mixing (doubled from 5%)
+        # 10% white mixing
         img_array = np.array(image)
-        img_array = img_array * 0.90 + 255 * 0.10  # 10% white overlay
+        img_array = img_array * 0.90 + 255 * 0.10  # Keep 10% white overlay
         image = Image.fromarray(img_array.astype(np.uint8))
         
-        # Additional brightness boost
+        # Final brightness boost
         brightness = ImageEnhance.Brightness(image)
-        image = brightness.enhance(1.03)
+        image = brightness.enhance(1.05)  # More boost
         
     else:
         # For all other colors (a_, b_ patterns) - NO white overlay
@@ -227,15 +230,33 @@ def apply_lighting_effect(image):
     
     return Image.fromarray(img_array.astype(np.uint8))
 
-def create_thumbnail_smart(image, target_width=1000, target_height=1300):
-    """Create thumbnail with smart handling for ~2000x2600 input (±200 pixels)"""
+def create_thumbnail_smart_center_crop(image, target_width=1000, target_height=1300):
+    """Create thumbnail with center crop for ~2000x2600 input to fill 90% of frame"""
     original_width, original_height = image.size
     
     # Check if input is approximately 2000x2600 (±200 pixels)
     if (1800 <= original_width <= 2200 and 2400 <= original_height <= 2800):
-        # Force resize to exact 1000x1300 without padding
-        logger.info(f"Input {original_width}x{original_height} detected as ~2000x2600, forcing exact resize")
-        return image.resize((target_width, target_height), Image.Resampling.LANCZOS)
+        logger.info(f"Input {original_width}x{original_height} detected as ~2000x2600, using center crop")
+        
+        # Calculate crop to make rings fill 90% of the frame
+        # We want to crop the center part and then resize
+        crop_ratio = 0.85  # Crop to 85% of original to make rings appear larger
+        
+        crop_width = int(original_width * crop_ratio)
+        crop_height = int(original_height * crop_ratio)
+        
+        # Calculate crop box (center crop)
+        left = (original_width - crop_width) // 2
+        top = (original_height - crop_height) // 2
+        right = left + crop_width
+        bottom = top + crop_height
+        
+        # Crop the center
+        cropped = image.crop((left, top, right, bottom))
+        
+        # Now resize to target dimensions
+        return cropped.resize((target_width, target_height), Image.Resampling.LANCZOS)
+        
     else:
         # For other sizes, maintain aspect ratio with padding
         logger.info(f"Input {original_width}x{original_height} not ~2000x2600, using aspect ratio preservation")
@@ -326,11 +347,11 @@ def handler(event):
         
         logger.info(f"Image loaded: {image.size}")
         
-        # 1. Apply basic enhancement (matching Enhancement V103)
+        # 1. Apply basic enhancement (matching Enhancement V104)
         enhanced_image = apply_basic_enhancement(image)
         
-        # 2. Smart thumbnail creation (no padding for ~2000x2600 ±200px)
-        thumbnail = create_thumbnail_smart(enhanced_image, 1000, 1300)
+        # 2. Smart thumbnail creation with CENTER CROP for 90% fill
+        thumbnail = create_thumbnail_smart_center_crop(enhanced_image, 1000, 1300)
         
         # 3. Apply background whitening FIRST
         thumbnail = apply_background_whitening(thumbnail)
@@ -340,7 +361,7 @@ def handler(event):
         detected_type = "무도금화이트" if is_unplated_white else "기타색상"
         logger.info(f"Final detection - Type: {detected_type}, Filename: {filename}")
         
-        # 5. Apply color-specific enhancement (10% white overlay only for ac_, bc_ filenames)
+        # 5. Apply color-specific enhancement (10% white overlay with adjusted settings)
         thumbnail = apply_color_specific_enhancement(thumbnail, is_unplated_white, filename)
         
         # 6. Apply lighting effect
