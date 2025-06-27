@@ -13,7 +13,7 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-VERSION = "V93-FixedFilenameDetection"
+VERSION = "V94-1.5PercentWhiteOverlay"
 
 def find_input_data(data):
     """Find input data recursively - matches Enhancement handler"""
@@ -115,7 +115,7 @@ def detect_if_unplated_white(filename: str) -> bool:
     return is_unplated
 
 def apply_basic_enhancement(image):
-    """Apply basic enhancement matching Enhancement V93"""
+    """Apply basic enhancement matching Enhancement V94"""
     if image.mode != 'RGB':
         if image.mode == 'RGBA':
             background = Image.new('RGB', image.size, (255, 255, 255))
@@ -124,7 +124,7 @@ def apply_basic_enhancement(image):
         else:
             image = image.convert('RGB')
     
-    # Match Enhancement V93 basic settings
+    # Match Enhancement V94 basic settings
     brightness = ImageEnhance.Brightness(image)
     image = brightness.enhance(1.08)
     
@@ -137,31 +137,31 @@ def apply_basic_enhancement(image):
     return image
 
 def apply_color_specific_enhancement(image, is_unplated_white, filename):
-    """Apply enhancement - 1% WHITE OVERLAY ONLY FOR UNPLATED WHITE (filename with 'c')"""
+    """Apply enhancement - 1.5% WHITE OVERLAY ONLY FOR UNPLATED WHITE (filename with 'c')"""
     
     logger.info(f"Applying enhancement - Filename: {filename}, Is unplated white: {is_unplated_white}")
     
     if is_unplated_white:
-        # ULTRA MINIMAL WHITE EFFECT - Only 1%! (MATCHING V91)
-        logger.info("Applying unplated white enhancement (1% white overlay)")
+        # UPDATED TO 1.5% WHITE EFFECT FOR V94!
+        logger.info("Applying unplated white enhancement (1.5% white overlay)")
         
         brightness = ImageEnhance.Brightness(image)
-        image = brightness.enhance(1.08)  # V91 setting
+        image = brightness.enhance(1.08)
         
         color = ImageEnhance.Color(image)
-        image = color.enhance(0.5)  # V91 setting - Keep more color
+        image = color.enhance(0.5)  # Keep more color
         
         contrast = ImageEnhance.Contrast(image)
-        image = contrast.enhance(1.0)  # V91 setting - No contrast change
+        image = contrast.enhance(1.0)  # No contrast change
         
-        # ULTRA MINIMAL white mixing - only 1%! (V91 SETTING)
+        # UPDATED: 1.5% white mixing (was 1%)
         img_array = np.array(image)
-        img_array = img_array * 0.99 + 255 * 0.01  # Only 1% white overlay
+        img_array = img_array * 0.985 + 255 * 0.015  # 1.5% white overlay
         image = Image.fromarray(img_array.astype(np.uint8))
         
         # Very tiny additional boost
         brightness = ImageEnhance.Brightness(image)
-        image = brightness.enhance(1.01)  # V91 setting - Minimal boost
+        image = brightness.enhance(1.01)  # Minimal boost
         
     else:
         # For all other colors - NO white overlay
@@ -308,7 +308,7 @@ def handler(event):
         
         logger.info(f"Image loaded: {image.size}")
         
-        # 1. Apply basic enhancement (matching Enhancement V93)
+        # 1. Apply basic enhancement (matching Enhancement V94)
         enhanced_image = apply_basic_enhancement(image)
         
         # 2. Smart thumbnail creation (no padding for ~2000x2600 ±200px)
@@ -319,7 +319,7 @@ def handler(event):
         detected_type = "무도금화이트" if is_unplated_white else "기타색상"
         logger.info(f"Final detection - Type: {detected_type}, Filename: {filename}")
         
-        # 4. Apply color-specific enhancement (1% white overlay only for 'c' filenames)
+        # 4. Apply color-specific enhancement (1.5% white overlay only for 'c' filenames)
         thumbnail = apply_color_specific_enhancement(thumbnail, is_unplated_white, filename)
         
         # 5. Apply lighting effect
