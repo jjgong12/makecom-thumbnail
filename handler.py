@@ -13,7 +13,7 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-VERSION = "V91-1PercentWhiteOnlyUnplated"
+VERSION = "V92-FilenameBasedDetection"
 
 def find_input_data(data):
     """Find input data recursively - matches Enhancement handler"""
@@ -30,6 +30,31 @@ def find_input_data(data):
                 if result:
                     return result
     return data
+
+def find_filename(data):
+    """Extract filename from input data"""
+    if isinstance(data, dict):
+        # Check common filename keys
+        filename_keys = ['filename', 'file_name', 'name', 'fileName', 'file']
+        
+        for key in filename_keys:
+            if key in data and isinstance(data[key], str):
+                return data[key]
+        
+        # Check in input
+        if 'input' in data and isinstance(data['input'], dict):
+            for key in filename_keys:
+                if key in data['input'] and isinstance(data['input'][key], str):
+                    return data['input'][key]
+        
+        # Recursive search for filename
+        for key, value in data.items():
+            if isinstance(value, dict):
+                result = find_filename(value)
+                if result:
+                    return result
+    
+    return None
 
 def download_image_from_url(url):
     """Download image from URL"""
@@ -54,78 +79,28 @@ def base64_to_image(base64_string):
     img_data = base64.b64decode(base64_string)
     return Image.open(BytesIO(img_data))
 
-def detect_ring_color(image):
-    """Improved color detection - VERY CONSERVATIVE white gold, VERY BROAD unplated white"""
-    img_array = np.array(image)
-    height, width = img_array.shape[:2]
+def detect_if_unplated_white(filename: str) -> bool:
+    """Check if filename indicates unplated white (contains 'c')"""
+    if not filename:
+        return False
     
-    # Focus on center 50%
-    center_y, center_x = height // 2, width // 2
-    crop_size = min(height, width) // 2
+    # Convert to lowercase for case-insensitive check
+    filename_lower = filename.lower()
     
-    y1 = max(0, center_y - crop_size // 2)
-    y2 = min(height, center_y + crop_size // 2)
-    x1 = max(0, center_x - crop_size // 2)
-    x2 = min(width, center_x + crop_size // 2)
+    # Check patterns: ac_001, bc_001, c_001, etc.
+    # Look for 'c_' or 'c.' patterns
+    if 'c_' in filename_lower or 'c.' in filename_lower:
+        return True
     
-    center_region = img_array[y1:y2, x1:x2]
+    # Also check if filename starts with 'c' followed by number
+    import re
+    if re.match(r'^c\d', filename_lower):
+        return True
     
-    # Convert to HSV
-    hsv = cv2.cvtColor(center_region, cv2.COLOR_RGB2HSV)
-    
-    # Calculate average values
-    avg_hue = np.mean(hsv[:, :, 0])
-    avg_saturation = np.mean(hsv[:, :, 1])
-    avg_value = np.mean(hsv[:, :, 2])
-    
-    # RGB analysis
-    r_mean = np.mean(center_region[:, :, 0])
-    g_mean = np.mean(center_region[:, :, 1])
-    b_mean = np.mean(center_region[:, :, 2])
-    
-    # Normalize RGB values
-    max_rgb = max(r_mean, g_mean, b_mean)
-    if max_rgb > 0:
-        r_norm = r_mean / max_rgb
-        g_norm = g_mean / max_rgb
-        b_norm = b_mean / max_rgb
-    else:
-        r_norm = g_norm = b_norm = 1.0
-    
-    # Calculate color ratios
-    rg_ratio = r_mean / (g_mean + 1)
-    rb_ratio = r_mean / (b_mean + 1)
-    gb_ratio = g_mean / (b_mean + 1)
-    
-    # Color variance (how different are RGB channels)
-    rgb_variance = np.var([r_mean, g_mean, b_mean])
-    
-    # ULTRA-CONSERVATIVE YELLOW GOLD
-    if (avg_hue >= 25 and avg_hue <= 32 and
-        avg_saturation > 80 and
-        avg_value > 120 and avg_value < 200 and
-        gb_ratio > 1.4 and
-        r_mean > 180 and g_mean > 140 and
-        b_mean < 100):
-        return "옐로우골드"
-    
-    # ROSE GOLD
-    elif rg_ratio > 1.2 and rb_ratio > 1.3 and avg_hue < 15:
-        return "로즈골드"
-    
-    # VERY CONSERVATIVE WHITE GOLD - Much stricter
-    # Only perfect white metals with extremely low saturation
-    elif avg_saturation < 5 and avg_value > 220 and rgb_variance < 20:
-        # VERY strict: saturation < 5, value > 220, variance < 20
-        return "화이트골드"
-    
-    # DEFAULT TO UNPLATED WHITE for everything else
-    # This includes all borderline cases
-    else:
-        return "무도금화이트"
+    return False
 
 def apply_basic_enhancement(image):
-    """Apply basic enhancement matching Enhancement V91"""
+    """Apply basic enhancement matching Enhancement V92"""
     if image.mode != 'RGB':
         if image.mode == 'RGBA':
             background = Image.new('RGB', image.size, (255, 255, 255))
@@ -134,7 +109,7 @@ def apply_basic_enhancement(image):
         else:
             image = image.convert('RGB')
     
-    # Match Enhancement V91 basic settings
+    # Match Enhancement V92 basic settings
     brightness = ImageEnhance.Brightness(image)
     image = brightness.enhance(1.08)
     
@@ -146,65 +121,42 @@ def apply_basic_enhancement(image):
     
     return image
 
-def apply_color_specific_enhancement(image, detected_color):
-    """Apply color-specific enhancement - 1% WHITE OVERLAY FOR UNPLATED WHITE ONLY"""
-    if detected_color == "무도금화이트":
+def apply_color_specific_enhancement(image, is_unplated_white, filename):
+    """Apply enhancement - 1% WHITE OVERLAY ONLY FOR UNPLATED WHITE (filename with 'c')"""
+    
+    logger.info(f"Filename: {filename}, Is unplated white: {is_unplated_white}")
+    
+    if is_unplated_white:
         # ULTRA MINIMAL WHITE EFFECT - Only 1%!
+        logger.info("Applying unplated white enhancement (1% white overlay)")
+        
         brightness = ImageEnhance.Brightness(image)
-        image = brightness.enhance(1.08)  # Further reduced
+        image = brightness.enhance(1.08)
         
         color = ImageEnhance.Color(image)
-        image = color.enhance(0.5)  # Keep more color
+        image = color.enhance(0.5)
         
         contrast = ImageEnhance.Contrast(image)
-        image = contrast.enhance(1.0)  # No contrast change
+        image = contrast.enhance(1.0)
         
         # ULTRA MINIMAL white mixing - only 1%!
         img_array = np.array(image)
-        img_array = img_array * 0.99 + 255 * 0.01  # Only 1% white overlay
+        img_array = img_array * 0.99 + 255 * 0.01
         image = Image.fromarray(img_array.astype(np.uint8))
         
         # Very tiny additional boost
         brightness = ImageEnhance.Brightness(image)
-        image = brightness.enhance(1.01)  # Minimal boost
+        image = brightness.enhance(1.01)
         
-    elif detected_color == "옐로우골드":
-        # Yellow gold - NO white overlay, warm enhancement only
-        brightness = ImageEnhance.Brightness(image)
-        image = brightness.enhance(1.04)
+    else:
+        # For all other colors - NO white overlay
+        logger.info("Standard enhancement (no white overlay)")
         
-        color = ImageEnhance.Color(image)
-        image = color.enhance(1.1)
-        
-        # Subtle warmth
-        img_array = np.array(image)
-        img_array[:, :, 0] = np.clip(img_array[:, :, 0] * 1.02, 0, 255)
-        img_array[:, :, 1] = np.clip(img_array[:, :, 1] * 1.01, 0, 255)
-        image = Image.fromarray(img_array.astype(np.uint8))
-        
-    elif detected_color == "로즈골드":
-        # Rose gold - NO white overlay, pink enhancement only
-        brightness = ImageEnhance.Brightness(image)
-        image = brightness.enhance(1.03)
-        
-        color = ImageEnhance.Color(image)
-        image = color.enhance(1.04)
-        
-        # Very subtle pink tone
-        img_array = np.array(image)
-        img_array[:, :, 0] = np.clip(img_array[:, :, 0] * 1.01, 0, 255)
-        image = Image.fromarray(img_array.astype(np.uint8))
-        
-    elif detected_color == "화이트골드":
-        # White gold - NO white overlay, cool metallic only
         brightness = ImageEnhance.Brightness(image)
         image = brightness.enhance(1.06)
         
         color = ImageEnhance.Color(image)
-        image = color.enhance(0.8)
-        
-        contrast = ImageEnhance.Contrast(image)
-        image = contrast.enhance(1.03)
+        image = color.enhance(1.05)
     
     return image
 
@@ -225,8 +177,8 @@ def apply_lighting_effect(image):
     distance = np.sqrt(X_offset**2 + Y_offset**2)
     
     # Create spotlight effect (brighter in center)
-    spotlight = 1 + 0.08 * np.exp(-distance**2 * 1.5)  # Reduced to 0.08
-    spotlight = np.clip(spotlight, 1.0, 1.08)  # Max 8% brightness increase
+    spotlight = 1 + 0.08 * np.exp(-distance**2 * 1.5)
+    spotlight = np.clip(spotlight, 1.0, 1.08)
     
     # Apply spotlight
     img_array = np.array(image)
@@ -234,7 +186,7 @@ def apply_lighting_effect(image):
         img_array[:, :, i] = np.clip(img_array[:, :, i] * spotlight, 0, 255)
     
     # Add subtle highlight on upper area
-    highlight_mask = np.exp(-Y * 3) * 0.02  # Reduced to 0.02
+    highlight_mask = np.exp(-Y * 3) * 0.02
     highlight_mask = np.clip(highlight_mask, 0, 0.02)
     
     for i in range(3):
@@ -243,11 +195,11 @@ def apply_lighting_effect(image):
     return Image.fromarray(img_array.astype(np.uint8))
 
 def create_thumbnail_smart(image, target_width=1000, target_height=1300):
-    """Create thumbnail with smart handling for ~2000x2600 input"""
+    """Create thumbnail with smart handling for ~2000x2600 input (±200 pixels)"""
     original_width, original_height = image.size
     
-    # Check if input is approximately 2000x2600 (±150 pixels) - GREATLY EXTENDED!
-    if (1850 <= original_width <= 2150 and 2450 <= original_height <= 2750):
+    # Check if input is approximately 2000x2600 (±200 pixels) - EXTENDED TO ±200!
+    if (1800 <= original_width <= 2200 and 2400 <= original_height <= 2800):
         # Force resize to exact 1000x1300 without padding
         logger.info(f"Input {original_width}x{original_height} detected as ~2000x2600, forcing exact resize")
         return image.resize((target_width, target_height), Image.Resampling.LANCZOS)
@@ -309,6 +261,10 @@ def handler(event):
         if not input_data:
             raise ValueError("No input data found")
         
+        # Find filename
+        filename = find_filename(event)
+        logger.info(f"Extracted filename: {filename}")
+        
         # Get image
         image = None
         
@@ -330,20 +286,21 @@ def handler(event):
         
         logger.info(f"Image loaded: {image.size}")
         
-        # 1. Apply basic enhancement (matching Enhancement V91)
+        # 1. Apply basic enhancement (matching Enhancement V92)
         enhanced_image = apply_basic_enhancement(image)
         
-        # 2. Smart thumbnail creation (no padding for ~2000x2600 ±150px)
+        # 2. Smart thumbnail creation (no padding for ~2000x2600 ±200px)
         thumbnail = create_thumbnail_smart(enhanced_image, 1000, 1300)
         
-        # 3. Detect color with improved logic
-        detected_color = detect_ring_color(thumbnail)
-        logger.info(f"Detected color: {detected_color}")
+        # 3. Check if unplated white based on filename
+        is_unplated_white = detect_if_unplated_white(filename)
+        detected_type = "무도금화이트" if is_unplated_white else "기타색상"
+        logger.info(f"Detected type: {detected_type}")
         
-        # 4. Apply color-specific enhancement (1% white overlay for unplated white only)
-        thumbnail = apply_color_specific_enhancement(thumbnail, detected_color)
+        # 4. Apply color-specific enhancement (1% white overlay only for 'c' filenames)
+        thumbnail = apply_color_specific_enhancement(thumbnail, is_unplated_white, filename)
         
-        # 5. Apply lighting effect (reduced)
+        # 5. Apply lighting effect
         thumbnail = apply_lighting_effect(thumbnail)
         
         # 6. Light sharpness for details
@@ -358,7 +315,8 @@ def handler(event):
             "output": {
                 "thumbnail": thumbnail_base64,
                 "size": list(thumbnail.size),
-                "detected_color": detected_color,
+                "detected_type": detected_type,
+                "filename": filename,
                 "format": "base64_no_padding",
                 "version": VERSION,
                 "status": "success"
