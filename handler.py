@@ -13,7 +13,7 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-VERSION = "V97-2.0PercentWhiteOverlay-Color0.7"
+VERSION = "V99-1.0PercentWhiteOverlay-Color0.9"
 
 def find_input_data(data):
     """Find input data recursively - matches Enhancement handler"""
@@ -111,7 +111,7 @@ def detect_if_unplated_white(filename: str) -> bool:
     return is_unplated
 
 def apply_basic_enhancement(image):
-    """Apply basic enhancement matching Enhancement V96"""
+    """Apply basic enhancement matching Enhancement V99"""
     if image.mode != 'RGB':
         if image.mode == 'RGBA':
             background = Image.new('RGB', image.size, (255, 255, 255))
@@ -120,7 +120,7 @@ def apply_basic_enhancement(image):
         else:
             image = image.convert('RGB')
     
-    # Match Enhancement V96 basic settings
+    # Match Enhancement V99 basic settings
     brightness = ImageEnhance.Brightness(image)
     image = brightness.enhance(1.08)
     
@@ -133,26 +133,26 @@ def apply_basic_enhancement(image):
     return image
 
 def apply_color_specific_enhancement(image, is_unplated_white, filename):
-    """Apply enhancement - 2.0% WHITE OVERLAY ONLY FOR UNPLATED WHITE (ac_, bc_ patterns)"""
+    """Apply enhancement - 1.0% WHITE OVERLAY ONLY FOR UNPLATED WHITE (ac_, bc_ patterns)"""
     
     logger.info(f"Applying enhancement - Filename: {filename}, Is unplated white: {is_unplated_white}")
     
     if is_unplated_white:
-        # UPDATED TO 2.0% WHITE EFFECT FOR V96!
-        logger.info("Applying unplated white enhancement (2.0% white overlay)")
+        # V99: 1.0% WHITE EFFECT with Color 0.90
+        logger.info("Applying unplated white enhancement (1.0% white overlay)")
         
         brightness = ImageEnhance.Brightness(image)
         image = brightness.enhance(1.08)
         
         color = ImageEnhance.Color(image)
-        image = color.enhance(0.7)  # Keep more color
+        image = color.enhance(0.90)  # Keep most color
         
         contrast = ImageEnhance.Contrast(image)
         image = contrast.enhance(1.0)  # No contrast change
         
-        # UPDATED: 2.0% white mixing
+        # V99: 1.0% white mixing
         img_array = np.array(image)
-        img_array = img_array * 0.98 + 255 * 0.02  # 2.0% white overlay
+        img_array = img_array * 0.99 + 255 * 0.01  # 1.0% white overlay
         image = Image.fromarray(img_array.astype(np.uint8))
         
         # Very tiny additional boost
@@ -304,7 +304,7 @@ def handler(event):
         
         logger.info(f"Image loaded: {image.size}")
         
-        # 1. Apply basic enhancement (matching Enhancement V96)
+        # 1. Apply basic enhancement (matching Enhancement V99)
         enhanced_image = apply_basic_enhancement(image)
         
         # 2. Smart thumbnail creation (no padding for ~2000x2600 ±200px)
@@ -315,7 +315,7 @@ def handler(event):
         detected_type = "무도금화이트" if is_unplated_white else "기타색상"
         logger.info(f"Final detection - Type: {detected_type}, Filename: {filename}")
         
-        # 4. Apply color-specific enhancement (2.0% white overlay only for ac_, bc_ filenames)
+        # 4. Apply color-specific enhancement (1.0% white overlay only for ac_, bc_ filenames)
         thumbnail = apply_color_specific_enhancement(thumbnail, is_unplated_white, filename)
         
         # 5. Apply lighting effect
