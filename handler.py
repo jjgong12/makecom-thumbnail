@@ -13,7 +13,7 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-VERSION = "V95-1.8PercentWhiteOverlay"
+VERSION = "V96-2.0PercentWhiteOverlay"
 
 def find_input_data(data):
     """Find input data recursively - matches Enhancement handler"""
@@ -89,7 +89,7 @@ def base64_to_image(base64_string):
     return Image.open(BytesIO(img_data))
 
 def detect_if_unplated_white(filename: str) -> bool:
-    """Check if filename indicates unplated white (contains 'c')"""
+    """Check if filename indicates unplated white (ONLY ac_ or bc_ patterns)"""
     if not filename:
         logger.warning("No filename found, defaulting to standard enhancement")
         return False
@@ -98,24 +98,20 @@ def detect_if_unplated_white(filename: str) -> bool:
     filename_lower = filename.lower()
     logger.info(f"Checking filename pattern: {filename_lower}")
     
-    # Check for ac_, bc_, dc_, etc. patterns
+    # Check ONLY for ac_ or bc_ patterns (NOT just c_)
     import re
-    # Pattern: any letter followed by c_ or just c_
-    pattern1 = re.search(r'[a-z]?c_', filename_lower)
-    # Pattern: any letter followed by c. or just c.
-    pattern2 = re.search(r'[a-z]?c\.', filename_lower)
-    # Pattern: c followed by number
-    pattern3 = re.match(r'^c\d', filename_lower)
+    # Pattern: specifically ac_ or bc_
+    pattern_ac_bc = re.search(r'(ac_|bc_)', filename_lower)
     
-    is_unplated = bool(pattern1 or pattern2 or pattern3)
+    is_unplated = bool(pattern_ac_bc)
     
-    logger.info(f"Pattern check - ac_/bc_/c_: {bool(pattern1)}, c.: {bool(pattern2)}, c+digit: {bool(pattern3)}")
+    logger.info(f"Pattern check - ac_/bc_: {bool(pattern_ac_bc)}")
     logger.info(f"Is unplated white: {is_unplated}")
     
     return is_unplated
 
 def apply_basic_enhancement(image):
-    """Apply basic enhancement matching Enhancement V95"""
+    """Apply basic enhancement matching Enhancement V96"""
     if image.mode != 'RGB':
         if image.mode == 'RGBA':
             background = Image.new('RGB', image.size, (255, 255, 255))
@@ -124,7 +120,7 @@ def apply_basic_enhancement(image):
         else:
             image = image.convert('RGB')
     
-    # Match Enhancement V95 basic settings
+    # Match Enhancement V96 basic settings
     brightness = ImageEnhance.Brightness(image)
     image = brightness.enhance(1.08)
     
@@ -137,13 +133,13 @@ def apply_basic_enhancement(image):
     return image
 
 def apply_color_specific_enhancement(image, is_unplated_white, filename):
-    """Apply enhancement - 1.8% WHITE OVERLAY ONLY FOR UNPLATED WHITE (filename with 'c')"""
+    """Apply enhancement - 2.0% WHITE OVERLAY ONLY FOR UNPLATED WHITE (ac_, bc_ patterns)"""
     
     logger.info(f"Applying enhancement - Filename: {filename}, Is unplated white: {is_unplated_white}")
     
     if is_unplated_white:
-        # UPDATED TO 1.8% WHITE EFFECT FOR V95!
-        logger.info("Applying unplated white enhancement (1.8% white overlay)")
+        # UPDATED TO 2.0% WHITE EFFECT FOR V96!
+        logger.info("Applying unplated white enhancement (2.0% white overlay)")
         
         brightness = ImageEnhance.Brightness(image)
         image = brightness.enhance(1.08)
@@ -154,9 +150,9 @@ def apply_color_specific_enhancement(image, is_unplated_white, filename):
         contrast = ImageEnhance.Contrast(image)
         image = contrast.enhance(1.0)  # No contrast change
         
-        # UPDATED: 1.8% white mixing (was 1.5%)
+        # UPDATED: 2.0% white mixing
         img_array = np.array(image)
-        img_array = img_array * 0.982 + 255 * 0.018  # 1.8% white overlay
+        img_array = img_array * 0.98 + 255 * 0.02  # 2.0% white overlay
         image = Image.fromarray(img_array.astype(np.uint8))
         
         # Very tiny additional boost
@@ -164,7 +160,7 @@ def apply_color_specific_enhancement(image, is_unplated_white, filename):
         image = brightness.enhance(1.01)  # Minimal boost
         
     else:
-        # For all other colors - NO white overlay
+        # For all other colors (a_, b_ patterns) - NO white overlay
         logger.info("Standard enhancement (no white overlay)")
         
         brightness = ImageEnhance.Brightness(image)
@@ -308,7 +304,7 @@ def handler(event):
         
         logger.info(f"Image loaded: {image.size}")
         
-        # 1. Apply basic enhancement (matching Enhancement V95)
+        # 1. Apply basic enhancement (matching Enhancement V96)
         enhanced_image = apply_basic_enhancement(image)
         
         # 2. Smart thumbnail creation (no padding for ~2000x2600 ±200px)
@@ -319,7 +315,7 @@ def handler(event):
         detected_type = "무도금화이트" if is_unplated_white else "기타색상"
         logger.info(f"Final detection - Type: {detected_type}, Filename: {filename}")
         
-        # 4. Apply color-specific enhancement (1.8% white overlay only for 'c' filenames)
+        # 4. Apply color-specific enhancement (2.0% white overlay only for ac_, bc_ filenames)
         thumbnail = apply_color_specific_enhancement(thumbnail, is_unplated_white, filename)
         
         # 5. Apply lighting effect
