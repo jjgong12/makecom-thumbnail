@@ -13,7 +13,7 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-VERSION = "V99-1.0PercentWhiteOverlay-Color0.9"
+VERSION = "V100-1.0PercentWhiteOverlay-Color0.95"
 
 def find_input_data(data):
     """Find input data recursively - matches Enhancement handler"""
@@ -111,7 +111,7 @@ def detect_if_unplated_white(filename: str) -> bool:
     return is_unplated
 
 def apply_basic_enhancement(image):
-    """Apply basic enhancement matching Enhancement V99"""
+    """Apply basic enhancement matching Enhancement V100"""
     if image.mode != 'RGB':
         if image.mode == 'RGBA':
             background = Image.new('RGB', image.size, (255, 255, 255))
@@ -120,7 +120,7 @@ def apply_basic_enhancement(image):
         else:
             image = image.convert('RGB')
     
-    # Match Enhancement V99 basic settings
+    # Match Enhancement V100 basic settings
     brightness = ImageEnhance.Brightness(image)
     image = brightness.enhance(1.08)
     
@@ -138,19 +138,19 @@ def apply_color_specific_enhancement(image, is_unplated_white, filename):
     logger.info(f"Applying enhancement - Filename: {filename}, Is unplated white: {is_unplated_white}")
     
     if is_unplated_white:
-        # V99: 1.0% WHITE EFFECT with Color 0.90
+        # V100: 1.0% WHITE EFFECT with Color 0.95 (changed from 0.90)
         logger.info("Applying unplated white enhancement (1.0% white overlay)")
         
         brightness = ImageEnhance.Brightness(image)
         image = brightness.enhance(1.08)
         
         color = ImageEnhance.Color(image)
-        image = color.enhance(0.90)  # Keep most color
+        image = color.enhance(0.95)  # Changed from 0.90 to 0.95
         
         contrast = ImageEnhance.Contrast(image)
         image = contrast.enhance(1.0)  # No contrast change
         
-        # V99: 1.0% white mixing
+        # V100: 1.0% white mixing
         img_array = np.array(image)
         img_array = img_array * 0.99 + 255 * 0.01  # 1.0% white overlay
         image = Image.fromarray(img_array.astype(np.uint8))
@@ -304,7 +304,7 @@ def handler(event):
         
         logger.info(f"Image loaded: {image.size}")
         
-        # 1. Apply basic enhancement (matching Enhancement V99)
+        # 1. Apply basic enhancement (matching Enhancement V100)
         enhanced_image = apply_basic_enhancement(image)
         
         # 2. Smart thumbnail creation (no padding for ~2000x2600 ±200px)
