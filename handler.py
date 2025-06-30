@@ -82,22 +82,17 @@ def generate_thumbnail_filename(original_filename, image_index):
     if not original_filename:
         return f"thumbnail_{image_index:03d}.jpg"
     
-    # Extract pattern prefix (a_, ac_, etc.)
     import re
     
-    # Convert a_ to b_, ac_ to bc_
+    # No conversion needed - already b_ or bc_ pattern
     new_filename = original_filename
-    if original_filename.startswith('a_'):
-        new_filename = 'b_' + original_filename[2:]
-    elif original_filename.startswith('ac_'):
-        new_filename = 'bc_' + original_filename[3:]
     
     # Map image index to 007, 008, 009
     # 원본 6장 중 3장만 선택 (예: 1,3,5번째 → 007,008,009)
     thumbnail_numbers = {
-        1: "007",  # First selected image
-        3: "008",  # Second selected image  
-        5: "009"   # Third selected image
+        1: "007",  # First selected image (from 001 or 002)
+        3: "008",  # Second selected image (from 003 or 004)
+        5: "009"   # Third selected image (from 005 or 006)
     }
     
     # Replace the number part with new number
