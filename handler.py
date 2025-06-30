@@ -13,10 +13,10 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-VERSION = "V116-28PercentWhiteOverlay-APattternBrightness"
+VERSION = "V2-ThumbnailFor789"
 
 def find_input_data(data):
-    """Find input data recursively - matches Enhancement handler"""
+    """Find input data recursively"""
     if isinstance(data, dict):
         if any(key in data for key in ['image', 'url', 'image_url', 'imageUrl', 'image_base64', 'imageBase64']):
             return data
@@ -32,19 +32,17 @@ def find_input_data(data):
     return data
 
 def find_filename_enhanced(data, depth=0):
-    """Enhanced filename extraction for Make.com - checks EVERYWHERE"""
-    if depth > 10:  # Increased depth limit
+    """Enhanced filename extraction"""
+    if depth > 10:
         return None
     
     found_filenames = []
     
     def extract_filenames(obj, current_depth):
-        """Recursively extract all potential filenames"""
         if current_depth > 10:
             return
             
         if isinstance(obj, dict):
-            # Extended list of filename keys
             filename_keys = [
                 'filename', 'file_name', 'fileName', 'name', 'file',
                 'originalName', 'original_name', 'originalFileName', 'original_file_name',
@@ -53,63 +51,67 @@ def find_filename_enhanced(data, depth=0):
                 'title', 'label', 'id', 'identifier', 'reference'
             ]
             
-            # Check all keys
             for key, value in obj.items():
-                # Check if key itself looks like a filename pattern
                 if isinstance(value, str) and any(pattern in value.lower() for pattern in ['ac_', 'bc_', 'a_', 'b_', 'c_']):
-                    if len(value) < 100:  # Reasonable filename length
+                    if len(value) < 100:
                         found_filenames.append(value)
                         logger.info(f"Found potential filename in value: {value}")
                 
-                # Check known filename keys
                 if key.lower() in [k.lower() for k in filename_keys]:
                     if isinstance(value, str) and value and len(value) < 100:
                         found_filenames.append(value)
                         logger.info(f"Found filename at key '{key}': {value}")
                 
-                # Recursive search
                 if isinstance(value, dict):
                     extract_filenames(value, current_depth + 1)
                 elif isinstance(value, list):
                     for item in value:
                         extract_filenames(item, current_depth + 1)
-                elif isinstance(value, str):
-                    # Check if the string itself might contain JSON
-                    if value.startswith('{') and value.endswith('}'):
-                        try:
-                            parsed = json.loads(value)
-                            extract_filenames(parsed, current_depth + 1)
-                        except:
-                            pass
-        
-        elif isinstance(obj, list):
-            for item in obj:
-                extract_filenames(item, current_depth)
     
-    # Start extraction
     extract_filenames(data, 0)
     
-    # Filter and prioritize filenames
-    valid_filenames = []
-    for fname in found_filenames:
-        # Check if it looks like our ring filename pattern
-        if any(pattern in fname.lower() for pattern in ['ac_', 'bc_', 'a_', 'b_', 'c_']):
-            valid_filenames.append(fname)
-    
-    if valid_filenames:
-        # Return the most likely filename (first one with our pattern)
-        filename = valid_filenames[0]
-        logger.info(f"Selected filename: {filename} from {len(valid_filenames)} candidates")
+    if found_filenames:
+        filename = found_filenames[0]
+        logger.info(f"Selected filename: {filename}")
         return filename
     
-    # Log all keys at root level for debugging
-    if depth == 0 and isinstance(data, dict):
-        logger.info(f"Root level keys: {list(data.keys())}")
-        # Also log some values to see structure
-        for key in list(data.keys())[:5]:
-            logger.info(f"Key '{key}' type: {type(data[key])}")
-    
     return None
+
+def generate_thumbnail_filename(original_filename, image_index):
+    """Generate thumbnail filename with 007, 008, 009 pattern"""
+    if not original_filename:
+        return f"thumbnail_{image_index:03d}.jpg"
+    
+    # Extract pattern prefix (a_, ac_, etc.)
+    import re
+    
+    # Convert a_ to b_, ac_ to bc_
+    new_filename = original_filename
+    if original_filename.startswith('a_'):
+        new_filename = 'b_' + original_filename[2:]
+    elif original_filename.startswith('ac_'):
+        new_filename = 'bc_' + original_filename[3:]
+    
+    # Map image index to 007, 008, 009
+    # 원본 6장 중 3장만 선택 (예: 1,3,5번째 → 007,008,009)
+    thumbnail_numbers = {
+        1: "007",  # First selected image
+        3: "008",  # Second selected image  
+        5: "009"   # Third selected image
+    }
+    
+    # Replace the number part with new number
+    pattern = r'(_\d{3})'
+    if re.search(pattern, new_filename):
+        new_filename = re.sub(pattern, f'_{thumbnail_numbers.get(image_index, "007")}', new_filename)
+    else:
+        # If no number pattern found, append it
+        name_parts = new_filename.split('.')
+        name_parts[0] += f'_{thumbnail_numbers.get(image_index, "007")}'
+        new_filename = '.'.join(name_parts)
+    
+    logger.info(f"Generated thumbnail filename: {original_filename} -> {new_filename}")
+    return new_filename
 
 def download_image_from_url(url):
     """Download image from URL"""
@@ -135,21 +137,16 @@ def base64_to_image(base64_string):
     return Image.open(BytesIO(img_data))
 
 def detect_pattern_type(filename: str) -> str:
-    """Detect pattern type: 'ac_bc' for unplated white, 'a_only' for a_ pattern, 'other' for rest"""
+    """Detect pattern type"""
     if not filename:
-        logger.warning("No filename found, defaulting to standard enhancement")
         return "other"
     
-    # Convert to lowercase for case-insensitive check
     filename_lower = filename.lower()
     logger.info(f"Checking filename pattern: {filename_lower}")
     
     import re
     
-    # Check for ac_ or bc_ patterns (unplated white)
     pattern_ac_bc = re.search(r'(ac_|bc_)', filename_lower)
-    
-    # Check for a_ pattern (NOT ac_)
     pattern_a_only = re.search(r'(?<!a)(?<!b)a_', filename_lower)
     
     if pattern_ac_bc:
@@ -163,7 +160,7 @@ def detect_pattern_type(filename: str) -> str:
         return "other"
 
 def apply_basic_enhancement(image):
-    """Apply basic enhancement matching Enhancement V116"""
+    """Apply basic enhancement"""
     if image.mode != 'RGB':
         if image.mode == 'RGBA':
             background = Image.new('RGB', image.size, (255, 255, 255))
@@ -172,9 +169,8 @@ def apply_basic_enhancement(image):
         else:
             image = image.convert('RGB')
     
-    # Match Enhancement V116 basic settings
     brightness = ImageEnhance.Brightness(image)
-    image = brightness.enhance(1.08)  # Reduced from 1.10
+    image = brightness.enhance(1.08)
     
     contrast = ImageEnhance.Contrast(image)
     image = contrast.enhance(1.05)
@@ -190,54 +186,42 @@ def apply_color_specific_enhancement(image, pattern_type, filename):
     logger.info(f"Applying enhancement - Filename: {filename}, Pattern type: {pattern_type}")
     
     if pattern_type == "ac_bc":
-        # V116: 28% white overlay for ac_ and bc_ patterns
         logger.info("Applying unplated white enhancement (28% white overlay)")
         
-        # First brightness adjustment
         brightness = ImageEnhance.Brightness(image)
         image = brightness.enhance(1.04)
         
-        # Color adjustment
         color = ImageEnhance.Color(image)
         image = color.enhance(0.92)
         
-        # Contrast
         contrast = ImageEnhance.Contrast(image)
         image = contrast.enhance(1.0)
         
-        # Apply 28% white overlay
         img_array = np.array(image)
-        img_array = img_array * 0.72 + 255 * 0.28  # 28% white overlay
+        img_array = img_array * 0.72 + 255 * 0.28
         image = Image.fromarray(img_array.astype(np.uint8))
         
-        # Final brightness
         brightness = ImageEnhance.Brightness(image)
         image = brightness.enhance(1.00)
         
     elif pattern_type == "a_only":
-        # V116: Enhanced brightness and center focus for a_ pattern
-        logger.info("Applying a_ pattern enhancement (increased brightness + center focus)")
+        logger.info("Applying a_ pattern enhancement")
         
-        # Increased brightness for a_ pattern
         brightness = ImageEnhance.Brightness(image)
-        image = brightness.enhance(1.08)  # Higher brightness
+        image = brightness.enhance(1.08)
         
-        # Color adjustment
         color = ImageEnhance.Color(image)
-        image = color.enhance(0.94)  # Slightly more color
+        image = color.enhance(0.94)
         
-        # Contrast
         contrast = ImageEnhance.Contrast(image)
-        image = contrast.enhance(1.02)  # Slight contrast boost
+        image = contrast.enhance(1.02)
         
-        # Apply subtle center focus for a_ pattern
         width, height = image.size
         x = np.linspace(-1, 1, width)
         y = np.linspace(-1, 1, height)
         X, Y = np.meshgrid(x, y)
         distance = np.sqrt(X**2 + Y**2)
         
-        # Slightly stronger center focus for a_ pattern
         focus_mask = 1 + 0.06 * np.exp(-distance**2 * 0.7)
         focus_mask = np.clip(focus_mask, 1.0, 1.06)
         
@@ -246,27 +230,21 @@ def apply_color_specific_enhancement(image, pattern_type, filename):
             img_array[:, :, i] = np.clip(img_array[:, :, i] * focus_mask, 0, 255)
         image = Image.fromarray(img_array.astype(np.uint8))
         
-        # Final brightness boost
         brightness = ImageEnhance.Brightness(image)
         image = brightness.enhance(1.02)
         
     else:
-        # Standard enhancement for other patterns
-        logger.info("Standard enhancement (no white overlay)")
+        logger.info("Standard enhancement")
         
-        # Standard brightness
         brightness = ImageEnhance.Brightness(image)
         image = brightness.enhance(1.04)
         
-        # Color adjustment
         color = ImageEnhance.Color(image)
         image = color.enhance(0.92)
         
-        # Contrast
         contrast = ImageEnhance.Contrast(image)
         image = contrast.enhance(1.0)
         
-        # Final brightness
         brightness = ImageEnhance.Brightness(image)
         image = brightness.enhance(1.00)
     
@@ -276,55 +254,41 @@ def create_thumbnail_smart_center_crop(image, target_width=1000, target_height=1
     """Create thumbnail with center crop for ~2000x2600 input to fill 90% of frame"""
     original_width, original_height = image.size
     
-    # Check if input is approximately 2000x2600 (±200 pixels)
     if (1800 <= original_width <= 2200 and 2400 <= original_height <= 2800):
         logger.info(f"Input {original_width}x{original_height} detected as ~2000x2600, using center crop")
         
-        # Calculate crop to make rings fill 90% of the frame
-        # We want to crop the center part and then resize
-        crop_ratio = 0.85  # Crop to 85% of original to make rings appear larger
+        crop_ratio = 0.85
         
         crop_width = int(original_width * crop_ratio)
         crop_height = int(original_height * crop_ratio)
         
-        # Calculate crop box (center crop)
         left = (original_width - crop_width) // 2
         top = (original_height - crop_height) // 2
         right = left + crop_width
         bottom = top + crop_height
         
-        # Crop the center
         cropped = image.crop((left, top, right, bottom))
         
-        # Now resize to target dimensions
         return cropped.resize((target_width, target_height), Image.Resampling.LANCZOS)
         
     else:
-        # For other sizes, maintain aspect ratio with padding
         logger.info(f"Input {original_width}x{original_height} not ~2000x2600, using aspect ratio preservation")
         
-        # Calculate scaling to fit within target dimensions
         width_ratio = target_width / original_width
         height_ratio = target_height / original_height
         
-        # Use the smaller ratio to ensure the image fits within bounds
         scale_ratio = min(width_ratio, height_ratio)
         
-        # Calculate new dimensions
         new_width = int(original_width * scale_ratio)
         new_height = int(original_height * scale_ratio)
         
-        # Resize image maintaining aspect ratio
         resized = image.resize((new_width, new_height), Image.Resampling.LANCZOS)
         
-        # Create white background
         thumbnail = Image.new('RGB', (target_width, target_height), (255, 255, 255))
         
-        # Calculate position to center the image
         left = (target_width - new_width) // 2
         top = (target_height - new_height) // 2
         
-        # Paste resized image onto white background
         thumbnail.paste(resized, (left, top))
         
         return thumbnail
@@ -341,16 +305,20 @@ def image_to_base64(image):
     image.save(buffered, format='PNG', quality=95)
     img_base64 = base64.b64encode(buffered.getvalue()).decode()
     
-    # Remove padding for Make.com
     img_base64_no_padding = img_base64.rstrip('=')
     
     return img_base64_no_padding
 
 def handler(event):
-    """Thumbnail handler function"""
+    """Thumbnail handler function - creates thumbnails 007, 008, 009 from selected images"""
     try:
         logger.info(f"Thumbnail {VERSION} started")
         logger.info(f"Input data type: {type(event)}")
+        
+        # Get image index (1, 3, or 5)
+        image_index = event.get('image_index', 1)
+        if isinstance(event.get('input'), dict):
+            image_index = event.get('input', {}).get('image_index', image_index)
         
         # Use enhanced filename detection
         filename = find_filename_enhanced(event)
@@ -358,7 +326,6 @@ def handler(event):
             logger.info(f"Successfully extracted filename: {filename}")
         else:
             logger.warning("Could not extract filename from input - will use default enhancement")
-            # Continue processing even without filename
         
         # Find input data
         input_data = find_input_data(event)
@@ -387,18 +354,15 @@ def handler(event):
         
         logger.info(f"Image loaded: {image.size}")
         
-        # 1. Apply basic enhancement (matching Enhancement V116)
+        # 1. Apply basic enhancement
         enhanced_image = apply_basic_enhancement(image)
         
-        # 2. Smart thumbnail creation with CENTER CROP for 90% fill
+        # 2. Smart thumbnail creation with CENTER CROP
         thumbnail = create_thumbnail_smart_center_crop(enhanced_image, 1000, 1300)
         
-        # 3. REMOVED apply_background_whitening() - causes gradient background
-        
-        # 4. Detect pattern type
+        # 3. Detect pattern type
         pattern_type = detect_pattern_type(filename)
         
-        # Set detected type for output
         if pattern_type == "ac_bc":
             detected_type = "무도금화이트"
         elif pattern_type == "a_only":
@@ -408,17 +372,18 @@ def handler(event):
         
         logger.info(f"Final detection - Type: {detected_type}, Filename: {filename}")
         
-        # 5. Apply pattern-specific enhancement
+        # 4. Apply pattern-specific enhancement
         thumbnail = apply_color_specific_enhancement(thumbnail, pattern_type, filename)
         
-        # 6. REMOVED apply_lighting_effect() - causes uneven lighting
-        
-        # 7. Light sharpness for details
+        # 5. Light sharpness for details
         sharpness = ImageEnhance.Sharpness(thumbnail)
         thumbnail = sharpness.enhance(1.1)
         
         # Convert to base64
         thumbnail_base64 = image_to_base64(thumbnail)
+        
+        # Generate output filename (007, 008, or 009)
+        output_filename = generate_thumbnail_filename(filename, image_index)
         
         # Return result
         return {
@@ -427,7 +392,9 @@ def handler(event):
                 "size": list(thumbnail.size),
                 "detected_type": detected_type,
                 "pattern_type": pattern_type,
-                "filename": filename,
+                "filename": output_filename,  # Will be b_007, bc_007, etc.
+                "original_filename": filename,
+                "image_index": image_index,
                 "format": "base64_no_padding",
                 "version": VERSION,
                 "status": "success"
