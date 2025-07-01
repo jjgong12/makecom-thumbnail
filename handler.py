@@ -13,7 +13,7 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-VERSION = "V2-ThumbnailFor789"
+VERSION = "V3-ThumbnailEnhanced-Spotlight"
 
 def find_input_data(data):
     """Find input data recursively"""
@@ -155,7 +155,7 @@ def detect_pattern_type(filename: str) -> str:
         return "other"
 
 def apply_basic_enhancement(image):
-    """Apply basic enhancement"""
+    """Apply basic enhancement - same as enhancement handler V118"""
     if image.mode != 'RGB':
         if image.mode == 'RGBA':
             background = Image.new('RGB', image.size, (255, 255, 255))
@@ -164,8 +164,9 @@ def apply_basic_enhancement(image):
         else:
             image = image.convert('RGB')
     
+    # V118 settings - increased brightness
     brightness = ImageEnhance.Brightness(image)
-    image = brightness.enhance(1.08)
+    image = brightness.enhance(1.10)  # Same as V118
     
     contrast = ImageEnhance.Contrast(image)
     image = contrast.enhance(1.05)
@@ -176,12 +177,12 @@ def apply_basic_enhancement(image):
     return image
 
 def apply_color_specific_enhancement(image, pattern_type, filename):
-    """Apply enhancement based on pattern type"""
+    """Apply enhancement based on pattern type - V3 with 31% white overlay"""
     
     logger.info(f"Applying enhancement - Filename: {filename}, Pattern type: {pattern_type}")
     
     if pattern_type == "ac_bc":
-        logger.info("Applying unplated white enhancement (28% white overlay)")
+        logger.info("Applying unplated white enhancement (31% white overlay)")
         
         brightness = ImageEnhance.Brightness(image)
         image = brightness.enhance(1.04)
@@ -192,8 +193,9 @@ def apply_color_specific_enhancement(image, pattern_type, filename):
         contrast = ImageEnhance.Contrast(image)
         image = contrast.enhance(1.0)
         
+        # V3: 31% white overlay (same as V118)
         img_array = np.array(image)
-        img_array = img_array * 0.72 + 255 * 0.28
+        img_array = img_array * 0.69 + 255 * 0.31
         image = Image.fromarray(img_array.astype(np.uint8))
         
         brightness = ImageEnhance.Brightness(image)
@@ -203,7 +205,7 @@ def apply_color_specific_enhancement(image, pattern_type, filename):
         logger.info("Applying a_ pattern enhancement")
         
         brightness = ImageEnhance.Brightness(image)
-        image = brightness.enhance(1.08)
+        image = brightness.enhance(1.10)  # Same as V118
         
         color = ImageEnhance.Color(image)
         image = color.enhance(0.94)
@@ -232,7 +234,7 @@ def apply_color_specific_enhancement(image, pattern_type, filename):
         logger.info("Standard enhancement")
         
         brightness = ImageEnhance.Brightness(image)
-        image = brightness.enhance(1.04)
+        image = brightness.enhance(1.06)  # Same as V118
         
         color = ImageEnhance.Color(image)
         image = color.enhance(0.92)
@@ -245,9 +247,50 @@ def apply_color_specific_enhancement(image, pattern_type, filename):
     
     return image
 
-def create_thumbnail_smart_center_crop(image, target_width=1000, target_height=1300):
-    """Create thumbnail with center crop for ~2000x2600 input to fill 90% of frame"""
+def apply_spotlight_effect(image):
+    """Apply subtle spotlight effect to center of image"""
+    logger.info("Applying spotlight effect")
+    
+    width, height = image.size
+    
+    # Create radial gradient for spotlight
+    x = np.linspace(-1, 1, width)
+    y = np.linspace(-1, 1, height)
+    X, Y = np.meshgrid(x, y)
+    
+    # Distance from center
+    distance = np.sqrt(X**2 + Y**2)
+    
+    # Create spotlight mask - very subtle (1.02 max brightness)
+    spotlight_mask = 1 + 0.02 * np.exp(-distance**2 * 1.2)  # Very subtle: 2% max increase
+    spotlight_mask = np.clip(spotlight_mask, 1.0, 1.02)
+    
+    # Apply spotlight
+    img_array = np.array(image)
+    for i in range(3):
+        img_array[:, :, i] = np.clip(img_array[:, :, i] * spotlight_mask, 0, 255)
+    
+    return Image.fromarray(img_array.astype(np.uint8))
+
+def create_thumbnail_smart_center_crop_with_upscale(image, target_width=1000, target_height=1300):
+    """Create thumbnail with center crop and upscaling for better quality"""
     original_width, original_height = image.size
+    
+    # V3: Apply upscaling first if image is smaller than target
+    if original_width < target_width or original_height < target_height:
+        logger.info(f"Image {original_width}x{original_height} smaller than target, upscaling first")
+        
+        # Calculate scale factor to ensure both dimensions are at least target size
+        scale_factor = max(target_width / original_width, target_height / original_height) * 1.1  # 10% extra
+        
+        new_width = int(original_width * scale_factor)
+        new_height = int(original_height * scale_factor)
+        
+        # Upscale using LANCZOS for best quality
+        image = image.resize((new_width, new_height), Image.Resampling.LANCZOS)
+        logger.info(f"Upscaled to {new_width}x{new_height}")
+        
+        original_width, original_height = new_width, new_height
     
     if (1800 <= original_width <= 2200 and 2400 <= original_height <= 2800):
         logger.info(f"Input {original_width}x{original_height} detected as ~2000x2600, using center crop")
@@ -305,7 +348,7 @@ def image_to_base64(image):
     return img_base64_no_padding
 
 def handler(event):
-    """Thumbnail handler function - creates thumbnails 007, 008, 009 from selected images"""
+    """Thumbnail handler function - creates thumbnails 007, 008, 009 with enhanced processing"""
     try:
         logger.info(f"Thumbnail {VERSION} started")
         logger.info(f"Input data type: {type(event)}")
@@ -349,11 +392,11 @@ def handler(event):
         
         logger.info(f"Image loaded: {image.size}")
         
-        # 1. Apply basic enhancement
+        # 1. Apply basic enhancement (same as V118)
         enhanced_image = apply_basic_enhancement(image)
         
-        # 2. Smart thumbnail creation with CENTER CROP
-        thumbnail = create_thumbnail_smart_center_crop(enhanced_image, 1000, 1300)
+        # 2. Smart thumbnail creation with CENTER CROP and UPSCALING
+        thumbnail = create_thumbnail_smart_center_crop_with_upscale(enhanced_image, 1000, 1300)
         
         # 3. Detect pattern type
         pattern_type = detect_pattern_type(filename)
@@ -370,9 +413,16 @@ def handler(event):
         # 4. Apply pattern-specific enhancement
         thumbnail = apply_color_specific_enhancement(thumbnail, pattern_type, filename)
         
-        # 5. Light sharpness for details
+        # 5. Apply spotlight effect (very subtle)
+        thumbnail = apply_spotlight_effect(thumbnail)
+        
+        # 6. Enhanced sharpness for details (stronger than before)
         sharpness = ImageEnhance.Sharpness(thumbnail)
-        thumbnail = sharpness.enhance(1.1)
+        thumbnail = sharpness.enhance(1.25)  # Increased from 1.1 to 1.25
+        
+        # 7. Final brightness touch
+        brightness = ImageEnhance.Brightness(thumbnail)
+        thumbnail = brightness.enhance(1.01)  # Very subtle final brightness
         
         # Convert to base64
         thumbnail_base64 = image_to_base64(thumbnail)
@@ -391,6 +441,8 @@ def handler(event):
                 "original_filename": filename,
                 "image_index": image_index,
                 "format": "base64_no_padding",
+                "has_spotlight": True,
+                "has_upscaling": True,
                 "version": VERSION,
                 "status": "success"
             }
