@@ -13,7 +13,7 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-VERSION = "V5-FixedCenterCrop-EnhancedQuality"
+VERSION = "V6-StrongerWeddingFocus-EnhancedWhiteOverlay"
 
 def find_input_data(data):
     """Find input data recursively"""
@@ -154,8 +154,83 @@ def detect_pattern_type(filename: str) -> str:
         logger.info("Pattern detected: other")
         return "other"
 
+def detect_wedding_ring(image: Image.Image) -> bool:
+    """Detect if image contains wedding rings based on ring characteristics"""
+    # Convert to grayscale for analysis
+    gray = image.convert('L')
+    gray_array = np.array(gray)
+    
+    # Look for circular shapes (typical of rings)
+    # Apply blur to reduce noise
+    blurred = cv2.GaussianBlur(gray_array, (5, 5), 0)
+    
+    # Find edges
+    edges = cv2.Canny(blurred, 50, 150)
+    
+    # Detect circles using Hough transform
+    circles = cv2.HoughCircles(
+        blurred,
+        cv2.HOUGH_GRADIENT,
+        dp=1,
+        minDist=20,
+        param1=50,
+        param2=30,
+        minRadius=10,
+        maxRadius=300
+    )
+    
+    # If we find circular shapes, it's likely a ring
+    if circles is not None and len(circles[0]) > 0:
+        logger.info(f"Detected {len(circles[0])} circular shapes - likely wedding rings")
+        return True
+    
+    # Additional check: look for metallic/bright regions in center
+    height, width = gray_array.shape
+    center_region = gray_array[height//3:2*height//3, width//3:2*width//3]
+    
+    # Check if center has bright metallic areas
+    bright_pixels = np.sum(center_region > 200)
+    total_pixels = center_region.size
+    bright_ratio = bright_pixels / total_pixels
+    
+    if bright_ratio > 0.1:  # More than 10% bright pixels in center
+        logger.info(f"Detected bright metallic areas ({bright_ratio:.2%}) - likely wedding rings")
+        return True
+    
+    return False
+
+def apply_wedding_ring_focus(image: Image.Image) -> Image.Image:
+    """Apply enhanced focus and sharpness for wedding rings - V6 stronger focus"""
+    logger.info("Applying wedding ring focus enhancement")
+    
+    # 1. Stronger center focus - V6 enhanced for better emphasis
+    width, height = image.size
+    x = np.linspace(-1, 1, width)
+    y = np.linspace(-1, 1, height)
+    X, Y = np.meshgrid(x, y)
+    distance = np.sqrt(X**2 + Y**2)
+    
+    # V6: Stronger focus for wedding rings
+    focus_mask = 1 + 0.035 * np.exp(-distance**2 * 1.5)  # Same as V122 enhancement
+    focus_mask = np.clip(focus_mask, 1.0, 1.035)
+    
+    img_array = np.array(image)
+    for i in range(3):
+        img_array[:, :, i] = np.clip(img_array[:, :, i] * focus_mask, 0, 255)
+    image = Image.fromarray(img_array.astype(np.uint8))
+    
+    # 2. Enhanced sharpness for ring details
+    sharpness = ImageEnhance.Sharpness(image)
+    image = sharpness.enhance(1.3)  # Same as V122
+    
+    # 3. Slightly enhanced contrast for definition
+    contrast = ImageEnhance.Contrast(image)
+    image = contrast.enhance(1.03)  # Same as V122
+    
+    return image
+
 def apply_basic_enhancement(image):
-    """Apply basic enhancement - same as enhancement handler V121"""
+    """Apply basic enhancement - V6 with stronger brightness"""
     if image.mode != 'RGB':
         if image.mode == 'RGBA':
             background = Image.new('RGB', image.size, (255, 255, 255))
@@ -164,28 +239,28 @@ def apply_basic_enhancement(image):
         else:
             image = image.convert('RGB')
     
-    # V121 settings - enhanced brightness
+    # V6 settings - stronger brightness to match V122
     brightness = ImageEnhance.Brightness(image)
-    image = brightness.enhance(1.02)  # Enhanced from V120
+    image = brightness.enhance(1.03)  # Enhanced from V5's 1.02
     
     contrast = ImageEnhance.Contrast(image)
-    image = contrast.enhance(1.02)  # Enhanced from V120
+    image = contrast.enhance(1.03)  # Enhanced from V5's 1.02
     
     color = ImageEnhance.Color(image)
-    image = color.enhance(1.01)  # Enhanced from V120
+    image = color.enhance(1.02)  # Enhanced from V5's 1.01
     
     return image
 
-def apply_color_specific_enhancement(image, pattern_type, filename):
-    """Apply enhancement based on pattern type - V5 with V121 brightness"""
+def apply_color_specific_enhancement(image, pattern_type, filename, is_wedding_ring):
+    """Apply enhancement based on pattern type - V6 with wedding ring detection"""
     
-    logger.info(f"Applying enhancement - Filename: {filename}, Pattern type: {pattern_type}")
+    logger.info(f"Applying enhancement - Filename: {filename}, Pattern type: {pattern_type}, Wedding ring: {is_wedding_ring}")
     
     if pattern_type == "ac_bc":
-        logger.info("Applying unplated white enhancement (15% white overlay)")
+        logger.info("Applying unplated white enhancement")
         
         brightness = ImageEnhance.Brightness(image)
-        image = brightness.enhance(1.02)  # Enhanced to match V121
+        image = brightness.enhance(1.03)  # Enhanced to match V122
         
         color = ImageEnhance.Color(image)
         image = color.enhance(0.96)
@@ -193,25 +268,35 @@ def apply_color_specific_enhancement(image, pattern_type, filename):
         contrast = ImageEnhance.Contrast(image)
         image = contrast.enhance(1.0)
         
-        # V5: 15% white overlay (same as V121)
+        # V6: Enhanced white overlay for wedding rings
+        if is_wedding_ring:
+            logger.info("Wedding ring detected - applying 18% white overlay")
+            white_overlay_percent = 0.18  # Same as V122 enhancement
+        else:
+            white_overlay_percent = 0.15
+            
         img_array = np.array(image)
-        img_array = img_array * 0.85 + 255 * 0.15
+        img_array = img_array * (1 - white_overlay_percent) + 255 * white_overlay_percent
         image = Image.fromarray(img_array.astype(np.uint8))
         
         brightness = ImageEnhance.Brightness(image)
         image = brightness.enhance(1.00)
         
+        # V6: Apply wedding ring focus for ac_ patterns too
+        if is_wedding_ring:
+            image = apply_wedding_ring_focus(image)
+        
     elif pattern_type == "a_only":
         logger.info("Applying a_ pattern enhancement")
         
         brightness = ImageEnhance.Brightness(image)
-        image = brightness.enhance(1.03)  # Enhanced to match V121
+        image = brightness.enhance(1.04)  # Enhanced to match V122
         
         color = ImageEnhance.Color(image)
         image = color.enhance(0.98)
         
         contrast = ImageEnhance.Contrast(image)
-        image = contrast.enhance(1.01)  # Enhanced to match V121
+        image = contrast.enhance(1.02)  # Enhanced to match V122
         
         width, height = image.size
         x = np.linspace(-1, 1, width)
@@ -219,8 +304,8 @@ def apply_color_specific_enhancement(image, pattern_type, filename):
         X, Y = np.meshgrid(x, y)
         distance = np.sqrt(X**2 + Y**2)
         
-        focus_mask = 1 + 0.025 * np.exp(-distance**2 * 1.0)  # Enhanced to match V121
-        focus_mask = np.clip(focus_mask, 1.0, 1.025)
+        focus_mask = 1 + 0.03 * np.exp(-distance**2 * 1.0)  # Enhanced to match V122
+        focus_mask = np.clip(focus_mask, 1.0, 1.03)
         
         img_array = np.array(image)
         for i in range(3):
@@ -230,20 +315,28 @@ def apply_color_specific_enhancement(image, pattern_type, filename):
         brightness = ImageEnhance.Brightness(image)
         image = brightness.enhance(1.00)
         
+        # Apply wedding ring focus if detected
+        if is_wedding_ring:
+            image = apply_wedding_ring_focus(image)
+        
     else:
         logger.info("Standard enhancement")
         
         brightness = ImageEnhance.Brightness(image)
-        image = brightness.enhance(1.02)  # Enhanced to match V121
+        image = brightness.enhance(1.03)  # Enhanced to match V122
         
         color = ImageEnhance.Color(image)
         image = color.enhance(0.98)
         
         contrast = ImageEnhance.Contrast(image)
-        image = contrast.enhance(1.01)  # Enhanced to match V121
+        image = contrast.enhance(1.02)  # Enhanced to match V122
         
         brightness = ImageEnhance.Brightness(image)
         image = brightness.enhance(1.00)
+        
+        # Apply wedding ring focus if detected
+        if is_wedding_ring:
+            image = apply_wedding_ring_focus(image)
     
     return image
 
@@ -261,9 +354,9 @@ def apply_spotlight_effect(image):
     # Distance from center
     distance = np.sqrt(X**2 + Y**2)
     
-    # Create spotlight mask - enhanced for V5
-    spotlight_mask = 1 + 0.025 * np.exp(-distance**2 * 1.2)  # Enhanced from 0.02 to 0.025
-    spotlight_mask = np.clip(spotlight_mask, 1.0, 1.025)
+    # Create spotlight mask - V6 enhanced
+    spotlight_mask = 1 + 0.03 * np.exp(-distance**2 * 1.2)  # Enhanced from 0.025 to 0.03
+    spotlight_mask = np.clip(spotlight_mask, 1.0, 1.03)
     
     # Apply spotlight
     img_array = np.array(image)
@@ -273,14 +366,14 @@ def apply_spotlight_effect(image):
     return Image.fromarray(img_array.astype(np.uint8))
 
 def create_thumbnail_smart_center_crop_with_upscale(image, target_width=1000, target_height=1300):
-    """Create thumbnail with FIXED CENTER CROP and upscaling - V5 always uses image center"""
+    """Create thumbnail with FIXED CENTER CROP and upscaling - V6 always uses image center"""
     original_width, original_height = image.size
     
-    # V5: ALWAYS use image center - DO NOT detect ring center
+    # V6: ALWAYS use image center - DO NOT detect ring center
     image_center = (original_width // 2, original_height // 2)
     logger.info(f"Using FIXED image center: {image_center}")
     
-    # V5: Apply upscaling first if image is smaller than target
+    # V6: Apply upscaling first if image is smaller than target
     if original_width < target_width or original_height < target_height:
         logger.info(f"Image {original_width}x{original_height} smaller than target, upscaling first")
         
@@ -298,7 +391,7 @@ def create_thumbnail_smart_center_crop_with_upscale(image, target_width=1000, ta
         image_center = (int(image_center[0] * scale_factor), int(image_center[1] * scale_factor))
         original_width, original_height = new_width, new_height
     
-    # Check for specific size ranges - V5 includes 3000x3900 support
+    # Check for specific size ranges - V6 includes 3000x3900 support
     if ((1800 <= original_width <= 2200 and 2400 <= original_height <= 2800) or
         (2800 <= original_width <= 3200 and 3700 <= original_height <= 4100)):
         
@@ -312,7 +405,7 @@ def create_thumbnail_smart_center_crop_with_upscale(image, target_width=1000, ta
         crop_width = int(original_width * crop_ratio)
         crop_height = int(original_height * crop_ratio)
         
-        # V5: FIXED center crop - always use image center
+        # V6: FIXED center crop - always use image center
         left = max(0, image_center[0] - crop_width // 2)
         top = max(0, image_center[1] - crop_height // 2)
         
@@ -370,7 +463,7 @@ def image_to_base64(image):
     return img_base64_no_padding
 
 def handler(event):
-    """Thumbnail handler function - V5 with fixed center crop and enhanced quality"""
+    """Thumbnail handler function - V6 with stronger wedding focus and enhanced quality"""
     try:
         logger.info(f"Thumbnail {VERSION} started")
         logger.info(f"Input data type: {type(event)}")
@@ -414,13 +507,16 @@ def handler(event):
         
         logger.info(f"Image loaded: {image.size}")
         
-        # 1. Apply basic enhancement (same as V121)
+        # 1. Apply basic enhancement (V6 with stronger brightness)
         enhanced_image = apply_basic_enhancement(image)
         
-        # 2. Smart thumbnail creation with FIXED CENTER CROP and UPSCALING - V5 with fixed center
+        # 2. Detect if wedding ring BEFORE cropping
+        is_wedding_ring = detect_wedding_ring(enhanced_image)
+        
+        # 3. Smart thumbnail creation with FIXED CENTER CROP and UPSCALING - V6 with fixed center
         thumbnail = create_thumbnail_smart_center_crop_with_upscale(enhanced_image, 1000, 1300)
         
-        # 3. Detect pattern type
+        # 4. Detect pattern type
         pattern_type = detect_pattern_type(filename)
         
         if pattern_type == "ac_bc":
@@ -432,19 +528,23 @@ def handler(event):
         
         logger.info(f"Final detection - Type: {detected_type}, Filename: {filename}")
         
-        # 4. Apply pattern-specific enhancement (with V121 brightness)
-        thumbnail = apply_color_specific_enhancement(thumbnail, pattern_type, filename)
+        # 5. Apply pattern-specific enhancement (with V6 wedding ring detection)
+        thumbnail = apply_color_specific_enhancement(thumbnail, pattern_type, filename, is_wedding_ring)
         
-        # 5. Apply enhanced spotlight effect
-        thumbnail = apply_spotlight_effect(thumbnail)
+        # 6. Apply enhanced spotlight effect (only if not wedding ring)
+        if not is_wedding_ring:
+            thumbnail = apply_spotlight_effect(thumbnail)
         
-        # 6. Enhanced sharpness for details
+        # 7. Enhanced sharpness for details (reduced if wedding ring)
         sharpness = ImageEnhance.Sharpness(thumbnail)
-        thumbnail = sharpness.enhance(1.25)  # Enhanced from 1.20
+        if is_wedding_ring:
+            thumbnail = sharpness.enhance(1.15)  # Less sharpening for wedding rings
+        else:
+            thumbnail = sharpness.enhance(1.3)  # Enhanced from 1.25
         
-        # 7. Final brightness touch - enhanced
+        # 8. Final brightness touch - enhanced
         brightness = ImageEnhance.Brightness(thumbnail)
-        thumbnail = brightness.enhance(1.02)  # Enhanced from 1.01
+        thumbnail = brightness.enhance(1.03)  # Enhanced from 1.02
         
         # Convert to base64
         thumbnail_base64 = image_to_base64(thumbnail)
@@ -459,14 +559,15 @@ def handler(event):
                 "size": list(thumbnail.size),
                 "detected_type": detected_type,
                 "pattern_type": pattern_type,
+                "is_wedding_ring": is_wedding_ring,  # V6: Added wedding ring detection
                 "filename": output_filename,  # Will be b_007, bc_007, etc.
                 "original_filename": filename,
                 "image_index": image_index,
                 "format": "base64_no_padding",
-                "has_spotlight": True,
+                "has_spotlight": not is_wedding_ring,  # V6: No spotlight for wedding rings
                 "has_upscaling": True,
-                "supports_3000x3900": True,  # V5 feature
-                "fixed_center_crop": True,  # V5 NEW feature
+                "supports_3000x3900": True,
+                "fixed_center_crop": True,
                 "version": VERSION,
                 "status": "success"
             }
