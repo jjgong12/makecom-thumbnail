@@ -13,7 +13,7 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-VERSION = "V4-ThumbnailEnhanced-3000x3900Support"
+VERSION = "V5-FixedCenterCrop-EnhancedQuality"
 
 def find_input_data(data):
     """Find input data recursively"""
@@ -154,43 +154,8 @@ def detect_pattern_type(filename: str) -> str:
         logger.info("Pattern detected: other")
         return "other"
 
-def detect_ring_center(image):
-    """Detect wedding ring center using OpenCV"""
-    try:
-        # Convert to grayscale
-        gray = image.convert('L')
-        gray_array = np.array(gray)
-        
-        # Apply blur to reduce noise
-        blurred = cv2.GaussianBlur(gray_array, (9, 9), 0)
-        
-        # Detect circles using Hough transform
-        circles = cv2.HoughCircles(
-            blurred,
-            cv2.HOUGH_GRADIENT,
-            dp=1,
-            minDist=50,
-            param1=50,
-            param2=30,
-            minRadius=30,
-            maxRadius=400
-        )
-        
-        if circles is not None and len(circles[0]) > 0:
-            # Find the most prominent circle (largest)
-            circles = circles[0]
-            largest_circle = max(circles, key=lambda c: c[2])  # c[2] is radius
-            center_x, center_y = int(largest_circle[0]), int(largest_circle[1])
-            logger.info(f"Detected ring center at ({center_x}, {center_y})")
-            return (center_x, center_y)
-    except Exception as e:
-        logger.warning(f"Ring detection failed: {e}")
-    
-    # If detection fails, return image center
-    return (image.width // 2, image.height // 2)
-
 def apply_basic_enhancement(image):
-    """Apply basic enhancement - same as enhancement handler V119"""
+    """Apply basic enhancement - same as enhancement handler V121"""
     if image.mode != 'RGB':
         if image.mode == 'RGBA':
             background = Image.new('RGB', image.size, (255, 255, 255))
@@ -199,38 +164,38 @@ def apply_basic_enhancement(image):
         else:
             image = image.convert('RGB')
     
-    # V119 settings - reduced brightness to preserve background
+    # V121 settings - enhanced brightness
     brightness = ImageEnhance.Brightness(image)
-    image = brightness.enhance(1.06)  # Reduced from 1.10
+    image = brightness.enhance(1.02)  # Enhanced from V120
     
     contrast = ImageEnhance.Contrast(image)
-    image = contrast.enhance(1.03)  # Reduced from 1.05
+    image = contrast.enhance(1.02)  # Enhanced from V120
     
     color = ImageEnhance.Color(image)
-    image = color.enhance(1.02)  # Reduced from 1.03
+    image = color.enhance(1.01)  # Enhanced from V120
     
     return image
 
 def apply_color_specific_enhancement(image, pattern_type, filename):
-    """Apply enhancement based on pattern type - V4 with reduced intensity"""
+    """Apply enhancement based on pattern type - V5 with V121 brightness"""
     
     logger.info(f"Applying enhancement - Filename: {filename}, Pattern type: {pattern_type}")
     
     if pattern_type == "ac_bc":
-        logger.info("Applying unplated white enhancement (20% white overlay)")
+        logger.info("Applying unplated white enhancement (15% white overlay)")
         
         brightness = ImageEnhance.Brightness(image)
-        image = brightness.enhance(1.02)  # Reduced
+        image = brightness.enhance(1.02)  # Enhanced to match V121
         
         color = ImageEnhance.Color(image)
-        image = color.enhance(0.95)  # More color preserved
+        image = color.enhance(0.96)
         
         contrast = ImageEnhance.Contrast(image)
         image = contrast.enhance(1.0)
         
-        # V4: 20% white overlay (same as V119)
+        # V5: 15% white overlay (same as V121)
         img_array = np.array(image)
-        img_array = img_array * 0.80 + 255 * 0.20
+        img_array = img_array * 0.85 + 255 * 0.15
         image = Image.fromarray(img_array.astype(np.uint8))
         
         brightness = ImageEnhance.Brightness(image)
@@ -240,13 +205,13 @@ def apply_color_specific_enhancement(image, pattern_type, filename):
         logger.info("Applying a_ pattern enhancement")
         
         brightness = ImageEnhance.Brightness(image)
-        image = brightness.enhance(1.06)  # Reduced from 1.10
+        image = brightness.enhance(1.03)  # Enhanced to match V121
         
         color = ImageEnhance.Color(image)
-        image = color.enhance(0.96)
+        image = color.enhance(0.98)
         
         contrast = ImageEnhance.Contrast(image)
-        image = contrast.enhance(1.01)  # Reduced
+        image = contrast.enhance(1.01)  # Enhanced to match V121
         
         width, height = image.size
         x = np.linspace(-1, 1, width)
@@ -254,8 +219,8 @@ def apply_color_specific_enhancement(image, pattern_type, filename):
         X, Y = np.meshgrid(x, y)
         distance = np.sqrt(X**2 + Y**2)
         
-        focus_mask = 1 + 0.04 * np.exp(-distance**2 * 0.8)  # Reduced
-        focus_mask = np.clip(focus_mask, 1.0, 1.04)
+        focus_mask = 1 + 0.025 * np.exp(-distance**2 * 1.0)  # Enhanced to match V121
+        focus_mask = np.clip(focus_mask, 1.0, 1.025)
         
         img_array = np.array(image)
         for i in range(3):
@@ -263,19 +228,19 @@ def apply_color_specific_enhancement(image, pattern_type, filename):
         image = Image.fromarray(img_array.astype(np.uint8))
         
         brightness = ImageEnhance.Brightness(image)
-        image = brightness.enhance(1.01)  # Reduced
+        image = brightness.enhance(1.00)
         
     else:
         logger.info("Standard enhancement")
         
         brightness = ImageEnhance.Brightness(image)
-        image = brightness.enhance(1.03)  # Reduced from 1.06
+        image = brightness.enhance(1.02)  # Enhanced to match V121
         
         color = ImageEnhance.Color(image)
-        image = color.enhance(0.95)
+        image = color.enhance(0.98)
         
         contrast = ImageEnhance.Contrast(image)
-        image = contrast.enhance(1.0)
+        image = contrast.enhance(1.01)  # Enhanced to match V121
         
         brightness = ImageEnhance.Brightness(image)
         image = brightness.enhance(1.00)
@@ -296,9 +261,9 @@ def apply_spotlight_effect(image):
     # Distance from center
     distance = np.sqrt(X**2 + Y**2)
     
-    # Create spotlight mask - very subtle (1.02 max brightness)
-    spotlight_mask = 1 + 0.02 * np.exp(-distance**2 * 1.2)  # Very subtle: 2% max increase
-    spotlight_mask = np.clip(spotlight_mask, 1.0, 1.02)
+    # Create spotlight mask - enhanced for V5
+    spotlight_mask = 1 + 0.025 * np.exp(-distance**2 * 1.2)  # Enhanced from 0.02 to 0.025
+    spotlight_mask = np.clip(spotlight_mask, 1.0, 1.025)
     
     # Apply spotlight
     img_array = np.array(image)
@@ -308,13 +273,14 @@ def apply_spotlight_effect(image):
     return Image.fromarray(img_array.astype(np.uint8))
 
 def create_thumbnail_smart_center_crop_with_upscale(image, target_width=1000, target_height=1300):
-    """Create thumbnail with center crop and upscaling - V4 supports 3000x3900"""
+    """Create thumbnail with FIXED CENTER CROP and upscaling - V5 always uses image center"""
     original_width, original_height = image.size
     
-    # Detect ring center for better cropping
-    ring_center = detect_ring_center(image)
+    # V5: ALWAYS use image center - DO NOT detect ring center
+    image_center = (original_width // 2, original_height // 2)
+    logger.info(f"Using FIXED image center: {image_center}")
     
-    # V4: Apply upscaling first if image is smaller than target
+    # V5: Apply upscaling first if image is smaller than target
     if original_width < target_width or original_height < target_height:
         logger.info(f"Image {original_width}x{original_height} smaller than target, upscaling first")
         
@@ -328,27 +294,27 @@ def create_thumbnail_smart_center_crop_with_upscale(image, target_width=1000, ta
         image = image.resize((new_width, new_height), Image.Resampling.LANCZOS)
         logger.info(f"Upscaled to {new_width}x{new_height}")
         
-        # Adjust ring center coordinates
-        ring_center = (int(ring_center[0] * scale_factor), int(ring_center[1] * scale_factor))
+        # Adjust center coordinates proportionally
+        image_center = (int(image_center[0] * scale_factor), int(image_center[1] * scale_factor))
         original_width, original_height = new_width, new_height
     
-    # Check for specific size ranges - V4 includes 3000x3900
+    # Check for specific size ranges - V5 includes 3000x3900 support
     if ((1800 <= original_width <= 2200 and 2400 <= original_height <= 2800) or
         (2800 <= original_width <= 3200 and 3700 <= original_height <= 4100)):
         
         if original_width >= 2800:
-            logger.info(f"Input {original_width}x{original_height} detected as ~3000x3900, using center crop")
+            logger.info(f"Input {original_width}x{original_height} detected as ~3000x3900, using fixed center crop")
             crop_ratio = 0.75  # Smaller crop ratio for larger images
         else:
-            logger.info(f"Input {original_width}x{original_height} detected as ~2000x2600, using center crop")
+            logger.info(f"Input {original_width}x{original_height} detected as ~2000x2600, using fixed center crop")
             crop_ratio = 0.85
         
         crop_width = int(original_width * crop_ratio)
         crop_height = int(original_height * crop_ratio)
         
-        # Center crop around detected ring center
-        left = max(0, ring_center[0] - crop_width // 2)
-        top = max(0, ring_center[1] - crop_height // 2)
+        # V5: FIXED center crop - always use image center
+        left = max(0, image_center[0] - crop_width // 2)
+        top = max(0, image_center[1] - crop_height // 2)
         
         # Adjust if crop goes beyond image bounds
         if left + crop_width > original_width:
@@ -358,6 +324,8 @@ def create_thumbnail_smart_center_crop_with_upscale(image, target_width=1000, ta
         
         right = left + crop_width
         bottom = top + crop_height
+        
+        logger.info(f"Fixed center crop coordinates: ({left}, {top}, {right}, {bottom})")
         
         cropped = image.crop((left, top, right, bottom))
         
@@ -402,7 +370,7 @@ def image_to_base64(image):
     return img_base64_no_padding
 
 def handler(event):
-    """Thumbnail handler function - creates thumbnails 007, 008, 009 with enhanced processing"""
+    """Thumbnail handler function - V5 with fixed center crop and enhanced quality"""
     try:
         logger.info(f"Thumbnail {VERSION} started")
         logger.info(f"Input data type: {type(event)}")
@@ -446,10 +414,10 @@ def handler(event):
         
         logger.info(f"Image loaded: {image.size}")
         
-        # 1. Apply basic enhancement (same as V119)
+        # 1. Apply basic enhancement (same as V121)
         enhanced_image = apply_basic_enhancement(image)
         
-        # 2. Smart thumbnail creation with CENTER CROP and UPSCALING - V4 supports 3000x3900
+        # 2. Smart thumbnail creation with FIXED CENTER CROP and UPSCALING - V5 with fixed center
         thumbnail = create_thumbnail_smart_center_crop_with_upscale(enhanced_image, 1000, 1300)
         
         # 3. Detect pattern type
@@ -464,19 +432,19 @@ def handler(event):
         
         logger.info(f"Final detection - Type: {detected_type}, Filename: {filename}")
         
-        # 4. Apply pattern-specific enhancement
+        # 4. Apply pattern-specific enhancement (with V121 brightness)
         thumbnail = apply_color_specific_enhancement(thumbnail, pattern_type, filename)
         
-        # 5. Apply spotlight effect (very subtle)
+        # 5. Apply enhanced spotlight effect
         thumbnail = apply_spotlight_effect(thumbnail)
         
-        # 6. Enhanced sharpness for details (slightly reduced)
+        # 6. Enhanced sharpness for details
         sharpness = ImageEnhance.Sharpness(thumbnail)
-        thumbnail = sharpness.enhance(1.20)  # Reduced from 1.25
+        thumbnail = sharpness.enhance(1.25)  # Enhanced from 1.20
         
-        # 7. Final brightness touch
+        # 7. Final brightness touch - enhanced
         brightness = ImageEnhance.Brightness(thumbnail)
-        thumbnail = brightness.enhance(1.01)  # Very subtle final brightness
+        thumbnail = brightness.enhance(1.02)  # Enhanced from 1.01
         
         # Convert to base64
         thumbnail_base64 = image_to_base64(thumbnail)
@@ -497,7 +465,8 @@ def handler(event):
                 "format": "base64_no_padding",
                 "has_spotlight": True,
                 "has_upscaling": True,
-                "supports_3000x3900": True,  # V4 feature
+                "supports_3000x3900": True,  # V5 feature
+                "fixed_center_crop": True,  # V5 NEW feature
                 "version": VERSION,
                 "status": "success"
             }
