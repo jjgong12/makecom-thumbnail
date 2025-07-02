@@ -13,67 +13,45 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-VERSION = "V6-StrongerWeddingFocus-EnhancedWhiteOverlay"
+VERSION = "V7-OptimizedPerformance-QualityCheck"
 
 def find_input_data(data):
-    """Find input data recursively"""
+    """Find input data recursively - optimized"""
     if isinstance(data, dict):
-        if any(key in data for key in ['image', 'url', 'image_url', 'imageUrl', 'image_base64', 'imageBase64']):
-            return data
+        # Check direct image keys
+        for key in ['image', 'image_base64', 'imageBase64', 'url', 'image_url']:
+            if key in data:
+                return data
         
-        if 'input' in data:
-            return find_input_data(data['input'])
-        
-        for key in ['job', 'payload', 'data']:
+        # Check nested structures
+        for key in ['input', 'job', 'payload', 'data']:
             if key in data:
                 result = find_input_data(data[key])
                 if result:
                     return result
     return data
 
-def find_filename_enhanced(data, depth=0):
-    """Enhanced filename extraction"""
-    if depth > 10:
+def find_filename_optimized(data, depth=0):
+    """Optimized filename extraction"""
+    if depth > 5:
         return None
     
-    found_filenames = []
-    
-    def extract_filenames(obj, current_depth):
-        if current_depth > 10:
-            return
-            
-        if isinstance(obj, dict):
-            filename_keys = [
-                'filename', 'file_name', 'fileName', 'name', 'file',
-                'originalName', 'original_name', 'originalFileName', 'original_file_name',
-                'image_name', 'imageName', 'imageFileName', 'image_file_name',
-                'ring_filename', 'ringFilename', 'product_name', 'productName',
-                'title', 'label', 'id', 'identifier', 'reference'
-            ]
-            
-            for key, value in obj.items():
-                if isinstance(value, str) and any(pattern in value.lower() for pattern in ['ac_', 'bc_', 'a_', 'b_', 'c_']):
-                    if len(value) < 100:
-                        found_filenames.append(value)
-                        logger.info(f"Found potential filename in value: {value}")
-                
-                if key.lower() in [k.lower() for k in filename_keys]:
-                    if isinstance(value, str) and value and len(value) < 100:
-                        found_filenames.append(value)
-                        logger.info(f"Found filename at key '{key}': {value}")
-                
-                if isinstance(value, dict):
-                    extract_filenames(value, current_depth + 1)
-                elif isinstance(value, list):
-                    for item in value:
-                        extract_filenames(item, current_depth + 1)
-    
-    extract_filenames(data, 0)
-    
-    if found_filenames:
-        filename = found_filenames[0]
-        logger.info(f"Selected filename: {filename}")
-        return filename
+    if isinstance(data, dict):
+        # Direct filename keys
+        for key in ['filename', 'file_name', 'fileName', 'name', 'originalName']:
+            if key in data and isinstance(data[key], str):
+                value = data[key]
+                if any(p in value.lower() for p in ['b_', 'bc_', 'a_', 'ac_']):
+                    return value
+                elif '.' in value and len(value) < 100:
+                    return value
+        
+        # Recursive search
+        for value in data.values():
+            if isinstance(value, dict):
+                result = find_filename_optimized(value, depth + 1)
+                if result:
+                    return result
     
     return None
 
@@ -84,32 +62,26 @@ def generate_thumbnail_filename(original_filename, image_index):
     
     import re
     
-    # No conversion needed - already b_ or bc_ pattern
-    new_filename = original_filename
-    
     # Map image index to 007, 008, 009
-    # 원본 6장 중 3장만 선택 (예: 1,3,5번째 → 007,008,009)
     thumbnail_numbers = {
-        1: "007",  # First selected image (from 001 or 002)
-        3: "008",  # Second selected image (from 003 or 004)
-        5: "009"   # Third selected image (from 005 or 006)
+        1: "007",
+        3: "008",
+        5: "009"
     }
     
-    # Replace the number part with new number
+    new_filename = original_filename
     pattern = r'(_\d{3})'
     if re.search(pattern, new_filename):
         new_filename = re.sub(pattern, f'_{thumbnail_numbers.get(image_index, "007")}', new_filename)
     else:
-        # If no number pattern found, append it
         name_parts = new_filename.split('.')
         name_parts[0] += f'_{thumbnail_numbers.get(image_index, "007")}'
         new_filename = '.'.join(name_parts)
     
-    logger.info(f"Generated thumbnail filename: {original_filename} -> {new_filename}")
     return new_filename
 
 def download_image_from_url(url):
-    """Download image from URL"""
+    """Download image from URL - optimized"""
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
         'Accept': 'image/webp,image/apng,image/*,*/*;q=0.8'
@@ -120,10 +92,11 @@ def download_image_from_url(url):
     return Image.open(BytesIO(response.content))
 
 def base64_to_image(base64_string):
-    """Convert base64 to PIL Image"""
+    """Convert base64 to PIL Image - optimized"""
     if ',' in base64_string:
         base64_string = base64_string.split(',')[1]
     
+    # Add padding if needed
     padding = 4 - len(base64_string) % 4
     if padding != 4:
         base64_string += '=' * padding
@@ -132,105 +105,123 @@ def base64_to_image(base64_string):
     return Image.open(BytesIO(img_data))
 
 def detect_pattern_type(filename: str) -> str:
-    """Detect pattern type"""
+    """Detect pattern type - optimized"""
     if not filename:
         return "other"
     
     filename_lower = filename.lower()
-    logger.info(f"Checking filename pattern: {filename_lower}")
     
-    import re
-    
-    pattern_ac_bc = re.search(r'(ac_|bc_)', filename_lower)
-    pattern_a_only = re.search(r'(?<!a)(?<!b)a_', filename_lower)
-    
-    if pattern_ac_bc:
-        logger.info("Pattern detected: ac_ or bc_ (unplated white)")
-        return "ac_bc"
-    elif pattern_a_only:
-        logger.info("Pattern detected: a_ only")
-        return "a_only"
+    if 'bc_' in filename_lower:
+        return "bc_only"  # Separate bc_ for quality check
+    elif 'b_' in filename_lower and 'bc_' not in filename_lower:
+        return "b_only"
     else:
-        logger.info("Pattern detected: other")
         return "other"
 
-def detect_wedding_ring(image: Image.Image) -> bool:
-    """Detect if image contains wedding rings based on ring characteristics"""
-    # Convert to grayscale for analysis
-    gray = image.convert('L')
-    gray_array = np.array(gray)
+def detect_wedding_ring_fast(image: Image.Image) -> bool:
+    """Fast wedding ring detection - simplified"""
+    try:
+        # Check center region for bright metallic areas
+        width, height = image.size
+        center_crop = image.crop((width//3, height//3, 2*width//3, 2*height//3))
+        gray = center_crop.convert('L')
+        gray_array = np.array(gray)
+        
+        # Check bright pixels ratio
+        bright_pixels = np.sum(gray_array > 200)
+        total_pixels = gray_array.size
+        bright_ratio = bright_pixels / total_pixels
+        
+        return bright_ratio > 0.15
+    except:
+        return False
+
+def calculate_quality_metrics(image: Image.Image) -> dict:
+    """Calculate quality metrics for bc_ pattern"""
+    img_array = np.array(image)
     
-    # Look for circular shapes (typical of rings)
-    # Apply blur to reduce noise
-    blurred = cv2.GaussianBlur(gray_array, (5, 5), 0)
+    # Calculate RGB averages
+    r_avg = float(np.mean(img_array[:,:,0]))
+    g_avg = float(np.mean(img_array[:,:,1]))
+    b_avg = float(np.mean(img_array[:,:,2]))
     
-    # Find edges
-    edges = cv2.Canny(blurred, 50, 150)
+    # Calculate brightness
+    brightness = (r_avg + g_avg + b_avg) / 3
     
-    # Detect circles using Hough transform
-    circles = cv2.HoughCircles(
-        blurred,
-        cv2.HOUGH_GRADIENT,
-        dp=1,
-        minDist=20,
-        param1=50,
-        param2=30,
-        minRadius=10,
-        maxRadius=300
-    )
+    # Calculate RGB deviation
+    rgb_values = [r_avg, g_avg, b_avg]
+    rgb_deviation = max(rgb_values) - min(rgb_values)
     
-    # If we find circular shapes, it's likely a ring
-    if circles is not None and len(circles[0]) > 0:
-        logger.info(f"Detected {len(circles[0])} circular shapes - likely wedding rings")
-        return True
+    # Calculate saturation
+    img_hsv = cv2.cvtColor(img_array, cv2.COLOR_RGB2HSV)
+    saturation = float(np.mean(img_hsv[:,:,1]) / 255 * 100)
     
-    # Additional check: look for metallic/bright regions in center
-    height, width = gray_array.shape
-    center_region = gray_array[height//3:2*height//3, width//3:2*width//3]
+    # Cool tone check
+    cool_tone_diff = b_avg - r_avg
     
-    # Check if center has bright metallic areas
-    bright_pixels = np.sum(center_region > 200)
-    total_pixels = center_region.size
-    bright_ratio = bright_pixels / total_pixels
+    return {
+        "brightness": brightness,
+        "rgb_deviation": rgb_deviation,
+        "saturation": saturation,
+        "cool_tone_diff": cool_tone_diff
+    }
+
+def apply_second_correction_thumbnail(image: Image.Image, reasons: list) -> Image.Image:
+    """Apply second correction for thumbnail based on quality check"""
+    logger.info(f"Applying second correction for bc_ pattern: {reasons}")
     
-    if bright_ratio > 0.1:  # More than 10% bright pixels in center
-        logger.info(f"Detected bright metallic areas ({bright_ratio:.2%}) - likely wedding rings")
-        return True
+    if "brightness_low" in reasons:
+        # Enhanced white overlay for thumbnail
+        white_overlay_percent = 0.18  # Higher for thumbnail
+        img_array = np.array(image)
+        img_array = img_array * (1 - white_overlay_percent) + 255 * white_overlay_percent
+        image = Image.fromarray(img_array.astype(np.uint8))
     
-    return False
+    if "insufficient_cool_tone" in reasons:
+        img_array = np.array(image)
+        # Boost blue channel
+        img_array[:,:,2] = np.clip(img_array[:,:,2] * 1.03, 0, 255)
+        # Reduce red channel
+        img_array[:,:,0] = np.clip(img_array[:,:,0] * 0.97, 0, 255)
+        image = Image.fromarray(img_array.astype(np.uint8))
+    
+    if any(r in reasons for r in ["brightness_low", "saturation_high"]):
+        # Apply unsharp mask for detail
+        image = image.filter(ImageFilter.UnsharpMask(radius=1, percent=35, threshold=3))
+    
+    return image
 
 def apply_wedding_ring_focus(image: Image.Image) -> Image.Image:
-    """Apply enhanced focus and sharpness for wedding rings - V6 stronger focus"""
-    logger.info("Applying wedding ring focus enhancement")
-    
-    # 1. Stronger center focus - V6 enhanced for better emphasis
+    """Apply enhanced focus for wedding rings - optimized"""
+    # Center focus
     width, height = image.size
     x = np.linspace(-1, 1, width)
     y = np.linspace(-1, 1, height)
     X, Y = np.meshgrid(x, y)
     distance = np.sqrt(X**2 + Y**2)
     
-    # V6: Stronger focus for wedding rings
-    focus_mask = 1 + 0.035 * np.exp(-distance**2 * 1.5)  # Same as V122 enhancement
+    # 3.5% center focus for wedding rings
+    focus_mask = 1 + 0.035 * np.exp(-distance**2 * 1.5)
     focus_mask = np.clip(focus_mask, 1.0, 1.035)
     
-    img_array = np.array(image)
+    img_array = np.array(image, dtype=np.float32)
     for i in range(3):
-        img_array[:, :, i] = np.clip(img_array[:, :, i] * focus_mask, 0, 255)
+        img_array[:, :, i] *= focus_mask
+    img_array = np.clip(img_array, 0, 255)
     image = Image.fromarray(img_array.astype(np.uint8))
     
-    # 2. Enhanced sharpness for ring details
+    # Enhanced sharpness
     sharpness = ImageEnhance.Sharpness(image)
-    image = sharpness.enhance(1.3)  # Same as V122
+    image = sharpness.enhance(1.3)
     
-    # 3. Slightly enhanced contrast for definition
+    # Contrast
     contrast = ImageEnhance.Contrast(image)
-    image = contrast.enhance(1.03)  # Same as V122
+    image = contrast.enhance(1.03)
     
     return image
 
 def apply_basic_enhancement(image):
-    """Apply basic enhancement - V6 with stronger brightness"""
+    """Apply basic enhancement - optimized for upscaled images"""
     if image.mode != 'RGB':
         if image.mode == 'RGBA':
             background = Image.new('RGB', image.size, (255, 255, 255))
@@ -239,177 +230,136 @@ def apply_basic_enhancement(image):
         else:
             image = image.convert('RGB')
     
-    # V6 settings - stronger brightness to match V122
+    # Enhanced brightness for upscaled images
     brightness = ImageEnhance.Brightness(image)
-    image = brightness.enhance(1.03)  # Enhanced from V5's 1.02
+    image = brightness.enhance(1.05)  # Increased from 1.03
     
     contrast = ImageEnhance.Contrast(image)
-    image = contrast.enhance(1.03)  # Enhanced from V5's 1.02
+    image = contrast.enhance(1.03)
     
     color = ImageEnhance.Color(image)
-    image = color.enhance(1.02)  # Enhanced from V5's 1.01
+    image = color.enhance(1.02)
     
     return image
 
-def apply_color_specific_enhancement(image, pattern_type, filename, is_wedding_ring):
-    """Apply enhancement based on pattern type - V6 with wedding ring detection"""
+def apply_pattern_enhancement(image, pattern_type, is_wedding_ring):
+    """Apply enhancement based on pattern type - optimized"""
     
-    logger.info(f"Applying enhancement - Filename: {filename}, Pattern type: {pattern_type}, Wedding ring: {is_wedding_ring}")
-    
-    if pattern_type == "ac_bc":
-        logger.info("Applying unplated white enhancement")
-        
+    if pattern_type == "bc_only":
+        # bc_ pattern (unplated white)
         brightness = ImageEnhance.Brightness(image)
-        image = brightness.enhance(1.03)  # Enhanced to match V122
+        image = brightness.enhance(1.03)
         
         color = ImageEnhance.Color(image)
         image = color.enhance(0.96)
         
-        contrast = ImageEnhance.Contrast(image)
-        image = contrast.enhance(1.0)
-        
-        # V6: Enhanced white overlay for wedding rings
-        if is_wedding_ring:
-            logger.info("Wedding ring detected - applying 18% white overlay")
-            white_overlay_percent = 0.18  # Same as V122 enhancement
-        else:
-            white_overlay_percent = 0.15
-            
+        # White overlay
+        white_overlay = 0.18 if is_wedding_ring else 0.15
         img_array = np.array(image)
-        img_array = img_array * (1 - white_overlay_percent) + 255 * white_overlay_percent
+        img_array = img_array * (1 - white_overlay) + 255 * white_overlay
         image = Image.fromarray(img_array.astype(np.uint8))
         
-        brightness = ImageEnhance.Brightness(image)
-        image = brightness.enhance(1.00)
-        
-        # V6: Apply wedding ring focus for ac_ patterns too
+        # Apply wedding ring focus if detected
         if is_wedding_ring:
             image = apply_wedding_ring_focus(image)
         
-    elif pattern_type == "a_only":
-        logger.info("Applying a_ pattern enhancement")
-        
+    elif pattern_type == "b_only":
+        # b_ pattern
         brightness = ImageEnhance.Brightness(image)
-        image = brightness.enhance(1.04)  # Enhanced to match V122
+        image = brightness.enhance(1.04)
         
         color = ImageEnhance.Color(image)
         image = color.enhance(0.98)
         
         contrast = ImageEnhance.Contrast(image)
-        image = contrast.enhance(1.02)  # Enhanced to match V122
+        image = contrast.enhance(1.02)
         
+        # Center focus
         width, height = image.size
         x = np.linspace(-1, 1, width)
         y = np.linspace(-1, 1, height)
         X, Y = np.meshgrid(x, y)
         distance = np.sqrt(X**2 + Y**2)
         
-        focus_mask = 1 + 0.03 * np.exp(-distance**2 * 1.0)  # Enhanced to match V122
+        focus_mask = 1 + 0.03 * np.exp(-distance**2 * 1.0)
         focus_mask = np.clip(focus_mask, 1.0, 1.03)
         
-        img_array = np.array(image)
+        img_array = np.array(image, dtype=np.float32)
         for i in range(3):
-            img_array[:, :, i] = np.clip(img_array[:, :, i] * focus_mask, 0, 255)
+            img_array[:, :, i] *= focus_mask
+        img_array = np.clip(img_array, 0, 255)
         image = Image.fromarray(img_array.astype(np.uint8))
         
-        brightness = ImageEnhance.Brightness(image)
-        image = brightness.enhance(1.00)
-        
-        # Apply wedding ring focus if detected
         if is_wedding_ring:
             image = apply_wedding_ring_focus(image)
         
     else:
-        logger.info("Standard enhancement")
-        
+        # Standard enhancement
         brightness = ImageEnhance.Brightness(image)
-        image = brightness.enhance(1.03)  # Enhanced to match V122
+        image = brightness.enhance(1.03)
         
         color = ImageEnhance.Color(image)
         image = color.enhance(0.98)
         
         contrast = ImageEnhance.Contrast(image)
-        image = contrast.enhance(1.02)  # Enhanced to match V122
+        image = contrast.enhance(1.02)
         
-        brightness = ImageEnhance.Brightness(image)
-        image = brightness.enhance(1.00)
-        
-        # Apply wedding ring focus if detected
         if is_wedding_ring:
             image = apply_wedding_ring_focus(image)
     
     return image
 
 def apply_spotlight_effect(image):
-    """Apply subtle spotlight effect to center of image"""
-    logger.info("Applying spotlight effect")
-    
+    """Apply subtle spotlight effect - optimized"""
     width, height = image.size
     
-    # Create radial gradient for spotlight
     x = np.linspace(-1, 1, width)
     y = np.linspace(-1, 1, height)
     X, Y = np.meshgrid(x, y)
-    
-    # Distance from center
     distance = np.sqrt(X**2 + Y**2)
     
-    # Create spotlight mask - V6 enhanced
-    spotlight_mask = 1 + 0.03 * np.exp(-distance**2 * 1.2)  # Enhanced from 0.025 to 0.03
+    # Spotlight mask
+    spotlight_mask = 1 + 0.03 * np.exp(-distance**2 * 1.2)
     spotlight_mask = np.clip(spotlight_mask, 1.0, 1.03)
     
-    # Apply spotlight
-    img_array = np.array(image)
+    img_array = np.array(image, dtype=np.float32)
     for i in range(3):
-        img_array[:, :, i] = np.clip(img_array[:, :, i] * spotlight_mask, 0, 255)
+        img_array[:, :, i] *= spotlight_mask
+    img_array = np.clip(img_array, 0, 255)
     
     return Image.fromarray(img_array.astype(np.uint8))
 
 def create_thumbnail_smart_center_crop_with_upscale(image, target_width=1000, target_height=1300):
-    """Create thumbnail with FIXED CENTER CROP and upscaling - V6 always uses image center"""
+    """Create thumbnail with fixed center crop and upscaling - optimized"""
     original_width, original_height = image.size
     
-    # V6: ALWAYS use image center - DO NOT detect ring center
+    # Fixed image center
     image_center = (original_width // 2, original_height // 2)
-    logger.info(f"Using FIXED image center: {image_center}")
     
-    # V6: Apply upscaling first if image is smaller than target
+    # Upscale if needed
     if original_width < target_width or original_height < target_height:
-        logger.info(f"Image {original_width}x{original_height} smaller than target, upscaling first")
-        
-        # Calculate scale factor to ensure both dimensions are at least target size
-        scale_factor = max(target_width / original_width, target_height / original_height) * 1.1  # 10% extra
+        scale_factor = max(target_width / original_width, target_height / original_height) * 1.1
         
         new_width = int(original_width * scale_factor)
         new_height = int(original_height * scale_factor)
         
-        # Upscale using LANCZOS for best quality
         image = image.resize((new_width, new_height), Image.Resampling.LANCZOS)
-        logger.info(f"Upscaled to {new_width}x{new_height}")
-        
-        # Adjust center coordinates proportionally
         image_center = (int(image_center[0] * scale_factor), int(image_center[1] * scale_factor))
         original_width, original_height = new_width, new_height
     
-    # Check for specific size ranges - V6 includes 3000x3900 support
+    # Check for specific size ranges
     if ((1800 <= original_width <= 2200 and 2400 <= original_height <= 2800) or
         (2800 <= original_width <= 3200 and 3700 <= original_height <= 4100)):
         
-        if original_width >= 2800:
-            logger.info(f"Input {original_width}x{original_height} detected as ~3000x3900, using fixed center crop")
-            crop_ratio = 0.75  # Smaller crop ratio for larger images
-        else:
-            logger.info(f"Input {original_width}x{original_height} detected as ~2000x2600, using fixed center crop")
-            crop_ratio = 0.85
+        crop_ratio = 0.75 if original_width >= 2800 else 0.85
         
         crop_width = int(original_width * crop_ratio)
         crop_height = int(original_height * crop_ratio)
         
-        # V6: FIXED center crop - always use image center
+        # Fixed center crop
         left = max(0, image_center[0] - crop_width // 2)
         top = max(0, image_center[1] - crop_height // 2)
         
-        # Adjust if crop goes beyond image bounds
         if left + crop_width > original_width:
             left = original_width - crop_width
         if top + crop_height > original_height:
@@ -418,18 +368,14 @@ def create_thumbnail_smart_center_crop_with_upscale(image, target_width=1000, ta
         right = left + crop_width
         bottom = top + crop_height
         
-        logger.info(f"Fixed center crop coordinates: ({left}, {top}, {right}, {bottom})")
-        
         cropped = image.crop((left, top, right, bottom))
         
         return cropped.resize((target_width, target_height), Image.Resampling.LANCZOS)
         
     else:
-        logger.info(f"Input {original_width}x{original_height} not in specific ranges, using aspect ratio preservation")
-        
+        # Aspect ratio preservation
         width_ratio = target_width / original_width
         height_ratio = target_height / original_height
-        
         scale_ratio = min(width_ratio, height_ratio)
         
         new_width = int(original_width * scale_ratio)
@@ -447,7 +393,7 @@ def create_thumbnail_smart_center_crop_with_upscale(image, target_width=1000, ta
         return thumbnail
 
 def image_to_base64(image):
-    """Convert image to base64 without padding for Make.com"""
+    """Convert image to base64 without padding"""
     buffered = BytesIO()
     
     if image.mode == 'RGBA':
@@ -458,27 +404,20 @@ def image_to_base64(image):
     image.save(buffered, format='PNG', quality=95)
     img_base64 = base64.b64encode(buffered.getvalue()).decode()
     
-    img_base64_no_padding = img_base64.rstrip('=')
-    
-    return img_base64_no_padding
+    return img_base64.rstrip('=')
 
 def handler(event):
-    """Thumbnail handler function - V6 with stronger wedding focus and enhanced quality"""
+    """Thumbnail handler function - V7 optimized with quality check"""
     try:
         logger.info(f"Thumbnail {VERSION} started")
-        logger.info(f"Input data type: {type(event)}")
         
-        # Get image index (1, 3, or 5)
+        # Get image index
         image_index = event.get('image_index', 1)
         if isinstance(event.get('input'), dict):
             image_index = event.get('input', {}).get('image_index', image_index)
         
-        # Use enhanced filename detection
-        filename = find_filename_enhanced(event)
-        if filename:
-            logger.info(f"Successfully extracted filename: {filename}")
-        else:
-            logger.warning("Could not extract filename from input - will use default enhancement")
+        # Extract filename
+        filename = find_filename_optimized(event)
         
         # Find input data
         input_data = find_input_data(event)
@@ -493,8 +432,8 @@ def handler(event):
             if 'image_base64' in input_data or 'imageBase64' in input_data:
                 base64_str = input_data.get('image_base64') or input_data.get('imageBase64')
                 image = base64_to_image(base64_str)
-            elif 'url' in input_data or 'image_url' in input_data or 'imageUrl' in input_data:
-                image_url = input_data.get('url') or input_data.get('image_url') or input_data.get('imageUrl')
+            elif 'url' in input_data or 'image_url' in input_data:
+                image_url = input_data.get('url') or input_data.get('image_url')
                 image = download_image_from_url(image_url)
         elif isinstance(input_data, str):
             if input_data.startswith('http'):
@@ -507,49 +446,66 @@ def handler(event):
         
         logger.info(f"Image loaded: {image.size}")
         
-        # 1. Apply basic enhancement (V6 with stronger brightness)
+        # Apply basic enhancement (enhanced for upscaling)
         enhanced_image = apply_basic_enhancement(image)
         
-        # 2. Detect if wedding ring BEFORE cropping
-        is_wedding_ring = detect_wedding_ring(enhanced_image)
+        # Detect wedding ring
+        is_wedding_ring = detect_wedding_ring_fast(enhanced_image)
         
-        # 3. Smart thumbnail creation with FIXED CENTER CROP and UPSCALING - V6 with fixed center
+        # Create thumbnail with upscaling
         thumbnail = create_thumbnail_smart_center_crop_with_upscale(enhanced_image, 1000, 1300)
         
-        # 4. Detect pattern type
+        # Detect pattern type
         pattern_type = detect_pattern_type(filename)
         
-        if pattern_type == "ac_bc":
+        if pattern_type == "bc_only":
             detected_type = "무도금화이트"
-        elif pattern_type == "a_only":
-            detected_type = "a_패턴"
+        elif pattern_type == "b_only":
+            detected_type = "b_패턴"
         else:
             detected_type = "기타색상"
         
-        logger.info(f"Final detection - Type: {detected_type}, Filename: {filename}")
+        # Apply pattern-specific enhancement
+        thumbnail = apply_pattern_enhancement(thumbnail, pattern_type, is_wedding_ring)
         
-        # 5. Apply pattern-specific enhancement (with V6 wedding ring detection)
-        thumbnail = apply_color_specific_enhancement(thumbnail, pattern_type, filename, is_wedding_ring)
+        # Quality check for bc_ pattern (무도금화이트)
+        second_correction_applied = False
+        if pattern_type == "bc_only":
+            metrics = calculate_quality_metrics(thumbnail)
+            
+            reasons = []
+            if metrics["brightness"] < 235:
+                reasons.append("brightness_low")
+            if metrics["cool_tone_diff"] < 3:
+                reasons.append("insufficient_cool_tone")
+            if metrics["rgb_deviation"] > 5:
+                reasons.append("rgb_deviation_high")
+            if metrics["saturation"] > 3:
+                reasons.append("saturation_high")
+            
+            if reasons:
+                thumbnail = apply_second_correction_thumbnail(thumbnail, reasons)
+                second_correction_applied = True
         
-        # 6. Apply enhanced spotlight effect (only if not wedding ring)
+        # Apply spotlight (only if not wedding ring)
         if not is_wedding_ring:
             thumbnail = apply_spotlight_effect(thumbnail)
         
-        # 7. Enhanced sharpness for details (reduced if wedding ring)
+        # Enhanced sharpness for upscaled images
         sharpness = ImageEnhance.Sharpness(thumbnail)
         if is_wedding_ring:
-            thumbnail = sharpness.enhance(1.15)  # Less sharpening for wedding rings
+            thumbnail = sharpness.enhance(1.2)
         else:
-            thumbnail = sharpness.enhance(1.3)  # Enhanced from 1.25
+            thumbnail = sharpness.enhance(1.35)  # Increased from 1.3
         
-        # 8. Final brightness touch - enhanced
+        # Final brightness touch for upscaled images
         brightness = ImageEnhance.Brightness(thumbnail)
-        thumbnail = brightness.enhance(1.03)  # Enhanced from 1.02
+        thumbnail = brightness.enhance(1.05)  # Increased from 1.03
         
         # Convert to base64
         thumbnail_base64 = image_to_base64(thumbnail)
         
-        # Generate output filename (007, 008, or 009)
+        # Generate output filename
         output_filename = generate_thumbnail_filename(filename, image_index)
         
         # Return result
@@ -559,15 +515,14 @@ def handler(event):
                 "size": list(thumbnail.size),
                 "detected_type": detected_type,
                 "pattern_type": pattern_type,
-                "is_wedding_ring": is_wedding_ring,  # V6: Added wedding ring detection
-                "filename": output_filename,  # Will be b_007, bc_007, etc.
+                "is_wedding_ring": is_wedding_ring,
+                "filename": output_filename,
                 "original_filename": filename,
                 "image_index": image_index,
                 "format": "base64_no_padding",
-                "has_spotlight": not is_wedding_ring,  # V6: No spotlight for wedding rings
+                "has_spotlight": not is_wedding_ring,
                 "has_upscaling": True,
-                "supports_3000x3900": True,
-                "fixed_center_crop": True,
+                "second_correction_applied": second_correction_applied,
                 "version": VERSION,
                 "status": "success"
             }
@@ -586,6 +541,3 @@ def handler(event):
                 "traceback": traceback.format_exc()
             }
         }
-
-# RunPod handler
-runpod.serverless.start({"handler": handler})
