@@ -11,7 +11,7 @@ import re
 logging.basicConfig(level=logging.WARNING)  # Changed to WARNING to reduce logs
 logger = logging.getLogger(__name__)
 
-VERSION = "V7-StableOptimized-QualityCheck"
+VERSION = "V8-PureWhite-bcAdjusted"
 
 def find_input_data(data):
     """Find input data recursively - optimized"""
@@ -176,10 +176,10 @@ def calculate_quality_metrics_simple(image: Image.Image) -> dict:
     }
 
 def apply_second_correction_thumbnail(image: Image.Image, reasons: list) -> Image.Image:
-    """Apply second correction for thumbnail"""
+    """Apply second correction for thumbnail - V8 pure white"""
     if "brightness_low" in reasons:
-        # Enhanced white overlay
-        white_overlay_percent = 0.18
+        # Enhanced white overlay for pure white
+        white_overlay_percent = 0.22  # Increased for thumbnail
         img_array = np.array(image, dtype=np.float32)
         img_array = img_array * (1 - white_overlay_percent) + 255 * white_overlay_percent
         img_array = np.clip(img_array, 0, 255)
@@ -251,18 +251,18 @@ def apply_basic_enhancement(image):
     return image
 
 def apply_pattern_enhancement(image, pattern_type, is_wedding_ring):
-    """Apply enhancement based on pattern type"""
+    """Apply enhancement based on pattern type - V8 with bc_ adjustments"""
     
     if pattern_type == "bc_only":
-        # bc_ pattern (unplated white)
+        # bc_ pattern (unplated white) - V8 adjustments
         brightness = ImageEnhance.Brightness(image)
-        image = brightness.enhance(1.03)
+        image = brightness.enhance(1.01)  # Lowered from 1.03
         
         color = ImageEnhance.Color(image)
-        image = color.enhance(0.96)
+        image = color.enhance(0.95)  # More desaturated for pure white
         
-        # White overlay
-        white_overlay = 0.18 if is_wedding_ring else 0.15
+        # Increased white overlay for pure white effect
+        white_overlay = 0.20 if is_wedding_ring else 0.17  # Increased by 2%
         img_array = np.array(image, dtype=np.float32)
         img_array = img_array * (1 - white_overlay) + 255 * white_overlay
         img_array = np.clip(img_array, 0, 255)
@@ -416,7 +416,7 @@ def image_to_base64(image):
     return img_base64.rstrip('=')
 
 def handler(event):
-    """Thumbnail handler function - V7 stable optimized"""
+    """Thumbnail handler function - V8 pure white optimized"""
     try:
         # Get image index
         image_index = event.get('image_index', 1)
@@ -474,19 +474,19 @@ def handler(event):
         # Apply pattern-specific enhancement
         thumbnail = apply_pattern_enhancement(thumbnail, pattern_type, is_wedding_ring)
         
-        # Quality check for bc_ pattern
+        # Quality check for bc_ pattern - V8 stricter standards
         second_correction_applied = False
         if pattern_type == "bc_only":
             metrics = calculate_quality_metrics_simple(thumbnail)
             
             reasons = []
-            if metrics["brightness"] < 235:
+            if metrics["brightness"] < 241:  # Increased from 235
                 reasons.append("brightness_low")
             if metrics["cool_tone_diff"] < 3:
                 reasons.append("insufficient_cool_tone")
             if metrics["rgb_deviation"] > 5:
                 reasons.append("rgb_deviation_high")
-            if metrics["saturation"] > 3:
+            if metrics["saturation"] > 2:  # Reduced from 3
                 reasons.append("saturation_high")
             
             if reasons:
