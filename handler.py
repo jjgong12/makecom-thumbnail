@@ -11,7 +11,7 @@ import re
 logging.basicConfig(level=logging.WARNING)  # Changed to WARNING to reduce logs
 logger = logging.getLogger(__name__)
 
-VERSION = "V9-WhiteOverlay-Extended"
+VERSION = "V10-Adjusted-WhiteOverlay"
 
 def find_input_data(data):
     """Find input data recursively - optimized"""
@@ -176,7 +176,7 @@ def calculate_quality_metrics_simple(image: Image.Image) -> dict:
     }
 
 def apply_second_correction_thumbnail(image: Image.Image, reasons: list) -> Image.Image:
-    """Apply second correction for thumbnail - V9 pure white"""
+    """Apply second correction for thumbnail - V10 pure white"""
     if "brightness_low" in reasons:
         # Enhanced white overlay for pure white
         white_overlay_percent = 0.22  # Increased for thumbnail
@@ -198,6 +198,25 @@ def apply_second_correction_thumbnail(image: Image.Image, reasons: list) -> Imag
         image = image.filter(ImageFilter.UnsharpMask(radius=1, percent=35, threshold=3))
     
     return image
+
+def apply_center_focus_thumbnail(image: Image.Image, intensity: float = 0.025) -> Image.Image:
+    """Apply subtle center focus effect for thumbnail - V10"""
+    width, height = image.size
+    x = np.linspace(-1, 1, width)
+    y = np.linspace(-1, 1, height)
+    X, Y = np.meshgrid(x, y)
+    distance = np.sqrt(X**2 + Y**2)
+    
+    # Subtle center focus for thumbnail
+    focus_mask = 1 + intensity * np.exp(-distance**2 * 2.0)
+    focus_mask = np.clip(focus_mask, 1.0, 1.0 + intensity)
+    
+    img_array = np.array(image, dtype=np.float32)
+    for i in range(3):
+        img_array[:, :, i] *= focus_mask
+    img_array = np.clip(img_array, 0, 255)
+    
+    return Image.fromarray(img_array.astype(np.uint8))
 
 def apply_wedding_ring_focus(image: Image.Image) -> Image.Image:
     """Apply enhanced focus for wedding rings"""
@@ -251,36 +270,39 @@ def apply_basic_enhancement(image):
     return image
 
 def apply_pattern_enhancement(image, pattern_type, is_wedding_ring):
-    """Apply enhancement based on pattern type - V9 with b_ white overlay"""
+    """Apply enhancement based on pattern type - V10 with adjusted white overlay"""
     
     if pattern_type == "bc_only":
-        # bc_ pattern (unplated white) - V8 adjustments
+        # bc_ pattern (unplated white) - V10 adjusted
         brightness = ImageEnhance.Brightness(image)
         image = brightness.enhance(1.01)  # Lowered from 1.03
         
         color = ImageEnhance.Color(image)
         image = color.enhance(0.95)  # More desaturated for pure white
         
-        # Increased white overlay for pure white effect
-        white_overlay = 0.20 if is_wedding_ring else 0.17  # Increased by 2%
+        # V10: Adjusted white overlay for bc_ - 0.19
+        white_overlay = 0.19  # Fixed at 0.19 for both wedding ring and normal
         img_array = np.array(image, dtype=np.float32)
         img_array = img_array * (1 - white_overlay) + 255 * white_overlay
         img_array = np.clip(img_array, 0, 255)
         image = Image.fromarray(img_array.astype(np.uint8))
         
+        # V10: Add subtle center focus
+        image = apply_center_focus_thumbnail(image, 0.025)
+        
         if is_wedding_ring:
             image = apply_wedding_ring_focus(image)
         
     elif pattern_type == "b_only":
-        # b_ pattern - V9 WITH WHITE OVERLAY
+        # b_ pattern - V10 with adjusted white overlay
         brightness = ImageEnhance.Brightness(image)
         image = brightness.enhance(1.01)  # Same as bc_
         
         color = ImageEnhance.Color(image)
         image = color.enhance(0.95)  # Same desaturation as bc_
         
-        # V9: ADD WHITE OVERLAY TO b_ PATTERN (same as bc_)
-        white_overlay = 0.20 if is_wedding_ring else 0.17
+        # V10: Adjusted white overlay for b_ - 0.11
+        white_overlay = 0.11  # Fixed at 0.11 for both wedding ring and normal
         img_array = np.array(image, dtype=np.float32)
         img_array = img_array * (1 - white_overlay) + 255 * white_overlay
         img_array = np.clip(img_array, 0, 255)
@@ -302,6 +324,9 @@ def apply_pattern_enhancement(image, pattern_type, is_wedding_ring):
         img_array = np.clip(img_array, 0, 255)
         image = Image.fromarray(img_array.astype(np.uint8))
         
+        # V10: Add subtle center focus
+        image = apply_center_focus_thumbnail(image, 0.025)
+        
         if is_wedding_ring:
             image = apply_wedding_ring_focus(image)
         
@@ -315,6 +340,9 @@ def apply_pattern_enhancement(image, pattern_type, is_wedding_ring):
         
         contrast = ImageEnhance.Contrast(image)
         image = contrast.enhance(1.02)
+        
+        # V10: Add subtle center focus to other patterns too
+        image = apply_center_focus_thumbnail(image, 0.02)
         
         if is_wedding_ring:
             image = apply_wedding_ring_focus(image)
@@ -420,7 +448,7 @@ def image_to_base64(image):
     return img_base64.rstrip('=')
 
 def handler(event):
-    """Thumbnail handler function - V9 with b_ white overlay"""
+    """Thumbnail handler function - V10 with adjusted white overlay"""
     try:
         # Get image index
         image_index = event.get('image_index', 1)
@@ -469,18 +497,18 @@ def handler(event):
         pattern_type = detect_pattern_type(filename)
         
         if pattern_type == "bc_only":
-            detected_type = "무도금화이트"
+            detected_type = "무도금화이트(0.19)"
         elif pattern_type == "b_only":
-            detected_type = "b_패턴(화이트오버레이)"  # V9: Now with white overlay
+            detected_type = "b_패턴(0.11)"
         else:
             detected_type = "기타색상"
         
         # Apply pattern-specific enhancement
         thumbnail = apply_pattern_enhancement(thumbnail, pattern_type, is_wedding_ring)
         
-        # Quality check for bc_ and b_ patterns - V9 stricter standards
+        # Quality check for bc_ and b_ patterns - V10 stricter standards
         second_correction_applied = False
-        if pattern_type in ["bc_only", "b_only"]:  # V9: Extended to b_only
+        if pattern_type in ["bc_only", "b_only"]:  # V10: Extended to b_only
             metrics = calculate_quality_metrics_simple(thumbnail)
             
             reasons = []
@@ -536,10 +564,11 @@ def handler(event):
                 "version": VERSION,
                 "status": "success",
                 "white_overlay_info": {
-                    "bc_only": "0.17-0.20",
-                    "b_only": "0.17-0.20",  # V9: Now same as bc_only
+                    "bc_only": "0.19",
+                    "b_only": "0.11",
                     "other": "none"
-                }
+                },
+                "has_center_focus": True
             }
         }
         
