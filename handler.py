@@ -280,8 +280,8 @@ def apply_pattern_enhancement(image, pattern_type, is_wedding_ring):
         color = ImageEnhance.Color(image)
         image = color.enhance(0.95)  # More desaturated for pure white
         
-        # V10: Adjusted white overlay for bc_ - 0.19
-        white_overlay = 0.19  # Fixed at 0.19 for both wedding ring and normal
+        # V10: Unified white overlay for bc_ - 0.13
+        white_overlay = 0.13  # Unified with ac_
         img_array = np.array(image, dtype=np.float32)
         img_array = img_array * (1 - white_overlay) + 255 * white_overlay
         img_array = np.clip(img_array, 0, 255)
@@ -294,19 +294,23 @@ def apply_pattern_enhancement(image, pattern_type, is_wedding_ring):
             image = apply_wedding_ring_focus(image)
         
     elif pattern_type == "b_only":
-        # b_ pattern - V10 with adjusted white overlay
+        # b_ pattern - V10 with reduced white overlay and increased sharpness
         brightness = ImageEnhance.Brightness(image)
         image = brightness.enhance(1.01)  # Same as bc_
         
         color = ImageEnhance.Color(image)
         image = color.enhance(0.95)  # Same desaturation as bc_
         
-        # V10: Adjusted white overlay for b_ - 0.11
-        white_overlay = 0.11  # Fixed at 0.11 for both wedding ring and normal
+        # V10: Reduced white overlay for b_ - 0.08
+        white_overlay = 0.08  # Reduced and unified with a_
         img_array = np.array(image, dtype=np.float32)
         img_array = img_array * (1 - white_overlay) + 255 * white_overlay
         img_array = np.clip(img_array, 0, 255)
         image = Image.fromarray(img_array.astype(np.uint8))
+        
+        # Enhanced sharpness for b_ pattern
+        sharpness = ImageEnhance.Sharpness(image)
+        image = sharpness.enhance(1.15)  # Increased sharpness
         
         # Center focus
         width, height = image.size
@@ -497,9 +501,9 @@ def handler(event):
         pattern_type = detect_pattern_type(filename)
         
         if pattern_type == "bc_only":
-            detected_type = "무도금화이트(0.19)"
+            detected_type = "무도금화이트(0.13)"
         elif pattern_type == "b_only":
-            detected_type = "b_패턴(0.11)"
+            detected_type = "b_패턴(0.08)"
         else:
             detected_type = "기타색상"
         
@@ -564,8 +568,8 @@ def handler(event):
                 "version": VERSION,
                 "status": "success",
                 "white_overlay_info": {
-                    "bc_only": "0.19",
-                    "b_only": "0.11",
+                    "bc_only": "0.13",
+                    "b_only": "0.08",
                     "other": "none"
                 },
                 "has_center_focus": True
