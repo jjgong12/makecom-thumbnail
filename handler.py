@@ -11,7 +11,7 @@ import re
 logging.basicConfig(level=logging.WARNING)  # Changed to WARNING to reduce logs
 logger = logging.getLogger(__name__)
 
-VERSION = "V10-Adjusted-WhiteOverlay"
+VERSION = "V11-Updated-WhiteOverlay"
 
 def find_input_data(data):
     """Find input data recursively - optimized"""
@@ -176,7 +176,7 @@ def calculate_quality_metrics_simple(image: Image.Image) -> dict:
     }
 
 def apply_second_correction_thumbnail(image: Image.Image, reasons: list) -> Image.Image:
-    """Apply second correction for thumbnail - V10 pure white"""
+    """Apply second correction for thumbnail - V11 pure white"""
     if "brightness_low" in reasons:
         # Enhanced white overlay for pure white
         white_overlay_percent = 0.22  # Increased for thumbnail
@@ -200,7 +200,7 @@ def apply_second_correction_thumbnail(image: Image.Image, reasons: list) -> Imag
     return image
 
 def apply_center_focus_thumbnail(image: Image.Image, intensity: float = 0.025) -> Image.Image:
-    """Apply subtle center focus effect for thumbnail - V10"""
+    """Apply subtle center focus effect for thumbnail - V11"""
     width, height = image.size
     x = np.linspace(-1, 1, width)
     y = np.linspace(-1, 1, height)
@@ -270,39 +270,55 @@ def apply_basic_enhancement(image):
     return image
 
 def apply_pattern_enhancement(image, pattern_type, is_wedding_ring):
-    """Apply enhancement based on pattern type - V10 with adjusted white overlay"""
+    """Apply enhancement based on pattern type - V11 with updated values"""
     
     if pattern_type == "bc_only":
-        # bc_ pattern (unplated white) - V10 adjusted
+        # bc_ pattern (unplated white) - V11 updated
         brightness = ImageEnhance.Brightness(image)
-        image = brightness.enhance(1.01)  # Lowered from 1.03
+        image = brightness.enhance(1.06)  # Updated from 1.01
         
         color = ImageEnhance.Color(image)
         image = color.enhance(0.95)  # More desaturated for pure white
         
-        # V10: Unified white overlay for bc_ - 0.13
-        white_overlay = 0.13  # Unified with ac_
+        # V11: Updated white overlay for bc_ - 0.14
+        white_overlay = 0.14  # Increased from 0.13
         img_array = np.array(image, dtype=np.float32)
         img_array = img_array * (1 - white_overlay) + 255 * white_overlay
         img_array = np.clip(img_array, 0, 255)
         image = Image.fromarray(img_array.astype(np.uint8))
         
-        # V10: Add subtle center focus
+        # V11: 7% center focus (fixed)
+        width, height = image.size
+        x = np.linspace(-1, 1, width)
+        y = np.linspace(-1, 1, height)
+        X, Y = np.meshgrid(x, y)
+        distance = np.sqrt(X**2 + Y**2)
+        
+        focus_mask = 1 + 0.07 * np.exp(-distance**2 * 1.5)
+        focus_mask = np.clip(focus_mask, 1.0, 1.07)
+        
+        img_array = np.array(image, dtype=np.float32)
+        for i in range(3):
+            img_array[:, :, i] *= focus_mask
+        img_array = np.clip(img_array, 0, 255)
+        image = Image.fromarray(img_array.astype(np.uint8))
+        
+        # V11: Add subtle center focus
         image = apply_center_focus_thumbnail(image, 0.025)
         
         if is_wedding_ring:
             image = apply_wedding_ring_focus(image)
         
     elif pattern_type == "b_only":
-        # b_ pattern - V10 with reduced white overlay and increased sharpness
+        # b_ pattern - V11 updated values
         brightness = ImageEnhance.Brightness(image)
-        image = brightness.enhance(1.01)  # Same as bc_
+        image = brightness.enhance(1.06)  # Updated from 1.01
         
         color = ImageEnhance.Color(image)
         image = color.enhance(0.95)  # Same desaturation as bc_
         
-        # V10: Reduced white overlay for b_ - 0.08
-        white_overlay = 0.08  # Reduced and unified with a_
+        # V11: Updated white overlay for b_ - 0.06
+        white_overlay = 0.06  # Reduced from 0.08
         img_array = np.array(image, dtype=np.float32)
         img_array = img_array * (1 - white_overlay) + 255 * white_overlay
         img_array = np.clip(img_array, 0, 255)
@@ -312,15 +328,15 @@ def apply_pattern_enhancement(image, pattern_type, is_wedding_ring):
         sharpness = ImageEnhance.Sharpness(image)
         image = sharpness.enhance(1.15)  # Increased sharpness
         
-        # Center focus
+        # V11: 7% center focus (fixed)
         width, height = image.size
         x = np.linspace(-1, 1, width)
         y = np.linspace(-1, 1, height)
         X, Y = np.meshgrid(x, y)
         distance = np.sqrt(X**2 + Y**2)
         
-        focus_mask = 1 + 0.03 * np.exp(-distance**2 * 1.0)
-        focus_mask = np.clip(focus_mask, 1.0, 1.03)
+        focus_mask = 1 + 0.07 * np.exp(-distance**2 * 1.0)
+        focus_mask = np.clip(focus_mask, 1.0, 1.07)
         
         img_array = np.array(image, dtype=np.float32)
         for i in range(3):
@@ -328,7 +344,7 @@ def apply_pattern_enhancement(image, pattern_type, is_wedding_ring):
         img_array = np.clip(img_array, 0, 255)
         image = Image.fromarray(img_array.astype(np.uint8))
         
-        # V10: Add subtle center focus
+        # V11: Add subtle center focus
         image = apply_center_focus_thumbnail(image, 0.025)
         
         if is_wedding_ring:
@@ -345,7 +361,7 @@ def apply_pattern_enhancement(image, pattern_type, is_wedding_ring):
         contrast = ImageEnhance.Contrast(image)
         image = contrast.enhance(1.02)
         
-        # V10: Add subtle center focus to other patterns too
+        # V11: Add subtle center focus to other patterns too
         image = apply_center_focus_thumbnail(image, 0.02)
         
         if is_wedding_ring:
@@ -452,7 +468,7 @@ def image_to_base64(image):
     return img_base64.rstrip('=')
 
 def handler(event):
-    """Thumbnail handler function - V10 with adjusted white overlay"""
+    """Thumbnail handler function - V11 with updated values"""
     try:
         # Get image index
         image_index = event.get('image_index', 1)
@@ -501,18 +517,18 @@ def handler(event):
         pattern_type = detect_pattern_type(filename)
         
         if pattern_type == "bc_only":
-            detected_type = "무도금화이트(0.13)"
+            detected_type = "무도금화이트(0.14)"
         elif pattern_type == "b_only":
-            detected_type = "b_패턴(0.08)"
+            detected_type = "b_패턴(0.06)"
         else:
             detected_type = "기타색상"
         
         # Apply pattern-specific enhancement
         thumbnail = apply_pattern_enhancement(thumbnail, pattern_type, is_wedding_ring)
         
-        # Quality check for bc_ and b_ patterns - V10 stricter standards
+        # Quality check for bc_ and b_ patterns - V11 stricter standards
         second_correction_applied = False
-        if pattern_type in ["bc_only", "b_only"]:  # V10: Extended to b_only
+        if pattern_type in ["bc_only", "b_only"]:  # V11: Extended to b_only
             metrics = calculate_quality_metrics_simple(thumbnail)
             
             reasons = []
@@ -533,12 +549,12 @@ def handler(event):
         if not is_wedding_ring:
             thumbnail = apply_spotlight_effect(thumbnail)
         
-        # Enhanced sharpness
+        # V11: Updated enhanced sharpness - 1.4
         sharpness = ImageEnhance.Sharpness(thumbnail)
         if is_wedding_ring:
             thumbnail = sharpness.enhance(1.2)
         else:
-            thumbnail = sharpness.enhance(1.35)
+            thumbnail = sharpness.enhance(1.4)  # Increased from 1.35
         
         # Final brightness touch
         brightness = ImageEnhance.Brightness(thumbnail)
@@ -568,11 +584,12 @@ def handler(event):
                 "version": VERSION,
                 "status": "success",
                 "white_overlay_info": {
-                    "bc_only": "0.13",
-                    "b_only": "0.08",
+                    "bc_only": "0.14",
+                    "b_only": "0.06",
                     "other": "none"
                 },
-                "has_center_focus": True
+                "has_center_focus": True,
+                "center_focus_intensity": "7%"
             }
         }
         
