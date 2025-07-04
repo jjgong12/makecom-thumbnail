@@ -1,4 +1,5 @@
 import runpod
+import os
 import base64
 import numpy as np
 from io import BytesIO
@@ -12,7 +13,23 @@ import replicate
 logging.basicConfig(level=logging.WARNING)  # Changed to WARNING to reduce logs
 logger = logging.getLogger(__name__)
 
-VERSION = "V15-Replicate-Enhanced"
+VERSION = "V16-EnvOptimized"
+
+# ===== REPLICATE INITIALIZATION (환경변수 최적화) =====
+REPLICATE_API_TOKEN = os.environ.get('REPLICATE_API_TOKEN')
+REPLICATE_CLIENT = None
+USE_REPLICATE = False
+
+if REPLICATE_API_TOKEN:
+    try:
+        REPLICATE_CLIENT = replicate.Client(api_token=REPLICATE_API_TOKEN)
+        USE_REPLICATE = True
+        logger.info("✅ Replicate client initialized successfully for thumbnails")
+    except Exception as e:
+        logger.error(f"❌ Failed to initialize Replicate client: {e}")
+        USE_REPLICATE = False
+else:
+    logger.warning("⚠️ REPLICATE_API_TOKEN not found in environment variables")
 
 def find_input_data(data):
     """Find input data recursively - optimized"""
@@ -142,9 +159,10 @@ def detect_wedding_ring_fast(image: Image.Image) -> bool:
     except:
         return False
 
-def apply_replicate_thumbnail_enhancement(image: Image.Image, is_wedding_ring: bool, use_replicate: bool = True) -> Image.Image:
-    """Apply Replicate enhancement for thumbnails - lighter processing"""
-    if not use_replicate:
+def apply_replicate_thumbnail_enhancement(image: Image.Image, is_wedding_ring: bool) -> Image.Image:
+    """Apply Replicate enhancement for thumbnails using pre-initialized client"""
+    if not USE_REPLICATE or not REPLICATE_CLIENT:
+        logger.warning("Replicate not available for thumbnails, skipping enhancement")
         return image
     
     try:
@@ -156,9 +174,9 @@ def apply_replicate_thumbnail_enhancement(image: Image.Image, is_wedding_ring: b
         img_data_url = f"data:image/png;base64,{img_base64}"
         
         # For thumbnails, use Real-ESRGAN for faster processing
-        logger.info(f"Applying Replicate thumbnail enhancement - Wedding ring: {is_wedding_ring}")
+        logger.info(f"🔷 Applying Replicate thumbnail enhancement - Wedding ring: {is_wedding_ring}")
         
-        output = replicate.run(
+        output = REPLICATE_CLIENT.run(
             "nightmareai/real-esrgan:350d32041630ffbe63c8352783a26d94126809164e54085352f8326e53999085",
             input={
                 "image": img_data_url,
@@ -181,13 +199,14 @@ def apply_replicate_thumbnail_enhancement(image: Image.Image, is_wedding_ring: b
                 else:
                     enhanced_image = Image.open(BytesIO(base64.b64decode(output)))
             
+            logger.info("✅ Replicate thumbnail enhancement successful")
             return enhanced_image
         else:
-            logger.warning("Replicate thumbnail enhancement failed, returning original image")
+            logger.warning("⚠️ Replicate thumbnail enhancement failed, returning original image")
             return image
             
     except Exception as e:
-        logger.error(f"Replicate thumbnail enhancement error: {str(e)}")
+        logger.error(f"❌ Replicate thumbnail enhancement error: {str(e)}")
         return image
 
 def auto_white_balance(image: Image.Image) -> Image.Image:
@@ -608,19 +627,10 @@ def image_to_base64(image):
     return img_base64.rstrip('=')
 
 def handler(event):
-    """Thumbnail handler function - V15 with Replicate integration"""
+    """Thumbnail handler function - V16 with environment variable optimization"""
     try:
-        # Check if Replicate should be used
-        use_replicate = event.get('use_replicate', False) if isinstance(event, dict) else False
-        replicate_api_token = None
-        
-        if isinstance(event, dict):
-            replicate_api_token = event.get('replicate_api_token') or os.environ.get('REPLICATE_API_TOKEN')
-        
-        if use_replicate and replicate_api_token:
-            global replicate
-            replicate = replicate.Client(api_token=replicate_api_token)
-            logger.info("Replicate API initialized for thumbnail")
+        logger.info(f"=== Thumbnail {VERSION} Started ===")
+        logger.info(f"Replicate available: {USE_REPLICATE}")
         
         # Get image index
         image_index = event.get('image_index', 1)
@@ -661,15 +671,16 @@ def handler(event):
         
         # Detect wedding ring
         is_wedding_ring = detect_wedding_ring_fast(enhanced_image)
+        logger.info(f"Wedding ring detected: {is_wedding_ring}")
         
         # Check if upscaling is needed
         needs_upscale = needs_thumbnail_upscaling(enhanced_image)
         replicate_applied = False
         
-        # Apply Replicate enhancement if needed (for wedding rings or small images)
-        if use_replicate and replicate_api_token and (is_wedding_ring or needs_upscale):
+        # Apply Replicate enhancement if available (웨딩링이므로 항상 적용)
+        if USE_REPLICATE:
             logger.info(f"Applying Replicate thumbnail enhancement - Wedding ring: {is_wedding_ring}, Needs upscale: {needs_upscale}")
-            enhanced_image = apply_replicate_thumbnail_enhancement(enhanced_image, is_wedding_ring, True)
+            enhanced_image = apply_replicate_thumbnail_enhancement(enhanced_image, is_wedding_ring)
             replicate_applied = True
         
         # Create thumbnail with upscaling
@@ -751,8 +762,9 @@ def handler(event):
                 "replicate_enhancement": {
                     "applied": replicate_applied,
                     "upscaling_needed": needs_upscale,
+                    "available": USE_REPLICATE,
                     "model_used": "real-esrgan-x2plus"
-                } if replicate_applied else None,
+                },
                 "white_overlay_info": {
                     "bc_only": "0.14",
                     "b_only": "0.06",
