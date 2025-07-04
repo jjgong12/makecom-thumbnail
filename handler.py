@@ -14,7 +14,7 @@ import string
 logging.basicConfig(level=logging.WARNING)  # Changed to WARNING to reduce logs
 logger = logging.getLogger(__name__)
 
-VERSION = "V16-EnvOptimized"
+VERSION = "V17-Base64Fix-Enhanced"
 
 # ===== REPLICATE INITIALIZATION (환경변수 최적화) =====
 REPLICATE_API_TOKEN = os.environ.get('REPLICATE_API_TOKEN')
@@ -33,12 +33,21 @@ else:
     logger.warning("⚠️ REPLICATE_API_TOKEN not found in environment variables")
 
 def find_input_data(data):
-    """Find input data recursively - optimized"""
+    """Find input data recursively - optimized with better base64 detection"""
     if isinstance(data, dict):
         # Check direct image keys
-        for key in ['image', 'image_base64', 'imageBase64', 'url', 'image_url']:
+        for key in ['image', 'image_base64', 'imageBase64', 'url', 'image_url', 'enhanced_image']:
             if key in data:
-                return data
+                value = data[key]
+                # Check if it's a valid image data
+                if isinstance(value, str):
+                    # Skip if it's a URL
+                    if value.startswith('http'):
+                        if key in ['url', 'image_url']:
+                            return data
+                    # Check if it's base64
+                    elif len(value) > 100:
+                        return data
         
         # Check nested structures
         for key in ['input', 'job', 'payload', 'data']:
@@ -111,11 +120,22 @@ def download_image_from_url(url):
         raise
 
 def base64_to_image(base64_string):
-    """Convert base64 to PIL Image - optimized with better error handling"""
+    """Convert base64 to PIL Image - ENHANCED with better error handling"""
     try:
+        # Handle empty or invalid input
+        if not base64_string or not isinstance(base64_string, str):
+            raise ValueError("Invalid base64 input: empty or not string")
+        
         # Remove data URL prefix if present
         if ',' in base64_string:
-            base64_string = base64_string.split(',')[1]
+            parts = base64_string.split(',')
+            if len(parts) > 1:
+                base64_string = parts[1]
+            else:
+                base64_string = parts[0]
+        elif base64_string.startswith('data:'):
+            # Handle malformed data URLs
+            base64_string = base64_string.split('base64,')[-1]
         
         # Clean the string - remove all whitespace, newlines, and special chars
         base64_string = base64_string.strip()
@@ -123,57 +143,55 @@ def base64_to_image(base64_string):
         base64_string = base64_string.replace('\n', '').replace('\r', '').replace(' ', '').replace('\t', '')
         
         # Remove any non-base64 characters (keep only A-Za-z0-9+/=)
-        import string
         valid_chars = string.ascii_letters + string.digits + '+/='
         base64_string = ''.join(c for c in base64_string if c in valid_chars)
+        
+        # Check minimum length
+        if len(base64_string) < 100:
+            raise ValueError(f"Base64 string too short: {len(base64_string)} characters")
         
         # Try decoding with different padding strategies
         # Strategy 1: Try as-is
         try:
-            img_data = base64.b64decode(base64_string)
+            img_data = base64.b64decode(base64_string, validate=True)
             return Image.open(BytesIO(img_data))
-        except:
-            pass
+        except Exception as e1:
+            logger.debug(f"Strategy 1 failed: {str(e1)}")
         
-        # Strategy 2: Remove all padding and add correct padding
+        # Strategy 2: Fix padding
         base64_string_no_pad = base64_string.rstrip('=')
-        padding = 4 - (len(base64_string_no_pad) % 4)
-        if padding != 4:
-            base64_string_padded = base64_string_no_pad + ('=' * padding)
-        else:
-            base64_string_padded = base64_string_no_pad
+        padding_needed = (4 - len(base64_string_no_pad) % 4) % 4
+        base64_string_padded = base64_string_no_pad + ('=' * padding_needed)
         
-        try:
-            img_data = base64.b64decode(base64_string_padded)
-            return Image.open(BytesIO(img_data))
-        except:
-            pass
-        
-        # Strategy 3: Try with standard base64 (not urlsafe)
         try:
             img_data = base64.b64decode(base64_string_padded, validate=True)
             return Image.open(BytesIO(img_data))
-        except:
-            pass
+        except Exception as e2:
+            logger.debug(f"Strategy 2 failed: {str(e2)}")
+        
+        # Strategy 3: Try without validation
+        try:
+            img_data = base64.b64decode(base64_string_padded)
+            return Image.open(BytesIO(img_data))
+        except Exception as e3:
+            logger.debug(f"Strategy 3 failed: {str(e3)}")
         
         # Strategy 4: Try URL-safe base64
         try:
-            # Replace standard base64 chars with URL-safe equivalents
             urlsafe_str = base64_string_no_pad.replace('+', '-').replace('/', '_')
-            padding = 4 - (len(urlsafe_str) % 4)
-            if padding != 4:
-                urlsafe_str += '=' * padding
-            img_data = base64.urlsafe_b64decode(urlsafe_str)
+            padding_needed = (4 - len(urlsafe_str) % 4) % 4
+            urlsafe_str_padded = urlsafe_str + ('=' * padding_needed)
+            img_data = base64.urlsafe_b64decode(urlsafe_str_padded)
             return Image.open(BytesIO(img_data))
-        except:
-            pass
+        except Exception as e4:
+            logger.debug(f"Strategy 4 failed: {str(e4)}")
         
-        # If all strategies fail, raise error
-        raise ValueError("All base64 decoding strategies failed")
+        # If all strategies fail, provide detailed error
+        raise ValueError(f"All base64 decoding strategies failed. String length: {len(base64_string)}, First 50 chars: {base64_string[:50]}")
         
     except Exception as e:
-        logger.error(f"Failed to decode base64 after all attempts: {str(e)}")
-        raise ValueError(f"Failed to decode base64: {str(e)}")
+        logger.error(f"Failed to decode base64: {str(e)}")
+        raise ValueError(f"Invalid base64 data: {str(e)}")
 
 def detect_pattern_type(filename: str) -> str:
     """Detect pattern type - optimized with a_ pattern"""
@@ -212,7 +230,7 @@ def detect_wedding_ring_fast(image: Image.Image) -> bool:
         return False
 
 def apply_replicate_thumbnail_enhancement(image: Image.Image, is_wedding_ring: bool) -> Image.Image:
-    """Apply Replicate enhancement for thumbnails using pre-initialized client"""
+    """Apply Replicate enhancement for thumbnails with UPSCALING focus"""
     if not USE_REPLICATE or not REPLICATE_CLIENT:
         logger.error("❌ Replicate not available for thumbnails - API token not configured")
         raise ValueError("Replicate API token not configured. Please set REPLICATE_API_TOKEN environment variable.")
@@ -242,16 +260,17 @@ def apply_replicate_thumbnail_enhancement(image: Image.Image, is_wedding_ring: b
         img_base64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
         img_data_url = f"data:image/png;base64,{img_base64}"
         
-        # For thumbnails, use Real-ESRGAN for faster processing
-        logger.info(f"🔷 Applying Replicate thumbnail enhancement - Wedding ring: {is_wedding_ring}")
+        # V17: Enhanced upscaling for better detail
+        logger.info(f"🔷 Applying Replicate thumbnail enhancement with 4x upscaling - Wedding ring: {is_wedding_ring}")
         
+        # Use Real-ESRGAN with 4x upscaling for better detail
         output = REPLICATE_CLIENT.run(
             "nightmareai/real-esrgan:350d32041630ffbe63c8352783a26d94126809164e54085352f8326e53999085",
             input={
                 "image": img_data_url,
-                "scale": 2,  # 2x upscale
+                "scale": 4,  # V17: Increased from 2x to 4x
                 "face_enhance": False,
-                "model": "RealESRGAN_x2plus"  # Faster 2x model
+                "model": "RealESRGAN_x4plus"  # V17: Using 4x model
             }
         )
         
@@ -273,7 +292,7 @@ def apply_replicate_thumbnail_enhancement(image: Image.Image, is_wedding_ring: b
                 logger.info(f"🔄 Resizing back to original size: {original_size}")
                 enhanced_image = enhanced_image.resize(original_size, Image.Resampling.LANCZOS)
             
-            logger.info("✅ Replicate thumbnail enhancement successful")
+            logger.info("✅ Replicate thumbnail enhancement successful with 4x upscaling")
             return enhanced_image
         else:
             logger.error("❌ Replicate thumbnail enhancement failed - no output received")
@@ -317,7 +336,7 @@ def auto_white_balance(image: Image.Image) -> Image.Image:
     return Image.fromarray(img_array.astype(np.uint8))
 
 def correct_background_color_subtle(image: Image.Image) -> Image.Image:
-    """Subtle background correction - V13 less aggressive"""
+    """Subtle background correction - V17 less aggressive"""
     img_array = np.array(image, dtype=np.float32)
     
     # Detect very bright background areas only
@@ -364,10 +383,10 @@ def calculate_quality_metrics_simple(image: Image.Image) -> dict:
     }
 
 def apply_second_correction_thumbnail(image: Image.Image, reasons: list) -> Image.Image:
-    """Apply second correction for thumbnail - V13 original values with reduced cool tone"""
+    """Apply second correction for thumbnail - V17 with enhanced brightness"""
     if "brightness_low" in reasons:
-        # Enhanced white overlay for pure white
-        white_overlay_percent = 0.22  # Original value
+        # V17: Enhanced white overlay for brighter result
+        white_overlay_percent = 0.25  # Increased from 0.22
         img_array = np.array(image, dtype=np.float32)
         img_array = img_array * (1 - white_overlay_percent) + 255 * white_overlay_percent
         img_array = np.clip(img_array, 0, 255)
@@ -382,22 +401,22 @@ def apply_second_correction_thumbnail(image: Image.Image, reasons: list) -> Imag
         image = Image.fromarray(img_array.astype(np.uint8))
     
     if any(r in reasons for r in ["brightness_low", "saturation_high"]):
-        # Apply unsharp mask
-        image = image.filter(ImageFilter.UnsharpMask(radius=1, percent=35, threshold=3))
+        # V17: Enhanced unsharp mask for detail
+        image = image.filter(ImageFilter.UnsharpMask(radius=1.5, percent=50, threshold=2))
     
     return image
 
 def apply_center_focus_thumbnail(image: Image.Image, intensity: float = 0.025) -> Image.Image:
-    """Apply subtle center focus effect for thumbnail - V13"""
+    """Apply subtle center focus effect for thumbnail - V17 Enhanced"""
     width, height = image.size
     x = np.linspace(-1, 1, width)
     y = np.linspace(-1, 1, height)
     X, Y = np.meshgrid(x, y)
     distance = np.sqrt(X**2 + Y**2)
     
-    # Subtle center focus for thumbnail
-    focus_mask = 1 + intensity * np.exp(-distance**2 * 2.0)
-    focus_mask = np.clip(focus_mask, 1.0, 1.0 + intensity)
+    # V17: Enhanced center focus for detail
+    focus_mask = 1 + intensity * 1.5 * np.exp(-distance**2 * 1.5)
+    focus_mask = np.clip(focus_mask, 1.0, 1.0 + intensity * 1.5)
     
     img_array = np.array(image, dtype=np.float32)
     for i in range(3):
@@ -407,7 +426,7 @@ def apply_center_focus_thumbnail(image: Image.Image, intensity: float = 0.025) -
     return Image.fromarray(img_array.astype(np.uint8))
 
 def apply_wedding_ring_focus(image: Image.Image) -> Image.Image:
-    """Apply enhanced focus for wedding rings - V13 REDUCED HIGHLIGHT"""
+    """Apply enhanced focus for wedding rings - V17 Enhanced for detail"""
     # 1. Highlight Enhancement - ONLY FOR NON-BACKGROUND AREAS
     img_array = np.array(image, dtype=np.float32)
     
@@ -422,20 +441,20 @@ def apply_wedding_ring_focus(image: Image.Image) -> Image.Image:
     
     # Apply bright enhancement only to non-background bright areas
     bright_mask = (img_array > 220) & (~is_background[:,:,np.newaxis])
-    img_array[bright_mask] *= 1.08  # Reduced from 1.12
+    img_array[bright_mask] *= 1.10  # V17: Increased from 1.08
     img_array = np.clip(img_array, 0, 255)
     image = Image.fromarray(img_array.astype(np.uint8))
     
-    # 2. Center focus - 4.5% (RESTORED)
+    # 2. Center focus - V17: Enhanced to 6%
     width, height = image.size
     x = np.linspace(-1, 1, width)
     y = np.linspace(-1, 1, height)
     X, Y = np.meshgrid(x, y)
     distance = np.sqrt(X**2 + Y**2)
     
-    # 4.5% center focus (RESTORED)
-    focus_mask = 1 + 0.045 * np.exp(-distance**2 * 1.5)
-    focus_mask = np.clip(focus_mask, 1.0, 1.045)
+    # V17: 6% center focus for detail
+    focus_mask = 1 + 0.06 * np.exp(-distance**2 * 1.2)
+    focus_mask = np.clip(focus_mask, 1.0, 1.06)
     
     img_array = np.array(image, dtype=np.float32)
     for i in range(3):
@@ -443,25 +462,25 @@ def apply_wedding_ring_focus(image: Image.Image) -> Image.Image:
     img_array = np.clip(img_array, 0, 255)
     image = Image.fromarray(img_array.astype(np.uint8))
     
-    # 3. Enhanced sharpness (KEPT SAME)
+    # 3. Enhanced sharpness - V17: Increased
     sharpness = ImageEnhance.Sharpness(image)
-    image = sharpness.enhance(1.35)
+    image = sharpness.enhance(1.45)  # Increased from 1.35
     
-    # 4. Enhanced Contrast (KEPT SAME)
+    # 4. Enhanced Contrast
     contrast = ImageEnhance.Contrast(image)
-    image = contrast.enhance(1.04)
+    image = contrast.enhance(1.05)  # Slightly increased
     
-    # 5. Brightness enhancement (REDUCED)
+    # 5. Brightness enhancement - V17: Increased
     brightness = ImageEnhance.Brightness(image)
-    image = brightness.enhance(1.02)  # Reduced from 1.03
+    image = brightness.enhance(1.04)  # Increased from 1.02
     
-    # 6. Structure Enhancement (KEPT SAME)
-    image = image.filter(ImageFilter.UnsharpMask(radius=1.0, percent=60, threshold=2))
+    # 6. Structure Enhancement - V17: Enhanced
+    image = image.filter(ImageFilter.UnsharpMask(radius=1.2, percent=80, threshold=1))
     
-    # 7. Micro Contrast (KEPT SAME)
+    # 7. Micro Contrast - V17: Enhanced
     gray = image.convert('L')
     edges = gray.filter(ImageFilter.FIND_EDGES)
-    edges_array = np.array(edges, dtype=np.float32) * 0.08  # 8% micro contrast
+    edges_array = np.array(edges, dtype=np.float32) * 0.10  # 10% micro contrast
     
     img_array = np.array(image, dtype=np.float32)
     for i in range(3):
@@ -472,7 +491,7 @@ def apply_wedding_ring_focus(image: Image.Image) -> Image.Image:
     return image
 
 def apply_basic_enhancement(image):
-    """Apply basic enhancement"""
+    """Apply basic enhancement - V17 with increased brightness"""
     if image.mode != 'RGB':
         if image.mode == 'RGBA':
             background = Image.new('RGB', image.size, (255, 255, 255))
@@ -484,12 +503,12 @@ def apply_basic_enhancement(image):
     # Apply white balance correction FIRST
     image = auto_white_balance(image)
     
-    # Enhanced brightness - RESTORED to 1.025
+    # V17: Enhanced brightness
     brightness = ImageEnhance.Brightness(image)
-    image = brightness.enhance(1.025)
+    image = brightness.enhance(1.04)  # Increased from 1.025
     
     contrast = ImageEnhance.Contrast(image)
-    image = contrast.enhance(1.03)
+    image = contrast.enhance(1.04)  # Increased from 1.03
     
     color = ImageEnhance.Color(image)
     image = color.enhance(1.02)
@@ -497,32 +516,32 @@ def apply_basic_enhancement(image):
     return image
 
 def apply_pattern_enhancement(image, pattern_type, is_wedding_ring):
-    """Apply enhancement based on pattern type - V16 with 5% overlay for a/b patterns"""
+    """Apply enhancement based on pattern type - V17 with enhanced brightness and focus"""
     
     if pattern_type == "bc_only":
-        # bc_ pattern (unplated white) - V13 original values
+        # bc_ pattern (unplated white) - V17 enhanced
         brightness = ImageEnhance.Brightness(image)
-        image = brightness.enhance(1.04)  # RESTORED
+        image = brightness.enhance(1.06)  # Increased from 1.04
         
         color = ImageEnhance.Color(image)
         image = color.enhance(0.95)  # More desaturated for pure white
         
-        # V13: Original white overlay for bc_ - 0.14
-        white_overlay = 0.14  # RESTORED
+        # V17: White overlay for bc_ - slightly increased
+        white_overlay = 0.15  # Increased from 0.14
         img_array = np.array(image, dtype=np.float32)
         img_array = img_array * (1 - white_overlay) + 255 * white_overlay
         img_array = np.clip(img_array, 0, 255)
         image = Image.fromarray(img_array.astype(np.uint8))
         
-        # V13: 7% center focus (RESTORED)
+        # V17: Enhanced center focus - 8%
         width, height = image.size
         x = np.linspace(-1, 1, width)
         y = np.linspace(-1, 1, height)
         X, Y = np.meshgrid(x, y)
         distance = np.sqrt(X**2 + Y**2)
         
-        focus_mask = 1 + 0.07 * np.exp(-distance**2 * 1.5)
-        focus_mask = np.clip(focus_mask, 1.0, 1.07)
+        focus_mask = 1 + 0.08 * np.exp(-distance**2 * 1.3)
+        focus_mask = np.clip(focus_mask, 1.0, 1.08)
         
         img_array = np.array(image, dtype=np.float32)
         for i in range(3):
@@ -530,8 +549,8 @@ def apply_pattern_enhancement(image, pattern_type, is_wedding_ring):
         img_array = np.clip(img_array, 0, 255)
         image = Image.fromarray(img_array.astype(np.uint8))
         
-        # V13: Add subtle center focus
-        image = apply_center_focus_thumbnail(image, 0.025)
+        # V17: Enhanced subtle center focus
+        image = apply_center_focus_thumbnail(image, 0.03)  # Increased from 0.025
         
         if is_wedding_ring:
             image = apply_wedding_ring_focus(image)
@@ -539,27 +558,27 @@ def apply_pattern_enhancement(image, pattern_type, is_wedding_ring):
     elif pattern_type == "ac_only":
         # ac_ pattern (unplated white) - same as bc_
         brightness = ImageEnhance.Brightness(image)
-        image = brightness.enhance(1.04)
+        image = brightness.enhance(1.06)
         
         color = ImageEnhance.Color(image)
         image = color.enhance(0.95)
         
-        # ac_ also uses 0.14 white overlay
-        white_overlay = 0.14
+        # ac_ also uses enhanced white overlay
+        white_overlay = 0.15
         img_array = np.array(image, dtype=np.float32)
         img_array = img_array * (1 - white_overlay) + 255 * white_overlay
         img_array = np.clip(img_array, 0, 255)
         image = Image.fromarray(img_array.astype(np.uint8))
         
-        # 7% center focus
+        # 8% center focus
         width, height = image.size
         x = np.linspace(-1, 1, width)
         y = np.linspace(-1, 1, height)
         X, Y = np.meshgrid(x, y)
         distance = np.sqrt(X**2 + Y**2)
         
-        focus_mask = 1 + 0.07 * np.exp(-distance**2 * 1.5)
-        focus_mask = np.clip(focus_mask, 1.0, 1.07)
+        focus_mask = 1 + 0.08 * np.exp(-distance**2 * 1.3)
+        focus_mask = np.clip(focus_mask, 1.0, 1.08)
         
         img_array = np.array(image, dtype=np.float32)
         for i in range(3):
@@ -567,21 +586,21 @@ def apply_pattern_enhancement(image, pattern_type, is_wedding_ring):
         img_array = np.clip(img_array, 0, 255)
         image = Image.fromarray(img_array.astype(np.uint8))
         
-        image = apply_center_focus_thumbnail(image, 0.025)
+        image = apply_center_focus_thumbnail(image, 0.03)
         
         if is_wedding_ring:
             image = apply_wedding_ring_focus(image)
         
     elif pattern_type == "b_only":
-        # b_ pattern - V16 UPDATED to 5%
+        # b_ pattern - V17 enhanced
         brightness = ImageEnhance.Brightness(image)
-        image = brightness.enhance(1.04)  # RESTORED
+        image = brightness.enhance(1.06)  # Increased
         
         color = ImageEnhance.Color(image)
         image = color.enhance(0.95)  # Same desaturation as bc_
         
-        # V16: UPDATED white overlay for b_ - 0.05 (5%)
-        white_overlay = 0.05  # CHANGED from 0.06 to 0.05
+        # V17: White overlay for b_ - 0.05 (5%)
+        white_overlay = 0.05
         img_array = np.array(image, dtype=np.float32)
         img_array = img_array * (1 - white_overlay) + 255 * white_overlay
         img_array = np.clip(img_array, 0, 255)
@@ -589,17 +608,17 @@ def apply_pattern_enhancement(image, pattern_type, is_wedding_ring):
         
         # Enhanced sharpness for b_ pattern
         sharpness = ImageEnhance.Sharpness(image)
-        image = sharpness.enhance(1.15)
+        image = sharpness.enhance(1.20)  # Increased
         
-        # V13: 7% center focus (RESTORED)
+        # V17: Enhanced center focus - 8%
         width, height = image.size
         x = np.linspace(-1, 1, width)
         y = np.linspace(-1, 1, height)
         X, Y = np.meshgrid(x, y)
         distance = np.sqrt(X**2 + Y**2)
         
-        focus_mask = 1 + 0.07 * np.exp(-distance**2 * 1.0)
-        focus_mask = np.clip(focus_mask, 1.0, 1.07)
+        focus_mask = 1 + 0.08 * np.exp(-distance**2 * 1.0)
+        focus_mask = np.clip(focus_mask, 1.0, 1.08)
         
         img_array = np.array(image, dtype=np.float32)
         for i in range(3):
@@ -607,21 +626,21 @@ def apply_pattern_enhancement(image, pattern_type, is_wedding_ring):
         img_array = np.clip(img_array, 0, 255)
         image = Image.fromarray(img_array.astype(np.uint8))
         
-        # V13: Add subtle center focus
-        image = apply_center_focus_thumbnail(image, 0.025)
+        # V17: Enhanced subtle center focus
+        image = apply_center_focus_thumbnail(image, 0.03)
         
         if is_wedding_ring:
             image = apply_wedding_ring_focus(image)
             
     elif pattern_type == "a_only":
-        # a_ pattern - V16 NEW with 5%
+        # a_ pattern - V17 enhanced
         brightness = ImageEnhance.Brightness(image)
-        image = brightness.enhance(1.04)
+        image = brightness.enhance(1.06)
         
         color = ImageEnhance.Color(image)
         image = color.enhance(0.95)
         
-        # V16: NEW white overlay for a_ - 0.05 (5%)
+        # V17: White overlay for a_ - 0.05 (5%)
         white_overlay = 0.05
         img_array = np.array(image, dtype=np.float32)
         img_array = img_array * (1 - white_overlay) + 255 * white_overlay
@@ -630,17 +649,17 @@ def apply_pattern_enhancement(image, pattern_type, is_wedding_ring):
         
         # Enhanced sharpness for a_ pattern
         sharpness = ImageEnhance.Sharpness(image)
-        image = sharpness.enhance(1.15)
+        image = sharpness.enhance(1.20)
         
-        # 7% center focus
+        # 8% center focus
         width, height = image.size
         x = np.linspace(-1, 1, width)
         y = np.linspace(-1, 1, height)
         X, Y = np.meshgrid(x, y)
         distance = np.sqrt(X**2 + Y**2)
         
-        focus_mask = 1 + 0.07 * np.exp(-distance**2 * 1.0)
-        focus_mask = np.clip(focus_mask, 1.0, 1.07)
+        focus_mask = 1 + 0.08 * np.exp(-distance**2 * 1.0)
+        focus_mask = np.clip(focus_mask, 1.0, 1.08)
         
         img_array = np.array(image, dtype=np.float32)
         for i in range(3):
@@ -648,24 +667,24 @@ def apply_pattern_enhancement(image, pattern_type, is_wedding_ring):
         img_array = np.clip(img_array, 0, 255)
         image = Image.fromarray(img_array.astype(np.uint8))
         
-        image = apply_center_focus_thumbnail(image, 0.025)
+        image = apply_center_focus_thumbnail(image, 0.03)
         
         if is_wedding_ring:
             image = apply_wedding_ring_focus(image)
         
     else:
-        # Standard enhancement
+        # Standard enhancement - V17 enhanced
         brightness = ImageEnhance.Brightness(image)
-        image = brightness.enhance(1.025)
+        image = brightness.enhance(1.04)  # Increased from 1.025
         
         color = ImageEnhance.Color(image)
         image = color.enhance(0.98)
         
         contrast = ImageEnhance.Contrast(image)
-        image = contrast.enhance(1.02)
+        image = contrast.enhance(1.03)  # Increased from 1.02
         
-        # V13: Add subtle center focus to other patterns too
-        image = apply_center_focus_thumbnail(image, 0.02)
+        # V17: Enhanced center focus to other patterns too
+        image = apply_center_focus_thumbnail(image, 0.025)  # Increased from 0.02
         
         if is_wedding_ring:
             image = apply_wedding_ring_focus(image)
@@ -673,7 +692,7 @@ def apply_pattern_enhancement(image, pattern_type, is_wedding_ring):
     return image
 
 def apply_spotlight_effect(image):
-    """Apply subtle spotlight effect"""
+    """Apply subtle spotlight effect - V17 enhanced"""
     width, height = image.size
     
     x = np.linspace(-1, 1, width)
@@ -681,9 +700,9 @@ def apply_spotlight_effect(image):
     X, Y = np.meshgrid(x, y)
     distance = np.sqrt(X**2 + Y**2)
     
-    # Spotlight mask
-    spotlight_mask = 1 + 0.03 * np.exp(-distance**2 * 1.2)
-    spotlight_mask = np.clip(spotlight_mask, 1.0, 1.03)
+    # V17: Enhanced spotlight mask
+    spotlight_mask = 1 + 0.04 * np.exp(-distance**2 * 1.0)
+    spotlight_mask = np.clip(spotlight_mask, 1.0, 1.04)
     
     img_array = np.array(image, dtype=np.float32)
     for i in range(3):
@@ -777,7 +796,7 @@ def image_to_base64(image):
     return img_base64.rstrip('=')
 
 def handler(event):
-    """Thumbnail handler function - V16 with environment variable optimization"""
+    """Thumbnail handler function - V17 with base64 fix and enhanced brightness"""
     try:
         logger.info(f"=== Thumbnail {VERSION} Started ===")
         logger.info(f"Replicate available: {USE_REPLICATE}")
@@ -801,12 +820,31 @@ def handler(event):
         image = None
         
         if isinstance(input_data, dict):
-            if 'image_base64' in input_data or 'imageBase64' in input_data:
-                base64_str = input_data.get('image_base64') or input_data.get('imageBase64')
-                image = base64_to_image(base64_str)
-            elif 'url' in input_data or 'image_url' in input_data:
-                image_url = input_data.get('url') or input_data.get('image_url')
-                image = download_image_from_url(image_url)
+            # V17: Enhanced image extraction with better error handling
+            for key in ['image_base64', 'imageBase64', 'enhanced_image', 'image']:
+                if key in input_data and input_data[key]:
+                    try:
+                        base64_str = input_data[key]
+                        image = base64_to_image(base64_str)
+                        logger.info(f"Successfully loaded image from key: {key}")
+                        break
+                    except Exception as e:
+                        logger.warning(f"Failed to load from {key}: {str(e)}")
+                        continue
+            
+            if not image:
+                # Try URL keys
+                for key in ['url', 'image_url']:
+                    if key in input_data and input_data[key]:
+                        try:
+                            image_url = input_data[key]
+                            image = download_image_from_url(image_url)
+                            logger.info(f"Successfully loaded image from URL key: {key}")
+                            break
+                        except Exception as e:
+                            logger.warning(f"Failed to load URL from {key}: {str(e)}")
+                            continue
+                            
         elif isinstance(input_data, str):
             if input_data.startswith('http'):
                 image = download_image_from_url(input_data)
@@ -814,7 +852,7 @@ def handler(event):
                 image = base64_to_image(input_data)
         
         if not image:
-            raise ValueError("Failed to load image")
+            raise ValueError("Failed to load image from any source")
         
         # Apply basic enhancement (includes white balance)
         enhanced_image = apply_basic_enhancement(image)
@@ -855,9 +893,9 @@ def handler(event):
         pattern_type = detect_pattern_type(filename)
         
         if pattern_type == "bc_only":
-            detected_type = "무도금화이트(0.14)"
+            detected_type = "무도금화이트(0.15)"
         elif pattern_type == "ac_only":
-            detected_type = "무도금화이트(0.14)"
+            detected_type = "무도금화이트(0.15)"
         elif pattern_type == "b_only":
             detected_type = "b_패턴(0.05)"
         elif pattern_type == "a_only":
@@ -868,13 +906,13 @@ def handler(event):
         # Apply pattern-specific enhancement
         thumbnail = apply_pattern_enhancement(thumbnail, pattern_type, is_wedding_ring)
         
-        # Quality check for bc_only pattern ONLY - V13 standards
+        # Quality check for bc_only pattern ONLY - V17 standards
         second_correction_applied = False
         if pattern_type == "bc_only":  # Only bc_only pattern
             metrics = calculate_quality_metrics_simple(thumbnail)
             
             reasons = []
-            if metrics["brightness"] < 241:
+            if metrics["brightness"] < 243:  # V17: Increased threshold
                 reasons.append("brightness_low")
             if metrics["cool_tone_diff"] < 3:
                 reasons.append("insufficient_cool_tone")
@@ -891,16 +929,16 @@ def handler(event):
         if not is_wedding_ring:
             thumbnail = apply_spotlight_effect(thumbnail)
         
-        # V13: Enhanced sharpness - differentiated by wedding ring
+        # V17: Enhanced sharpness - differentiated by wedding ring
         sharpness = ImageEnhance.Sharpness(thumbnail)
         if is_wedding_ring:
-            thumbnail = sharpness.enhance(1.25)
+            thumbnail = sharpness.enhance(1.35)  # Increased from 1.25
         else:
-            thumbnail = sharpness.enhance(1.4)
+            thumbnail = sharpness.enhance(1.5)  # Increased from 1.4
         
-        # Final brightness touch - REDUCED for background safety
+        # V17: Final brightness touch
         brightness = ImageEnhance.Brightness(thumbnail)
-        thumbnail = brightness.enhance(1.02)  # Reduced from 1.04
+        thumbnail = brightness.enhance(1.03)  # Increased from 1.02
         
         # Apply SUBTLE background correction for final touch
         thumbnail = correct_background_color_subtle(thumbnail)
@@ -933,30 +971,32 @@ def handler(event):
                     "upscaling_needed": needs_upscale,
                     "available": USE_REPLICATE,
                     "input_resized_for_gpu": replicate_resized if replicate_applied else None,
-                    "model_used": "real-esrgan-x2plus"
+                    "model_used": "real-esrgan-x4plus"  # V17: 4x model
                 },
                 "white_overlay_info": {
-                    "bc_only": "0.14",
-                    "ac_only": "0.14",
+                    "bc_only": "0.15",  # V17: Updated
+                    "ac_only": "0.15",  # V17: Updated
                     "b_only": "0.05",
                     "a_only": "0.05",
                     "other": "none"
                 },
                 "has_center_focus": True,
-                "center_focus_intensity": "7%",
+                "center_focus_intensity": "8%",  # V17: Updated
                 "white_balance_applied": True,
                 "cool_tone_reduced": True,
                 "background_correction": "subtle",
+                "brightness_enhanced": True,  # V17: New flag
+                "detail_enhancement": "4x_upscaling",  # V17: New flag
                 "wedding_ring_enhancements": {
-                    "highlight_enhancement": "8%",
+                    "highlight_enhancement": "10%",
                     "highlight_threshold": "220",
-                    "micro_contrast": "8%",
+                    "micro_contrast": "10%",  # V17: Updated
                     "structure_enhancement": "enabled",
-                    "enhanced_sharpness": "1.35",
-                    "enhanced_contrast": "1.04",
-                    "enhanced_brightness": "1.02",
-                    "enhanced_center_focus": "4.5%",
-                    "final_sharpness": "1.25"
+                    "enhanced_sharpness": "1.45",  # V17: Updated
+                    "enhanced_contrast": "1.05",  # V17: Updated
+                    "enhanced_brightness": "1.04",  # V17: Updated
+                    "enhanced_center_focus": "6%",  # V17: Updated
+                    "final_sharpness": "1.35"  # V17: Updated
                 } if is_wedding_ring else None
             }
         }
