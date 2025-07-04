@@ -218,6 +218,23 @@ def apply_replicate_thumbnail_enhancement(image: Image.Image, is_wedding_ring: b
         raise ValueError("Replicate API token not configured. Please set REPLICATE_API_TOKEN environment variable.")
     
     try:
+        # Check image size and resize if necessary
+        original_size = image.size
+        width, height = original_size
+        total_pixels = width * height
+        MAX_PIXELS = 2000000  # Safe limit under 2,096,704
+        
+        need_resize = False
+        if total_pixels > MAX_PIXELS:
+            # Calculate resize factor
+            resize_factor = (MAX_PIXELS / total_pixels) ** 0.5
+            new_width = int(width * resize_factor)
+            new_height = int(height * resize_factor)
+            
+            logger.info(f"⚠️ Thumbnail too large ({width}x{height}={total_pixels} pixels). Resizing to {new_width}x{new_height}")
+            image = image.resize((new_width, new_height), Image.Resampling.LANCZOS)
+            need_resize = True
+        
         # Convert image to base64 for Replicate
         buffered = BytesIO()
         image.save(buffered, format="PNG")
@@ -250,6 +267,11 @@ def apply_replicate_thumbnail_enhancement(image: Image.Image, is_wedding_ring: b
                     enhanced_image = Image.open(output)
                 else:
                     enhanced_image = Image.open(BytesIO(base64.b64decode(output)))
+            
+            # Resize back to original size if needed
+            if need_resize:
+                logger.info(f"🔄 Resizing back to original size: {original_size}")
+                enhanced_image = enhanced_image.resize(original_size, Image.Resampling.LANCZOS)
             
             logger.info("✅ Replicate thumbnail enhancement successful")
             return enhanced_image
@@ -804,12 +826,27 @@ def handler(event):
         # Check if upscaling is needed
         needs_upscale = needs_thumbnail_upscaling(enhanced_image)
         replicate_applied = False
+        replicate_resized = False
         
         # Apply Replicate enhancement if available (웨딩링이므로 항상 적용)
         if USE_REPLICATE:
             logger.info(f"Applying Replicate thumbnail enhancement - Wedding ring: {is_wedding_ring}, Needs upscale: {needs_upscale}")
-            enhanced_image = apply_replicate_thumbnail_enhancement(enhanced_image, is_wedding_ring)
-            replicate_applied = True
+            try:
+                original_replicate_size = enhanced_image.size
+                enhanced_image = apply_replicate_thumbnail_enhancement(enhanced_image, is_wedding_ring)
+                replicate_applied = True
+                # Check if image was resized for Replicate
+                total_pixels = original_replicate_size[0] * original_replicate_size[1]
+                replicate_resized = total_pixels > 2000000
+            except Exception as e:
+                logger.error(f"Replicate thumbnail enhancement failed: {str(e)}")
+                return {
+                    "output": {
+                        "error": f"Replicate thumbnail enhancement failed: {str(e)}",
+                        "status": "failed",
+                        "version": VERSION
+                    }
+                }
         
         # Create thumbnail with upscaling
         thumbnail = create_thumbnail_smart_center_crop_with_upscale(enhanced_image, 1000, 1300)
@@ -895,6 +932,7 @@ def handler(event):
                     "applied": replicate_applied,
                     "upscaling_needed": needs_upscale,
                     "available": USE_REPLICATE,
+                    "input_resized_for_gpu": replicate_resized if replicate_applied else None,
                     "model_used": "real-esrgan-x2plus"
                 },
                 "white_overlay_info": {
