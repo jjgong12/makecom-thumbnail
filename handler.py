@@ -8,6 +8,7 @@ import requests
 import logging
 import re
 import replicate
+import string
 
 # Simplified imports - cv2 import moved inside function to avoid initialization issues
 logging.basicConfig(level=logging.WARNING)  # Changed to WARNING to reduce logs
@@ -110,25 +111,72 @@ def download_image_from_url(url):
         raise
 
 def base64_to_image(base64_string):
-    """Convert base64 to PIL Image - optimized"""
+    """Convert base64 to PIL Image - optimized with better error handling"""
     try:
+        # Remove data URL prefix if present
         if ',' in base64_string:
             base64_string = base64_string.split(',')[1]
         
-        # Clean and add padding
+        # Clean the string - remove all whitespace, newlines, and special chars
         base64_string = base64_string.strip()
-        padding = 4 - len(base64_string) % 4
-        if padding != 4:
-            base64_string += '=' * padding
+        base64_string = ''.join(base64_string.split())  # Remove all whitespace
+        base64_string = base64_string.replace('\n', '').replace('\r', '').replace(' ', '').replace('\t', '')
         
-        img_data = base64.b64decode(base64_string)
-        return Image.open(BytesIO(img_data))
+        # Remove any non-base64 characters (keep only A-Za-z0-9+/=)
+        import string
+        valid_chars = string.ascii_letters + string.digits + '+/='
+        base64_string = ''.join(c for c in base64_string if c in valid_chars)
+        
+        # Try decoding with different padding strategies
+        # Strategy 1: Try as-is
+        try:
+            img_data = base64.b64decode(base64_string)
+            return Image.open(BytesIO(img_data))
+        except:
+            pass
+        
+        # Strategy 2: Remove all padding and add correct padding
+        base64_string_no_pad = base64_string.rstrip('=')
+        padding = 4 - (len(base64_string_no_pad) % 4)
+        if padding != 4:
+            base64_string_padded = base64_string_no_pad + ('=' * padding)
+        else:
+            base64_string_padded = base64_string_no_pad
+        
+        try:
+            img_data = base64.b64decode(base64_string_padded)
+            return Image.open(BytesIO(img_data))
+        except:
+            pass
+        
+        # Strategy 3: Try with standard base64 (not urlsafe)
+        try:
+            img_data = base64.b64decode(base64_string_padded, validate=True)
+            return Image.open(BytesIO(img_data))
+        except:
+            pass
+        
+        # Strategy 4: Try URL-safe base64
+        try:
+            # Replace standard base64 chars with URL-safe equivalents
+            urlsafe_str = base64_string_no_pad.replace('+', '-').replace('/', '_')
+            padding = 4 - (len(urlsafe_str) % 4)
+            if padding != 4:
+                urlsafe_str += '=' * padding
+            img_data = base64.urlsafe_b64decode(urlsafe_str)
+            return Image.open(BytesIO(img_data))
+        except:
+            pass
+        
+        # If all strategies fail, raise error
+        raise ValueError("All base64 decoding strategies failed")
+        
     except Exception as e:
-        logger.error(f"Failed to decode base64: {str(e)}")
-        raise
+        logger.error(f"Failed to decode base64 after all attempts: {str(e)}")
+        raise ValueError(f"Failed to decode base64: {str(e)}")
 
 def detect_pattern_type(filename: str) -> str:
-    """Detect pattern type - optimized"""
+    """Detect pattern type - optimized with a_ pattern"""
     if not filename:
         return "other"
     
@@ -138,6 +186,10 @@ def detect_pattern_type(filename: str) -> str:
         return "bc_only"
     elif 'b_' in filename_lower and 'bc_' not in filename_lower:
         return "b_only"
+    elif 'ac_' in filename_lower:
+        return "ac_only"
+    elif 'a_' in filename_lower and 'ac_' not in filename_lower:
+        return "a_only"
     else:
         return "other"
 
@@ -162,8 +214,8 @@ def detect_wedding_ring_fast(image: Image.Image) -> bool:
 def apply_replicate_thumbnail_enhancement(image: Image.Image, is_wedding_ring: bool) -> Image.Image:
     """Apply Replicate enhancement for thumbnails using pre-initialized client"""
     if not USE_REPLICATE or not REPLICATE_CLIENT:
-        logger.warning("Replicate not available for thumbnails, skipping enhancement")
-        return image
+        logger.error("❌ Replicate not available for thumbnails - API token not configured")
+        raise ValueError("Replicate API token not configured. Please set REPLICATE_API_TOKEN environment variable.")
     
     try:
         # Convert image to base64 for Replicate
@@ -202,12 +254,12 @@ def apply_replicate_thumbnail_enhancement(image: Image.Image, is_wedding_ring: b
             logger.info("✅ Replicate thumbnail enhancement successful")
             return enhanced_image
         else:
-            logger.warning("⚠️ Replicate thumbnail enhancement failed, returning original image")
-            return image
+            logger.error("❌ Replicate thumbnail enhancement failed - no output received")
+            raise ValueError("Replicate thumbnail enhancement failed - no output received")
             
     except Exception as e:
         logger.error(f"❌ Replicate thumbnail enhancement error: {str(e)}")
-        return image
+        raise ValueError(f"Replicate thumbnail enhancement failed: {str(e)}")
 
 def auto_white_balance(image: Image.Image) -> Image.Image:
     """Apply automatic white balance correction"""
@@ -423,7 +475,7 @@ def apply_basic_enhancement(image):
     return image
 
 def apply_pattern_enhancement(image, pattern_type, is_wedding_ring):
-    """Apply enhancement based on pattern type - V13 with original values"""
+    """Apply enhancement based on pattern type - V16 with 5% overlay for a/b patterns"""
     
     if pattern_type == "bc_only":
         # bc_ pattern (unplated white) - V13 original values
@@ -461,17 +513,53 @@ def apply_pattern_enhancement(image, pattern_type, is_wedding_ring):
         
         if is_wedding_ring:
             image = apply_wedding_ring_focus(image)
+            
+    elif pattern_type == "ac_only":
+        # ac_ pattern (unplated white) - same as bc_
+        brightness = ImageEnhance.Brightness(image)
+        image = brightness.enhance(1.04)
+        
+        color = ImageEnhance.Color(image)
+        image = color.enhance(0.95)
+        
+        # ac_ also uses 0.14 white overlay
+        white_overlay = 0.14
+        img_array = np.array(image, dtype=np.float32)
+        img_array = img_array * (1 - white_overlay) + 255 * white_overlay
+        img_array = np.clip(img_array, 0, 255)
+        image = Image.fromarray(img_array.astype(np.uint8))
+        
+        # 7% center focus
+        width, height = image.size
+        x = np.linspace(-1, 1, width)
+        y = np.linspace(-1, 1, height)
+        X, Y = np.meshgrid(x, y)
+        distance = np.sqrt(X**2 + Y**2)
+        
+        focus_mask = 1 + 0.07 * np.exp(-distance**2 * 1.5)
+        focus_mask = np.clip(focus_mask, 1.0, 1.07)
+        
+        img_array = np.array(image, dtype=np.float32)
+        for i in range(3):
+            img_array[:, :, i] *= focus_mask
+        img_array = np.clip(img_array, 0, 255)
+        image = Image.fromarray(img_array.astype(np.uint8))
+        
+        image = apply_center_focus_thumbnail(image, 0.025)
+        
+        if is_wedding_ring:
+            image = apply_wedding_ring_focus(image)
         
     elif pattern_type == "b_only":
-        # b_ pattern - V13 original values
+        # b_ pattern - V16 UPDATED to 5%
         brightness = ImageEnhance.Brightness(image)
         image = brightness.enhance(1.04)  # RESTORED
         
         color = ImageEnhance.Color(image)
         image = color.enhance(0.95)  # Same desaturation as bc_
         
-        # V13: Original white overlay for b_ - 0.06
-        white_overlay = 0.06  # RESTORED
+        # V16: UPDATED white overlay for b_ - 0.05 (5%)
+        white_overlay = 0.05  # CHANGED from 0.06 to 0.05
         img_array = np.array(image, dtype=np.float32)
         img_array = img_array * (1 - white_overlay) + 255 * white_overlay
         img_array = np.clip(img_array, 0, 255)
@@ -498,6 +586,46 @@ def apply_pattern_enhancement(image, pattern_type, is_wedding_ring):
         image = Image.fromarray(img_array.astype(np.uint8))
         
         # V13: Add subtle center focus
+        image = apply_center_focus_thumbnail(image, 0.025)
+        
+        if is_wedding_ring:
+            image = apply_wedding_ring_focus(image)
+            
+    elif pattern_type == "a_only":
+        # a_ pattern - V16 NEW with 5%
+        brightness = ImageEnhance.Brightness(image)
+        image = brightness.enhance(1.04)
+        
+        color = ImageEnhance.Color(image)
+        image = color.enhance(0.95)
+        
+        # V16: NEW white overlay for a_ - 0.05 (5%)
+        white_overlay = 0.05
+        img_array = np.array(image, dtype=np.float32)
+        img_array = img_array * (1 - white_overlay) + 255 * white_overlay
+        img_array = np.clip(img_array, 0, 255)
+        image = Image.fromarray(img_array.astype(np.uint8))
+        
+        # Enhanced sharpness for a_ pattern
+        sharpness = ImageEnhance.Sharpness(image)
+        image = sharpness.enhance(1.15)
+        
+        # 7% center focus
+        width, height = image.size
+        x = np.linspace(-1, 1, width)
+        y = np.linspace(-1, 1, height)
+        X, Y = np.meshgrid(x, y)
+        distance = np.sqrt(X**2 + Y**2)
+        
+        focus_mask = 1 + 0.07 * np.exp(-distance**2 * 1.0)
+        focus_mask = np.clip(focus_mask, 1.0, 1.07)
+        
+        img_array = np.array(image, dtype=np.float32)
+        for i in range(3):
+            img_array[:, :, i] *= focus_mask
+        img_array = np.clip(img_array, 0, 255)
+        image = Image.fromarray(img_array.astype(np.uint8))
+        
         image = apply_center_focus_thumbnail(image, 0.025)
         
         if is_wedding_ring:
@@ -691,8 +819,12 @@ def handler(event):
         
         if pattern_type == "bc_only":
             detected_type = "무도금화이트(0.14)"
+        elif pattern_type == "ac_only":
+            detected_type = "무도금화이트(0.14)"
         elif pattern_type == "b_only":
-            detected_type = "b_패턴(0.06)"
+            detected_type = "b_패턴(0.05)"
+        elif pattern_type == "a_only":
+            detected_type = "a_패턴(0.05)"
         else:
             detected_type = "기타색상"
         
@@ -767,7 +899,9 @@ def handler(event):
                 },
                 "white_overlay_info": {
                     "bc_only": "0.14",
-                    "b_only": "0.06",
+                    "ac_only": "0.14",
+                    "b_only": "0.05",
+                    "a_only": "0.05",
                     "other": "none"
                 },
                 "has_center_focus": True,
