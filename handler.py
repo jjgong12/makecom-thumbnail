@@ -257,9 +257,9 @@ def apply_basic_enhancement(image):
         else:
             image = image.convert('RGB')
     
-    # Enhanced brightness
+    # Enhanced brightness - CHANGED to 1.025
     brightness = ImageEnhance.Brightness(image)
-    image = brightness.enhance(1.05)
+    image = brightness.enhance(1.025)  # Changed from 1.05
     
     contrast = ImageEnhance.Contrast(image)
     image = contrast.enhance(1.03)
@@ -275,7 +275,7 @@ def apply_pattern_enhancement(image, pattern_type, is_wedding_ring):
     if pattern_type == "bc_only":
         # bc_ pattern (unplated white) - V11 updated
         brightness = ImageEnhance.Brightness(image)
-        image = brightness.enhance(1.06)  # Updated from 1.01
+        image = brightness.enhance(1.04)  # CHANGED from 1.06
         
         color = ImageEnhance.Color(image)
         image = color.enhance(0.95)  # More desaturated for pure white
@@ -312,7 +312,7 @@ def apply_pattern_enhancement(image, pattern_type, is_wedding_ring):
     elif pattern_type == "b_only":
         # b_ pattern - V11 updated values
         brightness = ImageEnhance.Brightness(image)
-        image = brightness.enhance(1.06)  # Updated from 1.01
+        image = brightness.enhance(1.04)  # CHANGED from 1.06
         
         color = ImageEnhance.Color(image)
         image = color.enhance(0.95)  # Same desaturation as bc_
@@ -353,7 +353,7 @@ def apply_pattern_enhancement(image, pattern_type, is_wedding_ring):
     else:
         # Standard enhancement
         brightness = ImageEnhance.Brightness(image)
-        image = brightness.enhance(1.03)
+        image = brightness.enhance(1.025)  # CHANGED from 1.03
         
         color = ImageEnhance.Color(image)
         image = color.enhance(0.98)
@@ -526,9 +526,9 @@ def handler(event):
         # Apply pattern-specific enhancement
         thumbnail = apply_pattern_enhancement(thumbnail, pattern_type, is_wedding_ring)
         
-        # Quality check for bc_ and b_ patterns - V11 stricter standards
+        # Quality check for bc_only pattern ONLY - V11 stricter standards
         second_correction_applied = False
-        if pattern_type in ["bc_only", "b_only"]:  # V11: Extended to b_only
+        if pattern_type == "bc_only":  # CHANGED: Only bc_only pattern
             metrics = calculate_quality_metrics_simple(thumbnail)
             
             reasons = []
@@ -558,7 +558,7 @@ def handler(event):
         
         # Final brightness touch
         brightness = ImageEnhance.Brightness(thumbnail)
-        thumbnail = brightness.enhance(1.05)
+        thumbnail = brightness.enhance(1.04)  # CHANGED from 1.05
         
         # Convert to base64
         thumbnail_base64 = image_to_base64(thumbnail)
