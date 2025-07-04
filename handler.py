@@ -11,7 +11,7 @@ import re
 logging.basicConfig(level=logging.WARNING)  # Changed to WARNING to reduce logs
 logger = logging.getLogger(__name__)
 
-VERSION = "V11-Enhanced-Wedding"
+VERSION = "V11-WhiteBalance-Fixed"
 
 def find_input_data(data):
     """Find input data recursively - optimized"""
@@ -141,6 +141,52 @@ def detect_wedding_ring_fast(image: Image.Image) -> bool:
     except:
         return False
 
+def auto_white_balance(image: Image.Image) -> Image.Image:
+    """Apply automatic white balance correction"""
+    img_array = np.array(image, dtype=np.float32)
+    
+    # Find gray/white areas (R≈G≈B)
+    gray_mask = (
+        (np.abs(img_array[:,:,0] - img_array[:,:,1]) < 10) & 
+        (np.abs(img_array[:,:,1] - img_array[:,:,2]) < 10) &
+        (img_array[:,:,0] > 200)  # Bright areas
+    )
+    
+    if np.sum(gray_mask) > 100:  # If enough gray pixels
+        # Calculate average RGB in gray areas
+        r_avg = np.mean(img_array[gray_mask, 0])
+        g_avg = np.mean(img_array[gray_mask, 1])
+        b_avg = np.mean(img_array[gray_mask, 2])
+        
+        # Calculate correction factors
+        gray_avg = (r_avg + g_avg + b_avg) / 3
+        r_factor = gray_avg / r_avg if r_avg > 0 else 1
+        g_factor = gray_avg / g_avg if g_avg > 0 else 1
+        b_factor = gray_avg / b_avg if b_avg > 0 else 1
+        
+        # Apply correction
+        img_array[:,:,0] *= r_factor
+        img_array[:,:,1] *= g_factor
+        img_array[:,:,2] *= b_factor
+        
+        logger.info(f"White balance correction applied - R:{r_factor:.3f}, G:{g_factor:.3f}, B:{b_factor:.3f}")
+    
+    img_array = np.clip(img_array, 0, 255)
+    return Image.fromarray(img_array.astype(np.uint8))
+
+def correct_background_color(image: Image.Image) -> Image.Image:
+    """Correct background color to pure white"""
+    img_array = np.array(image, dtype=np.float32)
+    
+    # Detect background (bright, low saturation areas)
+    gray = np.mean(img_array, axis=2)
+    background_mask = gray > 240
+    
+    # Make background pure white
+    img_array[background_mask] = 255
+    
+    return Image.fromarray(img_array.astype(np.uint8))
+
 def calculate_quality_metrics_simple(image: Image.Image) -> dict:
     """Calculate quality metrics without cv2"""
     img_array = np.array(image)
@@ -176,7 +222,7 @@ def calculate_quality_metrics_simple(image: Image.Image) -> dict:
     }
 
 def apply_second_correction_thumbnail(image: Image.Image, reasons: list) -> Image.Image:
-    """Apply second correction for thumbnail - V11 pure white"""
+    """Apply second correction for thumbnail - V11 pure white with reduced cool tone"""
     if "brightness_low" in reasons:
         # Enhanced white overlay for pure white
         white_overlay_percent = 0.22  # Increased for thumbnail
@@ -187,10 +233,10 @@ def apply_second_correction_thumbnail(image: Image.Image, reasons: list) -> Imag
     
     if "insufficient_cool_tone" in reasons:
         img_array = np.array(image, dtype=np.float32)
-        # Boost blue channel
-        img_array[:,:,2] = np.clip(img_array[:,:,2] * 1.03, 0, 255)
-        # Reduce red channel
-        img_array[:,:,0] = np.clip(img_array[:,:,0] * 0.97, 0, 255)
+        # REDUCED: Boost blue channel
+        img_array[:,:,2] = np.clip(img_array[:,:,2] * 1.01, 0, 255)  # 1.03 → 1.01
+        # REDUCED: Reduce red channel
+        img_array[:,:,0] = np.clip(img_array[:,:,0] * 0.99, 0, 255)  # 0.97 → 0.99
         image = Image.fromarray(img_array.astype(np.uint8))
     
     if any(r in reasons for r in ["brightness_low", "saturation_high"]):
@@ -281,6 +327,9 @@ def apply_basic_enhancement(image):
             image = background
         else:
             image = image.convert('RGB')
+    
+    # Apply white balance correction FIRST
+    image = auto_white_balance(image)
     
     # Enhanced brightness - CHANGED to 1.025
     brightness = ImageEnhance.Brightness(image)
@@ -529,7 +578,7 @@ def handler(event):
         if not image:
             raise ValueError("Failed to load image")
         
-        # Apply basic enhancement
+        # Apply basic enhancement (includes white balance)
         enhanced_image = apply_basic_enhancement(image)
         
         # Detect wedding ring
@@ -585,6 +634,9 @@ def handler(event):
         brightness = ImageEnhance.Brightness(thumbnail)
         thumbnail = brightness.enhance(1.04)  # CHANGED from 1.05
         
+        # Apply background correction for final touch
+        thumbnail = correct_background_color(thumbnail)
+        
         # Convert to base64
         thumbnail_base64 = image_to_base64(thumbnail)
         
@@ -615,6 +667,8 @@ def handler(event):
                 },
                 "has_center_focus": True,
                 "center_focus_intensity": "7%",
+                "white_balance_applied": True,
+                "cool_tone_reduced": True,
                 "wedding_ring_enhancements": {
                     "highlight_enhancement": "12%",
                     "micro_contrast": "8%",
