@@ -11,7 +11,7 @@ import re
 logging.basicConfig(level=logging.WARNING)  # Changed to WARNING to reduce logs
 logger = logging.getLogger(__name__)
 
-VERSION = "V11-Updated-WhiteOverlay"
+VERSION = "V11-Enhanced-Wedding"
 
 def find_input_data(data):
     """Find input data recursively - optimized"""
@@ -219,17 +219,24 @@ def apply_center_focus_thumbnail(image: Image.Image, intensity: float = 0.025) -
     return Image.fromarray(img_array.astype(np.uint8))
 
 def apply_wedding_ring_focus(image: Image.Image) -> Image.Image:
-    """Apply enhanced focus for wedding rings"""
-    # Center focus
+    """Apply enhanced focus for wedding rings - ENHANCED VERSION"""
+    # 1. Highlight Enhancement (NEW) - 밝은 영역 강조
+    img_array = np.array(image, dtype=np.float32)
+    bright_mask = img_array > 200  # 밝은 영역 감지
+    img_array[bright_mask] *= 1.12  # 12% 밝기 증가 (썸네일은 약간 낮게)
+    img_array = np.clip(img_array, 0, 255)
+    image = Image.fromarray(img_array.astype(np.uint8))
+    
+    # 2. Center focus - ENHANCED to 4.5%
     width, height = image.size
     x = np.linspace(-1, 1, width)
     y = np.linspace(-1, 1, height)
     X, Y = np.meshgrid(x, y)
     distance = np.sqrt(X**2 + Y**2)
     
-    # 3.5% center focus
-    focus_mask = 1 + 0.035 * np.exp(-distance**2 * 1.5)
-    focus_mask = np.clip(focus_mask, 1.0, 1.035)
+    # 4.5% center focus (UPDATED from 3.5%)
+    focus_mask = 1 + 0.045 * np.exp(-distance**2 * 1.5)
+    focus_mask = np.clip(focus_mask, 1.0, 1.045)
     
     img_array = np.array(image, dtype=np.float32)
     for i in range(3):
@@ -237,13 +244,31 @@ def apply_wedding_ring_focus(image: Image.Image) -> Image.Image:
     img_array = np.clip(img_array, 0, 255)
     image = Image.fromarray(img_array.astype(np.uint8))
     
-    # Enhanced sharpness
+    # 3. Enhanced sharpness (UPDATED)
     sharpness = ImageEnhance.Sharpness(image)
-    image = sharpness.enhance(1.3)
+    image = sharpness.enhance(1.35)  # Increased from 1.3
     
-    # Contrast
+    # 4. Enhanced Contrast (UPDATED)
     contrast = ImageEnhance.Contrast(image)
-    image = contrast.enhance(1.03)
+    image = contrast.enhance(1.04)  # Increased from 1.03
+    
+    # 5. Brightness enhancement (NEW)
+    brightness = ImageEnhance.Brightness(image)
+    image = brightness.enhance(1.03)  # New brightness boost
+    
+    # 6. Structure Enhancement (NEW) - Unsharp mask
+    image = image.filter(ImageFilter.UnsharpMask(radius=1.0, percent=60, threshold=2))
+    
+    # 7. Micro Contrast (NEW) - Simple edge enhancement
+    gray = image.convert('L')
+    edges = gray.filter(ImageFilter.FIND_EDGES)
+    edges_array = np.array(edges, dtype=np.float32) * 0.08  # 8% micro contrast
+    
+    img_array = np.array(image, dtype=np.float32)
+    for i in range(3):
+        img_array[:, :, i] += edges_array
+    img_array = np.clip(img_array, 0, 255)
+    image = Image.fromarray(img_array.astype(np.uint8))
     
     return image
 
@@ -468,7 +493,7 @@ def image_to_base64(image):
     return img_base64.rstrip('=')
 
 def handler(event):
-    """Thumbnail handler function - V11 with updated values"""
+    """Thumbnail handler function - V11 with enhanced wedding ring processing"""
     try:
         # Get image index
         image_index = event.get('image_index', 1)
@@ -549,12 +574,12 @@ def handler(event):
         if not is_wedding_ring:
             thumbnail = apply_spotlight_effect(thumbnail)
         
-        # V11: Updated enhanced sharpness - 1.4
+        # V11: Updated enhanced sharpness - differentiated by wedding ring
         sharpness = ImageEnhance.Sharpness(thumbnail)
         if is_wedding_ring:
-            thumbnail = sharpness.enhance(1.2)
+            thumbnail = sharpness.enhance(1.25)  # UPDATED from 1.2
         else:
-            thumbnail = sharpness.enhance(1.4)  # Increased from 1.35
+            thumbnail = sharpness.enhance(1.4)  # Kept same for non-wedding
         
         # Final brightness touch
         brightness = ImageEnhance.Brightness(thumbnail)
@@ -589,7 +614,17 @@ def handler(event):
                     "other": "none"
                 },
                 "has_center_focus": True,
-                "center_focus_intensity": "7%"
+                "center_focus_intensity": "7%",
+                "wedding_ring_enhancements": {
+                    "highlight_enhancement": "12%",
+                    "micro_contrast": "8%",
+                    "structure_enhancement": "enabled",
+                    "enhanced_sharpness": "1.35",
+                    "enhanced_contrast": "1.04",
+                    "enhanced_brightness": "1.03",
+                    "enhanced_center_focus": "4.5%",
+                    "final_sharpness": "1.25"
+                } if is_wedding_ring else None
             }
         }
         
