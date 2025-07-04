@@ -6,12 +6,13 @@ from PIL import Image, ImageEnhance, ImageFilter
 import requests
 import logging
 import re
+import replicate
 
 # Simplified imports - cv2 import moved inside function to avoid initialization issues
 logging.basicConfig(level=logging.WARNING)  # Changed to WARNING to reduce logs
 logger = logging.getLogger(__name__)
 
-VERSION = "V14-BackgroundSafe-Fixed"
+VERSION = "V15-Replicate-Enhanced"
 
 def find_input_data(data):
     """Find input data recursively - optimized"""
@@ -140,6 +141,54 @@ def detect_wedding_ring_fast(image: Image.Image) -> bool:
         return bool(bright_ratio > 0.15)
     except:
         return False
+
+def apply_replicate_thumbnail_enhancement(image: Image.Image, is_wedding_ring: bool, use_replicate: bool = True) -> Image.Image:
+    """Apply Replicate enhancement for thumbnails - lighter processing"""
+    if not use_replicate:
+        return image
+    
+    try:
+        # Convert image to base64 for Replicate
+        buffered = BytesIO()
+        image.save(buffered, format="PNG")
+        buffered.seek(0)
+        img_base64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
+        img_data_url = f"data:image/png;base64,{img_base64}"
+        
+        # For thumbnails, use Real-ESRGAN for faster processing
+        logger.info(f"Applying Replicate thumbnail enhancement - Wedding ring: {is_wedding_ring}")
+        
+        output = replicate.run(
+            "nightmareai/real-esrgan:350d32041630ffbe63c8352783a26d94126809164e54085352f8326e53999085",
+            input={
+                "image": img_data_url,
+                "scale": 2,  # 2x upscale
+                "face_enhance": False,
+                "model": "RealESRGAN_x2plus"  # Faster 2x model
+            }
+        )
+        
+        if output:
+            # Convert output back to PIL Image
+            if isinstance(output, str):
+                # If output is URL
+                response = requests.get(output)
+                enhanced_image = Image.open(BytesIO(response.content))
+            else:
+                # If output is base64 or data URL
+                if hasattr(output, 'read'):
+                    enhanced_image = Image.open(output)
+                else:
+                    enhanced_image = Image.open(BytesIO(base64.b64decode(output)))
+            
+            return enhanced_image
+        else:
+            logger.warning("Replicate thumbnail enhancement failed, returning original image")
+            return image
+            
+    except Exception as e:
+        logger.error(f"Replicate thumbnail enhancement error: {str(e)}")
+        return image
 
 def auto_white_balance(image: Image.Image) -> Image.Image:
     """Apply automatic white balance correction"""
@@ -537,6 +586,12 @@ def create_thumbnail_smart_center_crop_with_upscale(image, target_width=1000, ta
         
         return thumbnail
 
+def needs_thumbnail_upscaling(image: Image.Image) -> bool:
+    """Check if thumbnail needs upscaling"""
+    width, height = image.size
+    # Thumbnail needs upscaling if source is smaller than 2000x2600
+    return width < 2000 or height < 2600
+
 def image_to_base64(image):
     """Convert image to base64 without padding"""
     buffered = BytesIO()
@@ -553,8 +608,20 @@ def image_to_base64(image):
     return img_base64.rstrip('=')
 
 def handler(event):
-    """Thumbnail handler function - V13 with background fix"""
+    """Thumbnail handler function - V15 with Replicate integration"""
     try:
+        # Check if Replicate should be used
+        use_replicate = event.get('use_replicate', False) if isinstance(event, dict) else False
+        replicate_api_token = None
+        
+        if isinstance(event, dict):
+            replicate_api_token = event.get('replicate_api_token') or os.environ.get('REPLICATE_API_TOKEN')
+        
+        if use_replicate and replicate_api_token:
+            global replicate
+            replicate = replicate.Client(api_token=replicate_api_token)
+            logger.info("Replicate API initialized for thumbnail")
+        
         # Get image index
         image_index = event.get('image_index', 1)
         if isinstance(event.get('input'), dict):
@@ -594,6 +661,16 @@ def handler(event):
         
         # Detect wedding ring
         is_wedding_ring = detect_wedding_ring_fast(enhanced_image)
+        
+        # Check if upscaling is needed
+        needs_upscale = needs_thumbnail_upscaling(enhanced_image)
+        replicate_applied = False
+        
+        # Apply Replicate enhancement if needed (for wedding rings or small images)
+        if use_replicate and replicate_api_token and (is_wedding_ring or needs_upscale):
+            logger.info(f"Applying Replicate thumbnail enhancement - Wedding ring: {is_wedding_ring}, Needs upscale: {needs_upscale}")
+            enhanced_image = apply_replicate_thumbnail_enhancement(enhanced_image, is_wedding_ring, True)
+            replicate_applied = True
         
         # Create thumbnail with upscaling
         thumbnail = create_thumbnail_smart_center_crop_with_upscale(enhanced_image, 1000, 1300)
@@ -671,6 +748,11 @@ def handler(event):
                 "second_correction_applied": bool(second_correction_applied),
                 "version": VERSION,
                 "status": "success",
+                "replicate_enhancement": {
+                    "applied": replicate_applied,
+                    "upscaling_needed": needs_upscale,
+                    "model_used": "real-esrgan-x2plus"
+                } if replicate_applied else None,
                 "white_overlay_info": {
                     "bc_only": "0.14",
                     "b_only": "0.06",
