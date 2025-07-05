@@ -13,21 +13,22 @@ import string
 logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
 
-VERSION = "V19-Bright-Enhanced-Failsafe"
+VERSION = "V19-NoReplicate"
 
 # ===== REPLICATE INITIALIZATION =====
 REPLICATE_API_TOKEN = os.environ.get('REPLICATE_API_TOKEN')
 REPLICATE_CLIENT = None
-USE_REPLICATE = False
+USE_REPLICATE = False  # DISABLED due to model version issues
 
-if REPLICATE_API_TOKEN:
-    try:
-        REPLICATE_CLIENT = replicate.Client(api_token=REPLICATE_API_TOKEN)
-        USE_REPLICATE = True
-        logger.info("✅ Replicate client initialized successfully for thumbnails")
-    except Exception as e:
-        logger.error(f"❌ Failed to initialize Replicate client: {e}")
-        USE_REPLICATE = False
+# Temporarily disabled due to model permission issues
+# if REPLICATE_API_TOKEN:
+#     try:
+#         REPLICATE_CLIENT = replicate.Client(api_token=REPLICATE_API_TOKEN)
+#         USE_REPLICATE = True
+#         logger.info("✅ Replicate client initialized successfully for thumbnails")
+#     except Exception as e:
+#         logger.error(f"❌ Failed to initialize Replicate client: {e}")
+#         USE_REPLICATE = False
 
 def find_input_data(data):
     """Find input data recursively - ULTRA ENHANCED for Make.com"""
@@ -374,11 +375,11 @@ def apply_wedding_ring_focus_v19(image: Image.Image) -> Image.Image:
     
     # 2. Enhanced sharpness
     sharpness = ImageEnhance.Sharpness(image)
-    image = sharpness.enhance(1.5)  # Increased from 1.3
+    image = sharpness.enhance(1.4)  # Reduced from 1.5
     
     # 3. Contrast
     contrast = ImageEnhance.Contrast(image)
-    image = contrast.enhance(1.08)  # Increased from 1.03
+    image = contrast.enhance(1.03)  # Reduced to 1.03
     
     # 4. Detail enhancement with stronger settings
     image = image.filter(ImageFilter.UnsharpMask(radius=1.5, percent=100, threshold=2))
@@ -403,7 +404,7 @@ def apply_basic_enhancement(image):
     image = brightness.enhance(1.1)  # Increased to 1.1
     
     contrast = ImageEnhance.Contrast(image)
-    image = contrast.enhance(1.08)  # Increased from 1.03
+    image = contrast.enhance(1.03)  # Reduced to 1.03
     
     color = ImageEnhance.Color(image)
     image = color.enhance(1.02)  # Slightly increased from 1.01
@@ -445,7 +446,7 @@ def apply_pattern_enhancement_v19(image, pattern_type, is_wedding_ring):
         
         # Enhanced sharpness
         sharpness = ImageEnhance.Sharpness(image)
-        image = sharpness.enhance(1.5)  # Increased from 1.25
+        image = sharpness.enhance(1.4)  # Reduced from 1.5
         
     else:
         # Standard enhancement
@@ -453,7 +454,7 @@ def apply_pattern_enhancement_v19(image, pattern_type, is_wedding_ring):
         image = brightness.enhance(1.05)  # Increased from 1.0
         
         contrast = ImageEnhance.Contrast(image)
-        image = contrast.enhance(1.08)  # Increased from 1.02
+        image = contrast.enhance(1.03)  # Reduced to 1.03
     
     # Apply reduced center spotlight
     image = apply_center_spotlight_thumbnail(image, 0.10)  # Reduced from 0.15
@@ -545,7 +546,7 @@ def handler(event):
     """Thumbnail handler function - Wedding Ring Optimized"""
     try:
         logger.info(f"=== Thumbnail {VERSION} Started ===")
-        logger.info(f"Replicate available: {USE_REPLICATE}")
+        logger.info(f"Replicate: DISABLED (model version issues)")
         
         # Get image index
         image_index = event.get('image_index', 1)
@@ -639,14 +640,8 @@ def handler(event):
         
         # Apply Replicate enhancement if available
         replicate_applied = False
-        if USE_REPLICATE:
-            try:
-                enhanced_image = apply_replicate_thumbnail_enhancement(enhanced_image, is_wedding_ring)
-                replicate_applied = True
-            except Exception as e:
-                logger.error(f"Replicate thumbnail enhancement failed: {str(e)}")
-                # Continue with basic enhancement instead of returning error
-                logger.warning("Continuing with basic enhancement only")
+        # Replicate temporarily disabled due to model version issues
+        logger.info("Replicate is currently disabled - using basic enhancement only")
         
         # Create thumbnail with upscaling
         thumbnail = create_thumbnail_smart_center_crop_with_upscale(enhanced_image, 1000, 1300)
@@ -666,7 +661,7 @@ def handler(event):
         
         # Final sharpness (increased for wedding rings)
         sharpness = ImageEnhance.Sharpness(thumbnail)
-        thumbnail = sharpness.enhance(1.6)  # Increased from 1.3
+        thumbnail = sharpness.enhance(1.5)  # Reduced from 1.6
         
         # Final brightness touch (increased)
         brightness = ImageEnhance.Brightness(thumbnail)
