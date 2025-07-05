@@ -13,7 +13,7 @@ import string
 logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
 
-VERSION = "V19-Bright-Enhanced"
+VERSION = "V19-Bright-Enhanced-Failsafe"
 
 # ===== REPLICATE INITIALIZATION =====
 REPLICATE_API_TOKEN = os.environ.get('REPLICATE_API_TOKEN')
@@ -282,14 +282,14 @@ def apply_replicate_thumbnail_enhancement(image: Image.Image, is_wedding_ring: b
         img_base64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
         img_data_url = f"data:image/png;base64,{img_base64}"
         
-        logger.info(f"🔷 Applying Replicate thumbnail enhancement with 4x upscaling")
+        logger.info(f"🔷 Applying Replicate thumbnail enhancement with 2x upscaling")
         
-        # Use Real-ESRGAN with 4x upscaling
+        # Use Real-ESRGAN with 2x upscaling (reduced from 4x)
         output = REPLICATE_CLIENT.run(
             "nightmareai/real-esrgan:350d32041630ffbe63c8352783a26d94126809164e54085352f8326e53999085",
             input={
                 "image": img_data_url,
-                "scale": 4,
+                "scale": 2,  # Reduced from 4 to 2
                 "face_enhance": False,
                 "model": "RealESRGAN_x4plus"
             }
@@ -645,13 +645,8 @@ def handler(event):
                 replicate_applied = True
             except Exception as e:
                 logger.error(f"Replicate thumbnail enhancement failed: {str(e)}")
-                return {
-                    "output": {
-                        "error": f"Replicate thumbnail enhancement failed: {str(e)}",
-                        "status": "failed",
-                        "version": VERSION
-                    }
-                }
+                # Continue with basic enhancement instead of returning error
+                logger.warning("Continuing with basic enhancement only")
         
         # Create thumbnail with upscaling
         thumbnail = create_thumbnail_smart_center_crop_with_upscale(enhanced_image, 1000, 1300)
