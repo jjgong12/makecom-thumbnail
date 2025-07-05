@@ -13,22 +13,21 @@ import string
 logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
 
-VERSION = "V19-NoReplicate"
+VERSION = "V19-RealESRGAN"
 
 # ===== REPLICATE INITIALIZATION =====
 REPLICATE_API_TOKEN = os.environ.get('REPLICATE_API_TOKEN')
 REPLICATE_CLIENT = None
-USE_REPLICATE = False  # DISABLED due to model version issues
+USE_REPLICATE = False
 
-# Temporarily disabled due to model permission issues
-# if REPLICATE_API_TOKEN:
-#     try:
-#         REPLICATE_CLIENT = replicate.Client(api_token=REPLICATE_API_TOKEN)
-#         USE_REPLICATE = True
-#         logger.info("✅ Replicate client initialized successfully for thumbnails")
-#     except Exception as e:
-#         logger.error(f"❌ Failed to initialize Replicate client: {e}")
-#         USE_REPLICATE = False
+if REPLICATE_API_TOKEN:
+    try:
+        REPLICATE_CLIENT = replicate.Client(api_token=REPLICATE_API_TOKEN)
+        USE_REPLICATE = True
+        logger.info("✅ Replicate client initialized successfully for thumbnails")
+    except Exception as e:
+        logger.error(f"❌ Failed to initialize Replicate client: {e}")
+        USE_REPLICATE = False
 
 def find_input_data(data):
     """Find input data recursively - ULTRA ENHANCED for Make.com"""
@@ -546,7 +545,7 @@ def handler(event):
     """Thumbnail handler function - Wedding Ring Optimized"""
     try:
         logger.info(f"=== Thumbnail {VERSION} Started ===")
-        logger.info(f"Replicate: DISABLED (model version issues)")
+        logger.info(f"Replicate available: {USE_REPLICATE}")
         
         # Get image index
         image_index = event.get('image_index', 1)
@@ -640,8 +639,14 @@ def handler(event):
         
         # Apply Replicate enhancement if available
         replicate_applied = False
-        # Replicate temporarily disabled due to model version issues
-        logger.info("Replicate is currently disabled - using basic enhancement only")
+        if USE_REPLICATE:
+            try:
+                enhanced_image = apply_replicate_thumbnail_enhancement(enhanced_image, is_wedding_ring)
+                replicate_applied = True
+            except Exception as e:
+                logger.error(f"Replicate thumbnail enhancement failed: {str(e)}")
+                # Continue with basic enhancement instead of returning error
+                logger.warning("Continuing with basic enhancement only")
         
         # Create thumbnail with upscaling
         thumbnail = create_thumbnail_smart_center_crop_with_upscale(enhanced_image, 1000, 1300)
