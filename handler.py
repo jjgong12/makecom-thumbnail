@@ -145,16 +145,9 @@ def apply_swinir_thumbnail_fast(image: Image.Image) -> Image.Image:
         return image
     
     try:
-        # Limit size for speed
+        # Process at original size
         width, height = image.size
-        if width > 1200 or height > 1600:
-            scale = min(1200/width, 1600/height)
-            new_size = (int(width * scale), int(height * scale))
-            image = image.resize(new_size, Image.Resampling.LANCZOS)
-            need_resize = True
-            original_size = (width, height)
-        else:
-            need_resize = False
+        logger.info(f"Processing SwinIR thumbnail at: {width}x{height}")
         
         # Convert to base64
         buffered = BytesIO()
@@ -181,9 +174,6 @@ def apply_swinir_thumbnail_fast(image: Image.Image) -> Image.Image:
                 enhanced_image = Image.open(BytesIO(response.content))
             else:
                 enhanced_image = Image.open(BytesIO(base64.b64decode(output)))
-            
-            if need_resize:
-                enhanced_image = enhanced_image.resize(original_size, Image.Resampling.LANCZOS)
             
             return enhanced_image
             
