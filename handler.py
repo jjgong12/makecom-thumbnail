@@ -13,7 +13,7 @@ import string
 logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
 
-VERSION = "V23-No-White-Overlay"
+VERSION = "V24-White-12-15"
 
 # ===== REPLICATE INITIALIZATION =====
 REPLICATE_API_TOKEN = os.environ.get('REPLICATE_API_TOKEN')
@@ -436,15 +436,18 @@ def needs_second_correction_thumbnail(metrics: dict, pattern_type: str) -> tuple
     return len(reasons) > 0, reasons
 
 def apply_second_correction_thumbnail(image: Image.Image, reasons: list) -> Image.Image:
-    """Apply second correction for thumbnail - V23 saturation only"""
+    """Apply second correction for thumbnail - V23 with 15% white overlay"""
     logger.info(f"Applying second correction for reasons: {reasons}")
     
-    # V23: Only apply saturation reduction for quality check failures
+    # V23: Apply 15% white overlay for quality check failures
     if any(reason in reasons for reason in ["saturation_high", "brightness_low", "insufficient_cool_tone", "rgb_deviation_high"]):
-        # Just reduce saturation slightly
-        color = ImageEnhance.Color(image)
-        image = color.enhance(0.90)  # Reduce saturation by 10%
-        logger.info("Applied saturation reduction (0.90)")
+        # Apply 15% white overlay for second correction
+        white_overlay = 0.15  # 15% white overlay for second correction
+        img_array = np.array(image, dtype=np.float32)
+        img_array = img_array * (1 - white_overlay) + 255 * white_overlay
+        img_array = np.clip(img_array, 0, 255)
+        image = Image.fromarray(img_array.astype(np.uint8))
+        logger.info("Applied 15% white overlay for second correction")
     
     logger.info("Second correction applied successfully")
     return image
@@ -480,7 +483,7 @@ def apply_pattern_enhancement_v23(image, pattern_type, is_wedding_ring):
     # V23: Apply white overlay ONLY to bc_only and ac_only patterns (unplated white)
     if pattern_type in ["bc_only", "ac_only"]:
         # Unplated white - apply white overlay
-        white_overlay = 0.18  # 18% total white overlay for unplated white
+        white_overlay = 0.12  # 12% white overlay for unplated white
         img_array = np.array(image, dtype=np.float32)
         img_array = img_array * (1 - white_overlay) + 255 * white_overlay
         img_array = np.clip(img_array, 0, 255)
@@ -732,7 +735,7 @@ def handler(event):
         pattern_type = detect_pattern_type(filename)
         
         if pattern_type in ["bc_only", "ac_only"]:
-            detected_type = "무도금화이트(0.18)"
+            detected_type = "무도금화이트(0.12)"
         elif pattern_type in ["b_only", "a_only"]:
             detected_type = f"{pattern_type[0]}_패턴(no_overlay+spotlight3%)"
         else:
@@ -772,14 +775,14 @@ def handler(event):
                 "version": VERSION,
                 "status": "success",
                 "replicate_applied": replicate_applied,
-                "white_overlay_applied": "18% for bc/ac only, 0% for others",
+                "white_overlay_applied": "12% for bc/ac only, 0% for others",
                 "center_spotlight": "3% for a/b patterns, 5% for others",
                 "brightness_increase": "bc/ac: 1.05, a/b: 1.10, other: 1.08",
                 "base64_decode_method": "ultra_safe_v23",
                 "wedding_ring_enhancement": "cubic_focus_only_no_metallic (all files)",
                 "quality_check": "balanced (243/4/4/1.7)",
-                "second_correction": "saturation_only_0.90",
-                "adjustments": "no white overlay except unplated white"
+                "second_correction": "15% white overlay",
+                "adjustments": "12% primary, 15% secondary for unplated white"
             }
         }
         
