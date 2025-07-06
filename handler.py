@@ -14,7 +14,7 @@ import cv2
 logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
 
-VERSION = "V26-MIRNet-Cubic"
+VERSION = "V27-SwinIR-Cubic-Only"
 
 # ===== REPLICATE INITIALIZATION =====
 REPLICATE_API_TOKEN = os.environ.get('REPLICATE_API_TOKEN')
@@ -139,42 +139,6 @@ def detect_pattern_type(filename: str) -> str:
         return "a_only"
     else:
         return "other"
-
-def apply_mirnet_thumbnail(image: Image.Image) -> Image.Image:
-    """Apply MIRNet for thumbnail lighting enhancement"""
-    if not USE_REPLICATE or not REPLICATE_CLIENT:
-        return image
-    
-    try:
-        width, height = image.size
-        logger.info(f"🔷 Applying MIRNet for thumbnail at: {width}x{height}")
-        
-        # Convert to base64
-        buffered = BytesIO()
-        image.save(buffered, format="PNG", optimize=False)
-        buffered.seek(0)
-        img_base64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
-        img_data_url = f"data:image/png;base64,{img_base64}"
-        
-        output = REPLICATE_CLIENT.run(
-            "google-research/mirnet:5ebf5e597fd93dabe2080e9e5f74e0e478dd8230",
-            input={
-                "image": img_data_url,
-                "task": "enhance"
-            }
-        )
-        
-        if output:
-            if isinstance(output, str):
-                response = requests.get(output)
-                return Image.open(BytesIO(response.content))
-            else:
-                return Image.open(BytesIO(base64.b64decode(output)))
-                
-    except Exception as e:
-        logger.warning(f"MIRNet error: {str(e)}")
-        
-    return image
 
 def apply_swinir_thumbnail_fast(image: Image.Image) -> Image.Image:
     """Fast SwinIR for thumbnails"""
@@ -446,7 +410,7 @@ def image_to_base64(image):
     return base64.b64encode(buffered.getvalue()).decode().rstrip('=')
 
 def handler(event):
-    """Optimized thumbnail handler with MIRNet"""
+    """Optimized thumbnail handler - NO MIRNet"""
     try:
         logger.info(f"=== Thumbnail {VERSION} Started ===")
         
@@ -502,16 +466,7 @@ def handler(event):
         # Detect pattern
         pattern_type = detect_pattern_type(filename)
         
-        # Apply MIRNet for all patterns (lighting normalization)
-        mirnet_applied = False
-        if USE_REPLICATE:
-            try:
-                image = apply_mirnet_thumbnail(image)
-                mirnet_applied = True
-            except:
-                logger.warning("MIRNet failed, continuing without")
-        
-        # Apply SwinIR for unplated white and gold patterns
+        # Apply SwinIR for unplated white and gold patterns (NO MIRNet)
         swinir_applied = False
         if USE_REPLICATE and pattern_type in ["bc_ac", "a_only", "b_only"]:
             try:
@@ -562,7 +517,7 @@ def handler(event):
                 "format": "base64_no_padding",
                 "version": VERSION,
                 "status": "success",
-                "mirnet_applied": mirnet_applied,
+                "mirnet_removed": True,
                 "swinir_applied": swinir_applied,
                 "cubic_enhancement": True,
                 "white_overlay": "7% for bc_ac, 0% others",
@@ -570,12 +525,12 @@ def handler(event):
                 "sharpness_increased": "1.6-1.7",
                 "spotlight_reduced": "2-3%",
                 "enhancements": [
-                    "MIRNet for lighting",
                     "SwinIR for detail",
                     "CLAHE for cubic clarity",
-                    "Multi-scale sharpening"
+                    "Multi-scale sharpening",
+                    "NO MIRNet (background preserved)"
                 ],
-                "processing_order": "MIRNet → SwinIR → Cubic Enhancement → Pattern Enhancement"
+                "processing_order": "White Balance → SwinIR → Cubic Enhancement → Pattern Enhancement"
             }
         }
         
