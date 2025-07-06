@@ -4,15 +4,31 @@ import base64
 import numpy as np
 from io import BytesIO
 from PIL import Image, ImageEnhance, ImageFilter
+import requests
 import logging
 import re
+import replicate
 import string
 import cv2
 
 logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
 
-VERSION = "V30-Advanced-Detail-Enhancement"
+VERSION = "V29-Speed-Optimized"
+
+# ===== REPLICATE INITIALIZATION =====
+REPLICATE_API_TOKEN = os.environ.get('REPLICATE_API_TOKEN')
+REPLICATE_CLIENT = None
+USE_REPLICATE = False
+
+if REPLICATE_API_TOKEN:
+    try:
+        REPLICATE_CLIENT = replicate.Client(api_token=REPLICATE_API_TOKEN)
+        USE_REPLICATE = True
+        logger.info("✅ Replicate client initialized")
+    except Exception as e:
+        logger.error(f"❌ Failed to initialize Replicate: {e}")
+        USE_REPLICATE = False
 
 def find_input_data_fast(data):
     """Fast input data extraction"""
@@ -124,101 +140,62 @@ def detect_pattern_type(filename: str) -> str:
     else:
         return "other"
 
-def enhance_cubic_details_thumbnail_advanced(image: Image.Image) -> Image.Image:
-    """Advanced cubic enhancement for thumbnails"""
+def apply_swinir_thumbnail_fast(image: Image.Image) -> Image.Image:
+    """Fast SwinIR for thumbnails"""
+    if not USE_REPLICATE or not REPLICATE_CLIENT:
+        return image
     
-    # 1. Multi-scale unsharp mask optimized for thumbnails
-    # Smaller radii for thumbnail size
-    large_detail = image.filter(ImageFilter.UnsharpMask(radius=1.2, percent=130, threshold=2))
-    medium_detail = large_detail.filter(ImageFilter.UnsharpMask(radius=0.6, percent=110, threshold=1))
-    fine_detail = medium_detail.filter(ImageFilter.UnsharpMask(radius=0.3, percent=100, threshold=1))
-    
-    # 2. Edge enhancement for sparkle
-    edges = fine_detail.filter(ImageFilter.EDGE_ENHANCE)
-    
-    # 3. Blend edge enhancement
-    enhanced = Image.blend(fine_detail, edges, 0.25)
-    
-    # 4. Micro-contrast for thumbnail visibility
-    contrast = ImageEnhance.Contrast(enhanced)
-    enhanced = contrast.enhance(1.08)
-    
-    # 5. Detail filter
-    enhanced = enhanced.filter(ImageFilter.DETAIL)
-    
-    return enhanced
-
-def enhance_jewelry_details_thumbnail(image: Image.Image, pattern_type: str) -> Image.Image:
-    """Jewelry-specific detail enhancement for thumbnails"""
     try:
-        img_array = np.array(image)
+        # Process at original size
+        width, height = image.size
+        logger.info(f"Processing SwinIR thumbnail at: {width}x{height}")
         
-        # 1. Simplified CLAHE for thumbnails
-        lab = cv2.cvtColor(img_array, cv2.COLOR_RGB2LAB)
-        l, a, b = cv2.split(lab)
+        # Convert to base64
+        buffered = BytesIO()
+        image.save(buffered, format="PNG", optimize=False)
+        buffered.seek(0)
+        img_base64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
+        img_data_url = f"data:image/png;base64,{img_base64}"
         
-        # Less aggressive CLAHE for thumbnails
-        clahe = cv2.createCLAHE(clipLimit=1.5, tileGridSize=(4,4))
-        l = clahe.apply(l)
+        logger.info("🔷 SwinIR thumbnail (fast)")
         
-        lab = cv2.merge([l, a, b])
-        img_array = cv2.cvtColor(lab, cv2.COLOR_LAB2RGB)
+        output = REPLICATE_CLIENT.run(
+            "jingyunliang/swinir:660d922d33153019e8c263a3bba265de882e7f4f70396546b6c9c8f9d47a021a",
+            input={
+                "image": img_data_url,
+                "task_type": "Real-World Image Super-Resolution",  # Faster
+                "noise_level": 10,
+                "jpeg_quality": 50
+            }
+        )
         
-        # 2. Selective sharpening for bright areas
-        gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
-        
-        # Find bright areas (cubics)
-        _, bright_mask = cv2.threshold(gray, 190, 255, cv2.THRESH_BINARY)
-        
-        # Smaller kernel for thumbnails
-        kernel = np.ones((2,2), np.uint8)
-        bright_mask = cv2.dilate(bright_mask, kernel, iterations=1)
-        
-        # Gentler sharpening kernel for thumbnails
-        sharpen_kernel = np.array([[0,-1,0],
-                                  [-1,5,-1],
-                                  [0,-1,0]])
-        
-        sharpened = cv2.filter2D(img_array, -1, sharpen_kernel)
-        
-        # Blend based on mask
-        mask_3d = np.stack([bright_mask/255]*3, axis=2).astype(np.float32)
-        result = img_array * (1 - mask_3d * 0.4) + sharpened * (mask_3d * 0.4)
-        
-        # 3. Edge enhancement for white/unplated patterns
-        if pattern_type in ["bc_ac", "b_only"]:
-            # Subtle edge enhancement
-            edges = cv2.Canny(gray, 50, 150)
-            edges_colored = cv2.cvtColor(edges, cv2.COLOR_GRAY2RGB)
-            result = cv2.addWeighted(result.astype(np.uint8), 0.95, edges_colored, 0.05, 0)
-        
-        return Image.fromarray(result.astype(np.uint8))
-        
+        if output:
+            if isinstance(output, str):
+                response = requests.get(output)
+                enhanced_image = Image.open(BytesIO(response.content))
+            else:
+                enhanced_image = Image.open(BytesIO(base64.b64decode(output)))
+            
+            return enhanced_image
+            
     except Exception as e:
-        logger.warning(f"OpenCV enhancement failed: {e}, using PIL fallback")
-        return enhance_cubic_details_thumbnail_advanced(image)
-
-def enhance_cubic_details_thumbnail_fast_quality(image: Image.Image, pattern_type: str) -> Image.Image:
-    """Main thumbnail detail enhancement function"""
-    
-    # 1. Initial sharpening for thumbnails
-    sharpness = ImageEnhance.Sharpness(image)
-    image = sharpness.enhance(1.25)
-    
-    # 2. Apply advanced multi-scale enhancement
-    image = enhance_cubic_details_thumbnail_advanced(image)
-    
-    # 3. Apply jewelry-specific enhancement
-    image = enhance_jewelry_details_thumbnail(image, pattern_type)
-    
-    # 4. Pattern-specific optimization for thumbnails
-    if pattern_type in ["bc_ac", "b_only"]:
-        # Extra contrast for white/unplated patterns
-        contrast = ImageEnhance.Contrast(image)
-        image = contrast.enhance(1.04)
+        logger.warning(f"SwinIR error: {str(e)}")
         
-        # Fine detail boost
-        image = image.filter(ImageFilter.UnsharpMask(radius=0.2, percent=70, threshold=1))
+    return image
+
+def enhance_cubic_details_thumbnail_simple(image: Image.Image) -> Image.Image:
+    """Simple cubic enhancement for thumbnails - no LAB conversion"""
+    # Just use PIL-based enhancement for speed
+    # Contrast enhancement
+    contrast = ImageEnhance.Contrast(image)
+    image = contrast.enhance(1.06)
+    
+    # Fine detail enhancement for small display
+    image = image.filter(ImageFilter.UnsharpMask(radius=0.3, percent=100, threshold=2))
+    
+    # Micro-contrast for sparkle
+    contrast2 = ImageEnhance.Contrast(image)
+    image = contrast2.enhance(1.02)
     
     return image
 
@@ -298,12 +275,12 @@ def calculate_quality_metrics_fast(image: Image.Image) -> dict:
     }
 
 def apply_pattern_enhancement_fast(image, pattern_type):
-    """Fast pattern enhancement - Modified white overlay (10% primary, 3% additional)"""
+    """Fast pattern enhancement - Reduced white overlay & brightness"""
     
-    # Apply white overlay ONLY to bc_ac pattern (10% primary)
+    # Apply white overlay ONLY to bc_ac pattern (7% instead of 12%)
     if pattern_type == "bc_ac":
-        # Unplated white - 10% white overlay
-        white_overlay = 0.10
+        # Unplated white - 7% white overlay
+        white_overlay = 0.07
         img_array = np.array(image, dtype=np.float32)
         img_array = img_array * (1 - white_overlay) + 255 * white_overlay
         img_array = np.clip(img_array, 0, 255)
@@ -349,8 +326,8 @@ def apply_pattern_enhancement_fast(image, pattern_type):
     if pattern_type == "bc_ac":
         metrics = calculate_quality_metrics_fast(image)
         if metrics["brightness"] < 240:
-            # Apply 3% additional white overlay
-            white_overlay = 0.03  # Total 13%
+            # Apply 10% white overlay as correction (reduced from 15%)
+            white_overlay = 0.10
             img_array = np.array(image, dtype=np.float32)
             img_array = img_array * (1 - white_overlay) + 255 * white_overlay
             img_array = np.clip(img_array, 0, 255)
@@ -414,13 +391,13 @@ def image_to_base64(image):
         background.paste(image, mask=image.split()[3])
         image = background
     
-    image.save(buffered, format='PNG', optimize=False, quality=95)
+    image.save(buffered, format='PNG', optimize=False, quality=92)
     buffered.seek(0)
     
     return base64.b64encode(buffered.getvalue()).decode().rstrip('=')
 
 def handler(event):
-    """Optimized thumbnail handler - ADVANCED DETAIL ENHANCEMENT"""
+    """Optimized thumbnail handler - SPEED OPTIMIZED"""
     try:
         logger.info(f"=== Thumbnail {VERSION} Started ===")
         
@@ -476,15 +453,27 @@ def handler(event):
         # Detect pattern
         pattern_type = detect_pattern_type(filename)
         
-        # Apply advanced detail enhancement (replaces SwinIR)
-        logger.info("Applying advanced detail enhancement for thumbnail")
-        image = enhance_cubic_details_thumbnail_fast_quality(image, pattern_type)
+        # NO MIRNet - removed for speed
+        
+        # Apply SwinIR ONLY for unplated white (bc_ac) and b pattern (b_only)
+        swinir_applied = False
+        if USE_REPLICATE and pattern_type in ["bc_ac", "b_only"]:
+            try:
+                image = apply_swinir_thumbnail_fast(image)
+                swinir_applied = True
+            except:
+                logger.warning("SwinIR failed, continuing without")
+        else:
+            logger.info(f"Skipping SwinIR for {pattern_type} (speed optimization)")
         
         # Create thumbnail
         thumbnail = create_thumbnail_fast(image, 1000, 1300)
         
+        # Simple cubic enhancement (no LAB conversion)
+        thumbnail = enhance_cubic_details_thumbnail_simple(thumbnail)
+        
         detected_type = {
-            "bc_ac": "무도금화이트(0.10+0.03)",
+            "bc_ac": "무도금화이트(0.07)",
             "b_only": "b_패턴(no_overlay+spotlight2%)",
             "a_only": "a_패턴(no_overlay+spotlight2%)",
             "other": "기타색상(no_overlay)"
@@ -519,19 +508,21 @@ def handler(event):
                 "format": "base64_no_padding",
                 "version": VERSION,
                 "status": "success",
-                "detail_enhancement": "Advanced multi-scale + OpenCV CLAHE",
-                "white_overlay": "10% primary + 3% additional for bc_ac, 0% others",
+                "mirnet_removed": True,
+                "swinir_applied": swinir_applied,
+                "swinir_patterns": ["bc_ac", "b_only"],
+                "cubic_enhancement": "simple (no LAB)",
+                "white_overlay": "7% for bc_ac, 0% others",
                 "brightness_reduced": True,
-                "sharpness_increased": "1.6-1.7 + multi-scale",
+                "sharpness_increased": "1.6-1.7",
                 "spotlight_reduced": "2-3%",
-                "enhancements_applied": [
-                    "Multi-scale unsharp mask (3 levels)",
-                    "OpenCV CLAHE for local contrast",
-                    "Selective sharpening for bright areas",
-                    "Edge enhancement for sparkle",
-                    "Pattern-specific optimization"
+                "speed_optimizations": [
+                    "NO MIRNet (removed completely)",
+                    "SwinIR only for bc_ac and b_only",
+                    "Simple cubic enhancement (no LAB)",
+                    "Fast quality check"
                 ],
-                "processing_order": "White Balance → Advanced Detail Enhancement → Thumbnail Creation → Pattern Enhancement"
+                "processing_order": "White Balance → SwinIR (conditional) → Simple Cubic → Pattern Enhancement"
             }
         }
         
