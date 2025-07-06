@@ -13,7 +13,7 @@ import string
 logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
 
-VERSION = "V19-RealESRGAN"
+VERSION = "V20-ReducedGlow"
 
 # ===== REPLICATE INITIALIZATION =====
 REPLICATE_API_TOKEN = os.environ.get('REPLICATE_API_TOKEN')
@@ -132,7 +132,7 @@ def download_image_from_url(url):
         raise
 
 def base64_to_image_ultra_safe(base64_string):
-    """Convert base64 to PIL Image - V19 ULTRA SAFE"""
+    """Convert base64 to PIL Image - V20 ULTRA SAFE"""
     try:
         if not base64_string:
             raise ValueError("Empty base64 string")
@@ -347,7 +347,7 @@ def auto_white_balance(image: Image.Image) -> Image.Image:
     return Image.fromarray(img_array.astype(np.uint8))
 
 def apply_center_spotlight_thumbnail(image: Image.Image, intensity: float = 0.10) -> Image.Image:
-    """Apply center spotlight for thumbnail - Reduced for wedding rings"""
+    """Apply center spotlight for thumbnail - V20 with adjustable intensity"""
     width, height = image.size
     x = np.linspace(-1, 1, width)
     y = np.linspace(-1, 1, height)
@@ -365,7 +365,7 @@ def apply_center_spotlight_thumbnail(image: Image.Image, intensity: float = 0.10
     
     return Image.fromarray(img_array.astype(np.uint8))
 
-def apply_wedding_ring_focus_v19(image: Image.Image) -> Image.Image:
+def apply_wedding_ring_focus_v20(image: Image.Image) -> Image.Image:
     """Enhanced wedding ring processing - WITHOUT metallic highlight"""
     # Metallic highlight removed - skip this step entirely
     
@@ -400,18 +400,18 @@ def apply_basic_enhancement(image):
     
     # Basic enhancement (increased)
     brightness = ImageEnhance.Brightness(image)
-    image = brightness.enhance(1.1)  # Increased to 1.1
+    image = brightness.enhance(1.1)  # Keep as requested
     
     contrast = ImageEnhance.Contrast(image)
-    image = contrast.enhance(1.03)  # Reduced to 1.03
+    image = contrast.enhance(1.03)  # Keep as requested
     
     color = ImageEnhance.Color(image)
     image = color.enhance(1.02)  # Slightly increased from 1.01
     
     return image
 
-def apply_pattern_enhancement_v19(image, pattern_type, is_wedding_ring):
-    """Apply enhancement based on pattern - Reduced brightness for wedding rings"""
+def apply_pattern_enhancement_v20(image, pattern_type, is_wedding_ring):
+    """Apply enhancement based on pattern - V20 with reduced glow"""
     
     # Apply 3% white overlay to ALL patterns
     white_overlay = 0.03
@@ -421,15 +421,15 @@ def apply_pattern_enhancement_v19(image, pattern_type, is_wedding_ring):
     image = Image.fromarray(img_array.astype(np.uint8))
     
     if pattern_type in ["bc_only", "ac_only"]:
-        # Unplated white
+        # Unplated white - increased white overlay with lower brightness
         brightness = ImageEnhance.Brightness(image)
-        image = brightness.enhance(1.02)  # Increased from 0.98
+        image = brightness.enhance(0.98)  # Lowered from 1.02
         
         color = ImageEnhance.Color(image)
         image = color.enhance(0.95)
         
-        # Additional white overlay (total 18%)
-        white_overlay = 0.15
+        # Additional white overlay (total 21% as requested)
+        white_overlay = 0.18  # 3% + 18% = 21%
         img_array = np.array(image, dtype=np.float32)
         img_array = img_array * (1 - white_overlay) + 255 * white_overlay
         img_array = np.clip(img_array, 0, 255)
@@ -438,28 +438,33 @@ def apply_pattern_enhancement_v19(image, pattern_type, is_wedding_ring):
     elif pattern_type in ["a_only", "b_only"]:
         # a_ and b_ patterns
         brightness = ImageEnhance.Brightness(image)
-        image = brightness.enhance(1.08)  # Increased from 1.01
+        image = brightness.enhance(1.08)  # Keep original
         
         color = ImageEnhance.Color(image)
         image = color.enhance(0.95)
         
         # Enhanced sharpness
         sharpness = ImageEnhance.Sharpness(image)
-        image = sharpness.enhance(1.4)  # Reduced from 1.5
+        image = sharpness.enhance(1.4)
         
     else:
         # Standard enhancement
         brightness = ImageEnhance.Brightness(image)
-        image = brightness.enhance(1.05)  # Increased from 1.0
+        image = brightness.enhance(1.05)  # Keep original
         
         contrast = ImageEnhance.Contrast(image)
-        image = contrast.enhance(1.03)  # Reduced to 1.03
+        image = contrast.enhance(1.03)
     
-    # Apply reduced center spotlight
-    image = apply_center_spotlight_thumbnail(image, 0.10)  # Reduced from 0.15
+    # Apply center spotlight with pattern-specific intensity
+    if pattern_type in ["a_only", "b_only"]:
+        # Reduced spotlight for a_ and b_ patterns (half of original)
+        image = apply_center_spotlight_thumbnail(image, 0.05)  # 5% instead of 10%
+    else:
+        # Keep original for bc_only, ac_only and other patterns
+        image = apply_center_spotlight_thumbnail(image, 0.10)
     
     # Wedding ring special enhancement (always applied)
-    image = apply_wedding_ring_focus_v19(image)
+    image = apply_wedding_ring_focus_v20(image)
     
     return image
 
@@ -542,7 +547,7 @@ def image_to_base64(image):
     return img_base64.rstrip('=')
 
 def handler(event):
-    """Thumbnail handler function - Wedding Ring Optimized"""
+    """Thumbnail handler function - V20 with reduced glow"""
     try:
         logger.info(f"=== Thumbnail {VERSION} Started ===")
         logger.info(f"Replicate available: {USE_REPLICATE}")
@@ -655,22 +660,22 @@ def handler(event):
         pattern_type = detect_pattern_type(filename)
         
         if pattern_type in ["bc_only", "ac_only"]:
-            detected_type = "무도금화이트(0.15+0.03)"
+            detected_type = "무도금화이트(0.21)"  # Updated to 21%
         elif pattern_type in ["b_only", "a_only"]:
-            detected_type = f"{pattern_type[0]}_패턴(0.03)"
+            detected_type = f"{pattern_type[0]}_패턴(0.03+spotlight5%)"  # Updated spotlight
         else:
             detected_type = "기타색상(0.03)"
         
-        # Apply pattern-specific enhancement
-        thumbnail = apply_pattern_enhancement_v19(thumbnail, pattern_type, is_wedding_ring)
+        # Apply pattern-specific enhancement with reduced glow
+        thumbnail = apply_pattern_enhancement_v20(thumbnail, pattern_type, is_wedding_ring)
         
         # Final sharpness (increased for wedding rings)
         sharpness = ImageEnhance.Sharpness(thumbnail)
-        thumbnail = sharpness.enhance(1.5)  # Reduced from 1.6
+        thumbnail = sharpness.enhance(1.5)  # Keep as before
         
         # Final brightness touch (increased)
         brightness = ImageEnhance.Brightness(thumbnail)
-        thumbnail = brightness.enhance(1.05)  # Increased from 1.02
+        thumbnail = brightness.enhance(1.05)  # Keep as before
         
         # Convert to base64
         thumbnail_base64 = image_to_base64(thumbnail)
@@ -696,9 +701,10 @@ def handler(event):
                 "status": "success",
                 "replicate_applied": replicate_applied,
                 "white_overlay_applied": "3% base + pattern specific",
-                "center_spotlight": "10% reduced",
-                "base64_decode_method": "ultra_safe_v19",
-                "wedding_ring_enhancement": "cubic_focus_only_no_metallic"
+                "center_spotlight": "5% for a/b patterns, 10% for others",
+                "base64_decode_method": "ultra_safe_v20",
+                "wedding_ring_enhancement": "cubic_focus_only_no_metallic",
+                "adjustments": "ac/bc: 21% white + lower brightness, a/b: 50% reduced spotlight"
             }
         }
         
