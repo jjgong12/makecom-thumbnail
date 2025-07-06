@@ -14,21 +14,20 @@ import cv2
 logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
 
-VERSION = "V29-Speed-Optimized"
+VERSION = "V29-Speed-Optimized-Modified"
 
-# ===== REPLICATE INITIALIZATION =====
+# ===== REPLICATE INITIALIZATION - FORCED USE =====
 REPLICATE_API_TOKEN = os.environ.get('REPLICATE_API_TOKEN')
-REPLICATE_CLIENT = None
-USE_REPLICATE = False
+if not REPLICATE_API_TOKEN:
+    raise ValueError("REPLICATE_API_TOKEN is required. Please set the environment variable.")
 
-if REPLICATE_API_TOKEN:
-    try:
-        REPLICATE_CLIENT = replicate.Client(api_token=REPLICATE_API_TOKEN)
-        USE_REPLICATE = True
-        logger.info("✅ Replicate client initialized")
-    except Exception as e:
-        logger.error(f"❌ Failed to initialize Replicate: {e}")
-        USE_REPLICATE = False
+try:
+    REPLICATE_CLIENT = replicate.Client(api_token=REPLICATE_API_TOKEN)
+    USE_REPLICATE = True  # Always True
+    logger.info("✅ Replicate client initialized (FORCED MODE)")
+except Exception as e:
+    logger.error(f"❌ Failed to initialize Replicate: {e}")
+    raise ValueError(f"Replicate initialization failed: {e}")
 
 def find_input_data_fast(data):
     """Fast input data extraction"""
@@ -141,10 +140,7 @@ def detect_pattern_type(filename: str) -> str:
         return "other"
 
 def apply_swinir_thumbnail_fast(image: Image.Image) -> Image.Image:
-    """Fast SwinIR for thumbnails"""
-    if not USE_REPLICATE or not REPLICATE_CLIENT:
-        return image
-    
+    """Fast SwinIR for thumbnails - FORCED USE"""
     try:
         # Process at original size
         width, height = image.size
@@ -157,7 +153,7 @@ def apply_swinir_thumbnail_fast(image: Image.Image) -> Image.Image:
         img_base64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
         img_data_url = f"data:image/png;base64,{img_base64}"
         
-        logger.info("🔷 SwinIR thumbnail (fast)")
+        logger.info("🔷 SwinIR thumbnail (FORCED MODE)")
         
         output = REPLICATE_CLIENT.run(
             "jingyunliang/swinir:660d922d33153019e8c263a3bba265de882e7f4f70396546b6c9c8f9d47a021a",
@@ -177,11 +173,13 @@ def apply_swinir_thumbnail_fast(image: Image.Image) -> Image.Image:
                 enhanced_image = Image.open(BytesIO(base64.b64decode(output)))
             
             return enhanced_image
+        else:
+            logger.warning("SwinIR returned empty output, using original image")
+            return image
             
     except Exception as e:
-        logger.warning(f"SwinIR error: {str(e)}")
-        
-    return image
+        logger.error(f"SwinIR error: {str(e)}")
+        raise Exception(f"SwinIR processing failed: {str(e)}")
 
 def enhance_cubic_details_thumbnail_simple(image: Image.Image) -> Image.Image:
     """Simple cubic enhancement for thumbnails - no LAB conversion"""
@@ -275,12 +273,12 @@ def calculate_quality_metrics_fast(image: Image.Image) -> dict:
     }
 
 def apply_pattern_enhancement_fast(image, pattern_type):
-    """Fast pattern enhancement - Reduced white overlay & brightness"""
+    """Fast pattern enhancement - Modified white overlay (10% primary, 3% additional)"""
     
-    # Apply white overlay ONLY to bc_ac pattern (7% instead of 12%)
+    # Apply white overlay ONLY to bc_ac pattern (10% primary)
     if pattern_type == "bc_ac":
-        # Unplated white - 7% white overlay
-        white_overlay = 0.07
+        # Unplated white - 10% white overlay (MODIFIED from 7%)
+        white_overlay = 0.10  # Changed from 0.07 to 0.10
         img_array = np.array(image, dtype=np.float32)
         img_array = img_array * (1 - white_overlay) + 255 * white_overlay
         img_array = np.clip(img_array, 0, 255)
@@ -326,8 +324,8 @@ def apply_pattern_enhancement_fast(image, pattern_type):
     if pattern_type == "bc_ac":
         metrics = calculate_quality_metrics_fast(image)
         if metrics["brightness"] < 240:
-            # Apply 10% white overlay as correction (reduced from 15%)
-            white_overlay = 0.10
+            # Apply 3% additional white overlay (MODIFIED from 10%)
+            white_overlay = 0.03  # Changed from 0.10 to 0.03 (total 13%)
             img_array = np.array(image, dtype=np.float32)
             img_array = img_array * (1 - white_overlay) + 255 * white_overlay
             img_array = np.clip(img_array, 0, 255)
@@ -397,7 +395,7 @@ def image_to_base64(image):
     return base64.b64encode(buffered.getvalue()).decode().rstrip('=')
 
 def handler(event):
-    """Optimized thumbnail handler - SPEED OPTIMIZED"""
+    """Optimized thumbnail handler - SPEED OPTIMIZED with FORCED REPLICATE"""
     try:
         logger.info(f"=== Thumbnail {VERSION} Started ===")
         
@@ -455,14 +453,12 @@ def handler(event):
         
         # NO MIRNet - removed for speed
         
-        # Apply SwinIR ONLY for unplated white (bc_ac) and b pattern (b_only)
+        # Apply SwinIR ONLY for unplated white (bc_ac) and b pattern (b_only) - FORCED USE
         swinir_applied = False
-        if USE_REPLICATE and pattern_type in ["bc_ac", "b_only"]:
-            try:
-                image = apply_swinir_thumbnail_fast(image)
-                swinir_applied = True
-            except:
-                logger.warning("SwinIR failed, continuing without")
+        if pattern_type in ["bc_ac", "b_only"]:
+            logger.info(f"Applying SwinIR for {pattern_type} (FORCED MODE)")
+            image = apply_swinir_thumbnail_fast(image)
+            swinir_applied = True
         else:
             logger.info(f"Skipping SwinIR for {pattern_type} (speed optimization)")
         
@@ -473,7 +469,7 @@ def handler(event):
         thumbnail = enhance_cubic_details_thumbnail_simple(thumbnail)
         
         detected_type = {
-            "bc_ac": "무도금화이트(0.07)",
+            "bc_ac": "무도금화이트(0.10+0.03)",  # Updated from 0.07
             "b_only": "b_패턴(no_overlay+spotlight2%)",
             "a_only": "a_패턴(no_overlay+spotlight2%)",
             "other": "기타색상(no_overlay)"
@@ -511,14 +507,15 @@ def handler(event):
                 "mirnet_removed": True,
                 "swinir_applied": swinir_applied,
                 "swinir_patterns": ["bc_ac", "b_only"],
+                "replicate_mode": "FORCED",
                 "cubic_enhancement": "simple (no LAB)",
-                "white_overlay": "7% for bc_ac, 0% others",
+                "white_overlay": "10% primary + 3% additional for bc_ac, 0% others",
                 "brightness_reduced": True,
                 "sharpness_increased": "1.6-1.7",
                 "spotlight_reduced": "2-3%",
                 "speed_optimizations": [
                     "NO MIRNet (removed completely)",
-                    "SwinIR only for bc_ac and b_only",
+                    "SwinIR only for bc_ac and b_only (FORCED MODE)",
                     "Simple cubic enhancement (no LAB)",
                     "Fast quality check"
                 ],
