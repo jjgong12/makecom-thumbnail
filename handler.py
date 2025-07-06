@@ -13,7 +13,7 @@ import string
 logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
 
-VERSION = "V22-Final-Optimized"
+VERSION = "V23-No-White-Overlay"
 
 # ===== REPLICATE INITIALIZATION =====
 REPLICATE_API_TOKEN = os.environ.get('REPLICATE_API_TOKEN')
@@ -132,7 +132,7 @@ def download_image_from_url(url):
         raise
 
 def base64_to_image_ultra_safe(base64_string):
-    """Convert base64 to PIL Image - V22 ULTRA SAFE"""
+    """Convert base64 to PIL Image - V23 ULTRA SAFE"""
     try:
         if not base64_string:
             raise ValueError("Empty base64 string")
@@ -347,14 +347,14 @@ def auto_white_balance(image: Image.Image) -> Image.Image:
     return Image.fromarray(img_array.astype(np.uint8))
 
 def apply_center_spotlight_thumbnail(image: Image.Image, intensity: float = 0.05) -> Image.Image:
-    """Apply center spotlight for thumbnail - V22 with reduced intensity"""
+    """Apply center spotlight for thumbnail - V23 with reduced intensity"""
     width, height = image.size
     x = np.linspace(-1, 1, width)
     y = np.linspace(-1, 1, height)
     X, Y = np.meshgrid(x, y)
     distance = np.sqrt(X**2 + Y**2)
     
-    # V22: Much reduced spotlight
+    # V23: Much reduced spotlight
     spotlight_mask = 1 + intensity * np.exp(-distance**2 * 1.2)  # Increased spread
     spotlight_mask = np.clip(spotlight_mask, 1.0, 1.0 + intensity)
     
@@ -365,9 +365,9 @@ def apply_center_spotlight_thumbnail(image: Image.Image, intensity: float = 0.05
     
     return Image.fromarray(img_array.astype(np.uint8))
 
-def apply_wedding_ring_focus_v22(image: Image.Image) -> Image.Image:
+def apply_wedding_ring_focus_v23(image: Image.Image) -> Image.Image:
     """Enhanced wedding ring processing - WITHOUT metallic highlight"""
-    # V22: Reduced center spotlight
+    # V23: Reduced center spotlight
     image = apply_center_spotlight_thumbnail(image, 0.04)  # Reduced from 0.08
     
     # Enhanced sharpness
@@ -384,7 +384,7 @@ def apply_wedding_ring_focus_v22(image: Image.Image) -> Image.Image:
     return image
 
 def calculate_quality_metrics_thumbnail(image: Image.Image) -> dict:
-    """Calculate quality metrics for thumbnail - V22 Balanced"""
+    """Calculate quality metrics for thumbnail - V23 Balanced"""
     img_array = np.array(image)
     r_avg = np.mean(img_array[:,:,0])
     g_avg = np.mean(img_array[:,:,1])
@@ -413,12 +413,12 @@ def calculate_quality_metrics_thumbnail(image: Image.Image) -> dict:
     }
 
 def needs_second_correction_thumbnail(metrics: dict, pattern_type: str) -> tuple:
-    """Determine if second correction is needed - V22 BALANCED CRITERIA"""
-    # Apply ONLY to bc_only pattern (무도금화이트)
-    if pattern_type != "bc_only":
+    """Determine if second correction is needed - V23 BALANCED CRITERIA"""
+    # Apply ONLY to bc_only and ac_only patterns (무도금화이트)
+    if pattern_type not in ["bc_only", "ac_only"]:
         return False, None
     
-    # V22: Balanced criteria (between old and new)
+    # V23: Balanced criteria (between old and new)
     reasons = []
     
     if metrics["brightness"] < 243:  # Between 241 and 245
@@ -436,35 +436,15 @@ def needs_second_correction_thumbnail(metrics: dict, pattern_type: str) -> tuple
     return len(reasons) > 0, reasons
 
 def apply_second_correction_thumbnail(image: Image.Image, reasons: list) -> Image.Image:
-    """Apply second correction for thumbnail - V22 balanced"""
+    """Apply second correction for thumbnail - V23 saturation only"""
     logger.info(f"Applying second correction for reasons: {reasons}")
     
-    # V22: White overlay 20% as requested
-    if "brightness_low" in reasons:
-        white_overlay_percent = 0.20  # Changed to 20% as requested
-        img_array = np.array(image)
-        img_array = img_array * (1 - white_overlay_percent) + 255 * white_overlay_percent
-        image = Image.fromarray(img_array.astype(np.uint8))
-    
-    # Cool tone enhancement
-    if "insufficient_cool_tone" in reasons:
-        img_array = np.array(image)
-        # Balanced blue boost
-        img_array[:,:,2] = np.clip(img_array[:,:,2] * 1.025, 0, 255)  # Balanced
-        # Balanced red reduction
-        img_array[:,:,0] = np.clip(img_array[:,:,0] * 0.975, 0, 255)  # Balanced
-        image = Image.fromarray(img_array.astype(np.uint8))
-    
-    # Saturation reduction
-    if "saturation_high" in reasons:
+    # V23: Only apply saturation reduction for quality check failures
+    if any(reason in reasons for reason in ["saturation_high", "brightness_low", "insufficient_cool_tone", "rgb_deviation_high"]):
+        # Just reduce saturation slightly
         color = ImageEnhance.Color(image)
-        image = color.enhance(0.93)  # Balanced
-    
-    # RGB deviation correction
-    if "rgb_deviation_high" in reasons:
-        # Additional brightness boost
-        brightness = ImageEnhance.Brightness(image)
-        image = brightness.enhance(1.04)  # Balanced
+        image = color.enhance(0.90)  # Reduce saturation by 10%
+        logger.info("Applied saturation reduction (0.90)")
     
     logger.info("Second correction applied successfully")
     return image
@@ -484,7 +464,7 @@ def apply_basic_enhancement(image):
     
     # Basic enhancement (increased)
     brightness = ImageEnhance.Brightness(image)
-    image = brightness.enhance(1.12)  # Keep as is
+    image = brightness.enhance(1.12)
     
     contrast = ImageEnhance.Contrast(image)
     image = contrast.enhance(1.03)
@@ -494,35 +474,29 @@ def apply_basic_enhancement(image):
     
     return image
 
-def apply_pattern_enhancement_v22(image, pattern_type, is_wedding_ring):
-    """Apply enhancement based on pattern - V22 with optimized settings"""
+def apply_pattern_enhancement_v23(image, pattern_type, is_wedding_ring):
+    """Apply enhancement based on pattern - V23 white overlay only for unplated white"""
     
-    # Apply 3% white overlay to ALL patterns
-    white_overlay = 0.03
-    img_array = np.array(image, dtype=np.float32)
-    img_array = img_array * (1 - white_overlay) + 255 * white_overlay
-    img_array = np.clip(img_array, 0, 255)
-    image = Image.fromarray(img_array.astype(np.uint8))
-    
+    # V23: Apply white overlay ONLY to bc_only and ac_only patterns (unplated white)
     if pattern_type in ["bc_only", "ac_only"]:
-        # Unplated white - increased brightness as requested
-        brightness = ImageEnhance.Brightness(image)
-        image = brightness.enhance(1.05)  # Increased from 1.02 as requested
-        
-        color = ImageEnhance.Color(image)
-        image = color.enhance(0.95)
-        
-        # Additional white overlay (total 18% as requested: 3% + 15%)
-        white_overlay = 0.15  # Changed from 18% to 15% as requested
+        # Unplated white - apply white overlay
+        white_overlay = 0.18  # 18% total white overlay for unplated white
         img_array = np.array(image, dtype=np.float32)
         img_array = img_array * (1 - white_overlay) + 255 * white_overlay
         img_array = np.clip(img_array, 0, 255)
         image = Image.fromarray(img_array.astype(np.uint8))
         
-    elif pattern_type in ["a_only", "b_only"]:
-        # a_ and b_ patterns - increased brightness
+        # Brightness adjustment
         brightness = ImageEnhance.Brightness(image)
-        image = brightness.enhance(1.10)  # Keep as is
+        image = brightness.enhance(1.05)
+        
+        color = ImageEnhance.Color(image)
+        image = color.enhance(0.95)
+        
+    elif pattern_type in ["a_only", "b_only"]:
+        # a_ and b_ patterns - NO white overlay
+        brightness = ImageEnhance.Brightness(image)
+        image = brightness.enhance(1.10)
         
         color = ImageEnhance.Color(image)
         image = color.enhance(0.95)
@@ -532,25 +506,25 @@ def apply_pattern_enhancement_v22(image, pattern_type, is_wedding_ring):
         image = sharpness.enhance(1.4)
         
     else:
-        # Standard enhancement - increased brightness
+        # Standard enhancement - NO white overlay
         brightness = ImageEnhance.Brightness(image)
-        image = brightness.enhance(1.08)  # Keep as is
+        image = brightness.enhance(1.08)
         
         contrast = ImageEnhance.Contrast(image)
         image = contrast.enhance(1.03)
     
-    # V22: Much reduced center spotlight
+    # V23: Much reduced center spotlight
     if pattern_type in ["a_only", "b_only"]:
         # Even more reduced for a_ and b_ patterns
-        image = apply_center_spotlight_thumbnail(image, 0.03)  # Keep reduced
+        image = apply_center_spotlight_thumbnail(image, 0.03)
     else:
         # Reduced for bc_only, ac_only and other patterns
-        image = apply_center_spotlight_thumbnail(image, 0.05)  # Keep reduced
+        image = apply_center_spotlight_thumbnail(image, 0.05)
     
     # Wedding ring special enhancement (always applied - all files are wedding rings)
-    image = apply_wedding_ring_focus_v22(image)
+    image = apply_wedding_ring_focus_v23(image)
     
-    # V22: Apply quality check and second correction
+    # V23: Apply quality check and second correction
     quality_metrics = calculate_quality_metrics_thumbnail(image)
     needs_correction, correction_reasons = needs_second_correction_thumbnail(quality_metrics, pattern_type)
     
@@ -645,7 +619,7 @@ def image_to_base64(image):
     return img_base64.rstrip('=')
 
 def handler(event):
-    """Thumbnail handler function - V22 Final"""
+    """Thumbnail handler function - V23 Final"""
     try:
         logger.info(f"=== Thumbnail {VERSION} Started ===")
         logger.info(f"Replicate available: {USE_REPLICATE}")
@@ -758,14 +732,14 @@ def handler(event):
         pattern_type = detect_pattern_type(filename)
         
         if pattern_type in ["bc_only", "ac_only"]:
-            detected_type = "무도금화이트(0.18)"  # Updated to 18%
+            detected_type = "무도금화이트(0.18)"
         elif pattern_type in ["b_only", "a_only"]:
-            detected_type = f"{pattern_type[0]}_패턴(0.03+spotlight3%)"
+            detected_type = f"{pattern_type[0]}_패턴(no_overlay+spotlight3%)"
         else:
-            detected_type = "기타색상(0.03)"
+            detected_type = "기타색상(no_overlay)"
         
-        # Apply pattern-specific enhancement with optimized settings
-        thumbnail = apply_pattern_enhancement_v22(thumbnail, pattern_type, is_wedding_ring)
+        # Apply pattern-specific enhancement with no white overlay except unplated white
+        thumbnail = apply_pattern_enhancement_v23(thumbnail, pattern_type, is_wedding_ring)
         
         # Final sharpness (increased for wedding rings)
         sharpness = ImageEnhance.Sharpness(thumbnail)
@@ -798,14 +772,14 @@ def handler(event):
                 "version": VERSION,
                 "status": "success",
                 "replicate_applied": replicate_applied,
-                "white_overlay_applied": "3% base + 15% for bc/ac",
+                "white_overlay_applied": "18% for bc/ac only, 0% for others",
                 "center_spotlight": "3% for a/b patterns, 5% for others",
                 "brightness_increase": "bc/ac: 1.05, a/b: 1.10, other: 1.08",
-                "base64_decode_method": "ultra_safe_v22",
+                "base64_decode_method": "ultra_safe_v23",
                 "wedding_ring_enhancement": "cubic_focus_only_no_metallic (all files)",
                 "quality_check": "balanced (243/4/4/1.7)",
-                "second_correction_overlay": "20%",
-                "adjustments": "final optimized settings"
+                "second_correction": "saturation_only_0.90",
+                "adjustments": "no white overlay except unplated white"
             }
         }
         
