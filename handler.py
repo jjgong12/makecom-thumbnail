@@ -9,11 +9,12 @@ import logging
 import re
 import replicate
 import string
+import cv2
 
 logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
 
-VERSION = "V25-Fast-Optimized"
+VERSION = "V26-MIRNet-Cubic"
 
 # ===== REPLICATE INITIALIZATION =====
 REPLICATE_API_TOKEN = os.environ.get('REPLICATE_API_TOKEN')
@@ -139,6 +140,42 @@ def detect_pattern_type(filename: str) -> str:
     else:
         return "other"
 
+def apply_mirnet_thumbnail(image: Image.Image) -> Image.Image:
+    """Apply MIRNet for thumbnail lighting enhancement"""
+    if not USE_REPLICATE or not REPLICATE_CLIENT:
+        return image
+    
+    try:
+        width, height = image.size
+        logger.info(f"🔷 Applying MIRNet for thumbnail at: {width}x{height}")
+        
+        # Convert to base64
+        buffered = BytesIO()
+        image.save(buffered, format="PNG", optimize=False)
+        buffered.seek(0)
+        img_base64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
+        img_data_url = f"data:image/png;base64,{img_base64}"
+        
+        output = REPLICATE_CLIENT.run(
+            "google-research/mirnet:5ebf5e597fd93dabe2080e9e5f74e0e478dd8230",
+            input={
+                "image": img_data_url,
+                "task": "enhance"
+            }
+        )
+        
+        if output:
+            if isinstance(output, str):
+                response = requests.get(output)
+                return Image.open(BytesIO(response.content))
+            else:
+                return Image.open(BytesIO(base64.b64decode(output)))
+                
+    except Exception as e:
+        logger.warning(f"MIRNet error: {str(e)}")
+        
+    return image
+
 def apply_swinir_thumbnail_fast(image: Image.Image) -> Image.Image:
     """Fast SwinIR for thumbnails"""
     if not USE_REPLICATE or not REPLICATE_CLIENT:
@@ -180,6 +217,35 @@ def apply_swinir_thumbnail_fast(image: Image.Image) -> Image.Image:
     except Exception as e:
         logger.warning(f"SwinIR error: {str(e)}")
         
+    return image
+
+def enhance_cubic_details_thumbnail(image: Image.Image) -> Image.Image:
+    """Enhance cubic details for thumbnails - optimized for small display"""
+    # Apply localized contrast enhancement
+    img_array = np.array(image)
+    
+    # Convert to LAB color space
+    img_lab = cv2.cvtColor(img_array, cv2.COLOR_RGB2LAB)
+    l_channel, a_channel, b_channel = cv2.split(img_lab)
+    
+    # Apply CLAHE with thumbnail-optimized settings
+    clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(6,6))  # Adjusted for thumbnail
+    l_channel_enhanced = clahe.apply(l_channel)
+    
+    # Merge channels back
+    img_lab_enhanced = cv2.merge([l_channel_enhanced, a_channel, b_channel])
+    img_enhanced = cv2.cvtColor(img_lab_enhanced, cv2.COLOR_LAB2RGB)
+    
+    # Convert back to PIL
+    image = Image.fromarray(img_enhanced)
+    
+    # Fine detail enhancement for small display
+    image = image.filter(ImageFilter.UnsharpMask(radius=0.3, percent=120, threshold=1))
+    
+    # Micro-contrast for sparkle
+    enhancer = ImageEnhance.Contrast(image)
+    image = enhancer.enhance(1.04)
+    
     return image
 
 def auto_white_balance_fast(image: Image.Image) -> Image.Image:
@@ -224,20 +290,20 @@ def apply_center_spotlight_fast(image: Image.Image, intensity: float = 0.03) -> 
     return Image.fromarray(np.clip(img_array, 0, 255).astype(np.uint8))
 
 def apply_wedding_ring_focus_fast(image: Image.Image) -> Image.Image:
-    """Fast wedding ring enhancement"""
+    """Fast wedding ring enhancement with cubic focus"""
     # Reduced spotlight
     image = apply_center_spotlight_fast(image, 0.02)
     
-    # Sharpness
+    # Enhanced sharpness for cubic visibility
     sharpness = ImageEnhance.Sharpness(image)
-    image = sharpness.enhance(1.5)
+    image = sharpness.enhance(1.6)  # Increased for thumbnails
     
     # Slight contrast
     contrast = ImageEnhance.Contrast(image)
-    image = contrast.enhance(1.02)
+    image = contrast.enhance(1.03)
     
-    # Simple unsharp mask
-    image = image.filter(ImageFilter.UnsharpMask(radius=1, percent=80, threshold=3))
+    # Multi-scale unsharp mask
+    image = image.filter(ImageFilter.UnsharpMask(radius=0.8, percent=90, threshold=2))
     
     return image
 
@@ -284,7 +350,7 @@ def apply_pattern_enhancement_fast(image, pattern_type):
         color = ImageEnhance.Color(image)
         image = color.enhance(0.96)
         
-        # Increased sharpness
+        # Increased sharpness for gold patterns
         sharpness = ImageEnhance.Sharpness(image)
         image = sharpness.enhance(1.5)
         
@@ -380,7 +446,7 @@ def image_to_base64(image):
     return base64.b64encode(buffered.getvalue()).decode().rstrip('=')
 
 def handler(event):
-    """Optimized thumbnail handler"""
+    """Optimized thumbnail handler with MIRNet"""
     try:
         logger.info(f"=== Thumbnail {VERSION} Started ===")
         
@@ -436,9 +502,18 @@ def handler(event):
         # Detect pattern
         pattern_type = detect_pattern_type(filename)
         
-        # Apply SwinIR only for unplated white
+        # Apply MIRNet for all patterns (lighting normalization)
+        mirnet_applied = False
+        if USE_REPLICATE:
+            try:
+                image = apply_mirnet_thumbnail(image)
+                mirnet_applied = True
+            except:
+                logger.warning("MIRNet failed, continuing without")
+        
+        # Apply SwinIR for unplated white and gold patterns
         swinir_applied = False
-        if USE_REPLICATE and pattern_type == "bc_ac":
+        if USE_REPLICATE and pattern_type in ["bc_ac", "a_only", "b_only"]:
             try:
                 image = apply_swinir_thumbnail_fast(image)
                 swinir_applied = True
@@ -447,6 +522,9 @@ def handler(event):
         
         # Create thumbnail
         thumbnail = create_thumbnail_fast(image, 1000, 1300)
+        
+        # Enhance cubic details after resize
+        thumbnail = enhance_cubic_details_thumbnail(thumbnail)
         
         detected_type = {
             "bc_ac": "무도금화이트(0.07)",
@@ -460,7 +538,7 @@ def handler(event):
         
         # Final adjustments
         sharpness = ImageEnhance.Sharpness(thumbnail)
-        thumbnail = sharpness.enhance(1.6)  # Increased
+        thumbnail = sharpness.enhance(1.7)  # Increased for cubic clarity
         
         brightness = ImageEnhance.Brightness(thumbnail)
         thumbnail = brightness.enhance(1.03)  # Reduced from 1.06
@@ -484,17 +562,20 @@ def handler(event):
                 "format": "base64_no_padding",
                 "version": VERSION,
                 "status": "success",
+                "mirnet_applied": mirnet_applied,
                 "swinir_applied": swinir_applied,
+                "cubic_enhancement": True,
                 "white_overlay": "7% for bc_ac, 0% others",
                 "brightness_reduced": True,
-                "sharpness_increased": "1.5-1.6",
+                "sharpness_increased": "1.6-1.7",
                 "spotlight_reduced": "2-3%",
-                "optimizations": [
-                    "Removed Real-ESRGAN",
-                    "Fast decode",
-                    "Sampling metrics",
-                    "SwinIR only for unplated"
-                ]
+                "enhancements": [
+                    "MIRNet for lighting",
+                    "SwinIR for detail",
+                    "CLAHE for cubic clarity",
+                    "Multi-scale sharpening"
+                ],
+                "processing_order": "MIRNet → SwinIR → Cubic Enhancement → Pattern Enhancement"
             }
         }
         
