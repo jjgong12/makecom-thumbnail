@@ -14,7 +14,7 @@ import cv2
 logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
 
-VERSION = "V31-AC-Pattern-WhiteOverlay-12"
+VERSION = "V32-AC-Pattern-Auto-Background-Removal"
 
 # ===== REPLICATE INITIALIZATION =====
 REPLICATE_API_TOKEN = os.environ.get('REPLICATE_API_TOKEN')
@@ -161,6 +161,52 @@ def create_background(size, color="#F5F5F5", style="gradient"):
         return Image.fromarray(bg_array.astype(np.uint8))
     else:
         return Image.new('RGB', size, color)
+
+def remove_background_with_replicate(image: Image.Image) -> Image.Image:
+    """Remove background using Replicate API"""
+    if not USE_REPLICATE or not REPLICATE_CLIENT:
+        logger.warning("Replicate not available for background removal")
+        return image
+    
+    try:
+        logger.info("🔷 Removing background with Replicate")
+        
+        # Convert to base64
+        buffered = BytesIO()
+        image.save(buffered, format="PNG")
+        buffered.seek(0)
+        img_base64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
+        img_data_url = f"data:image/png;base64,{img_base64}"
+        
+        # Use rembg model
+        output = REPLICATE_CLIENT.run(
+            "cjwbw/rembg:fb8af171cfa1616ddcf1242c093f9c46bcada5ad4cf6f2fbe8b81b330ec5c003",
+            input={
+                "image": img_data_url,
+                "model": "u2net",
+                "alpha_matting": True,
+                "alpha_matting_foreground_threshold": 270,
+                "alpha_matting_background_threshold": 50,
+                "alpha_matting_erode_size": 10
+            }
+        )
+        
+        if output:
+            if isinstance(output, str):
+                response = requests.get(output)
+                result_image = Image.open(BytesIO(response.content))
+            else:
+                result_image = Image.open(BytesIO(base64.b64decode(output)))
+            
+            logger.info("✅ Background removal successful")
+            return result_image
+        else:
+            logger.warning("No output from background removal")
+            return image
+            
+    except Exception as e:
+        logger.error(f"Background removal error: {str(e)}")
+        return image
 
 def composite_with_background(image, background_color="#F5F5F5"):
     """Composite PNG image with background"""
@@ -498,6 +544,12 @@ def handler(event):
         original_mode = image.mode
         has_transparency = image.mode == 'RGBA'
         
+        # PNG 파일이면 무조건 누끼 따기
+        if filename and filename.lower().endswith('.png'):
+            logger.info("PNG file detected - will remove background")
+            image = remove_background_with_replicate(image)
+            has_transparency = image.mode == 'RGBA'
+        
         if has_transparency:
             logger.info("PNG with transparency detected")
             # Keep original for compositing
@@ -595,6 +647,7 @@ def handler(event):
                 "png_support": True,
                 "has_transparency": has_transparency,
                 "background_composite": has_transparency,
+                "background_removal_applied": filename.lower().endswith('.png') if filename else False,
                 "expected_input": "2000x2600",
                 "output_size": "1000x1300",
                 "cubic_enhancement": "simple (no LAB)",
@@ -602,7 +655,7 @@ def handler(event):
                 "brightness_reduced": True,
                 "sharpness_increased": "1.6-1.7",
                 "spotlight_reduced": "2-3%",
-                "processing_order": "White Balance → Basic Enhancement → RESIZE → SwinIR → Cubic → Pattern Enhancement"
+                "processing_order": "Background Removal (PNG) → White Balance → Basic Enhancement → RESIZE → SwinIR → Cubic → Pattern Enhancement → Background Composite"
             }
         }
         
