@@ -14,7 +14,7 @@ import cv2
 logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
 
-VERSION = "V30-PNG-Support-PostResize-SwinIR"
+VERSION = "V31-AC-Pattern-WhiteOverlay-12"
 
 # ===== REPLICATE INITIALIZATION =====
 REPLICATE_API_TOKEN = os.environ.get('REPLICATE_API_TOKEN')
@@ -125,18 +125,15 @@ def base64_to_image_fast(base64_string):
         raise ValueError(f"Invalid base64: {str(e)}")
 
 def detect_pattern_type(filename: str) -> str:
-    """Detect pattern type"""
+    """Detect pattern type - SIMPLIFIED to ac_ and others"""
     if not filename:
         return "other"
     
     filename_lower = filename.lower()
     
-    if 'bc_' in filename_lower or 'ac_' in filename_lower:
-        return "bc_ac"
-    elif 'b_' in filename_lower and 'bc_' not in filename_lower:
-        return "b_only"
-    elif 'a_' in filename_lower and 'ac_' not in filename_lower:
-        return "a_only"
+    # Only ac_ is special (무도금화이트)
+    if 'ac_' in filename_lower:
+        return "ac_pattern"
     else:
         return "other"
 
@@ -339,12 +336,12 @@ def calculate_quality_metrics_fast(image: Image.Image) -> dict:
     }
 
 def apply_pattern_enhancement_fast(image, pattern_type):
-    """Fast pattern enhancement - Reduced white overlay & brightness"""
+    """Fast pattern enhancement - 12% white overlay for ac_ only"""
     
-    # Apply white overlay ONLY to bc_ac pattern (7% instead of 12%)
-    if pattern_type == "bc_ac":
-        # Unplated white - 7% white overlay
-        white_overlay = 0.07
+    # Apply white overlay ONLY to ac_pattern (12% - increased from 7%)
+    if pattern_type == "ac_pattern":
+        # Unplated white - 12% white overlay
+        white_overlay = 0.12
         img_array = np.array(image, dtype=np.float32)
         img_array = img_array * (1 - white_overlay) + 255 * white_overlay
         img_array = np.clip(img_array, 0, 255)
@@ -352,46 +349,35 @@ def apply_pattern_enhancement_fast(image, pattern_type):
         
         # Reduced brightness
         brightness = ImageEnhance.Brightness(image)
-        image = brightness.enhance(1.02)  # Reduced from 1.05
+        image = brightness.enhance(1.02)
         
         color = ImageEnhance.Color(image)
         image = color.enhance(0.96)
         
-    elif pattern_type in ["a_only", "b_only"]:
-        # NO white overlay
+    else:
+        # All other patterns (including a_) - NO white overlay
         brightness = ImageEnhance.Brightness(image)
-        image = brightness.enhance(1.06)  # Reduced from 1.10
+        image = brightness.enhance(1.06)
         
         color = ImageEnhance.Color(image)
         image = color.enhance(0.96)
         
-        # Increased sharpness for gold patterns
+        # Increased sharpness for other patterns
         sharpness = ImageEnhance.Sharpness(image)
         image = sharpness.enhance(1.5)
-        
-    else:
-        # Standard - NO white overlay
-        brightness = ImageEnhance.Brightness(image)
-        image = brightness.enhance(1.04)  # Reduced from 1.08
-        
-        contrast = ImageEnhance.Contrast(image)
-        image = contrast.enhance(1.02)
     
     # Reduced spotlight
-    if pattern_type in ["a_only", "b_only"]:
-        image = apply_center_spotlight_fast(image, 0.02)
-    else:
-        image = apply_center_spotlight_fast(image, 0.03)
+    image = apply_center_spotlight_fast(image, 0.03)
     
     # Wedding ring enhancement
     image = apply_wedding_ring_focus_fast(image)
     
-    # Fast quality check (only for bc_ac)
-    if pattern_type == "bc_ac":
+    # Fast quality check (only for ac_pattern)
+    if pattern_type == "ac_pattern":
         metrics = calculate_quality_metrics_fast(image)
         if metrics["brightness"] < 240:
-            # Apply 10% white overlay as correction (reduced from 15%)
-            white_overlay = 0.10
+            # Apply 15% white overlay as correction (2차: 10% → 15%, 5% 증가)
+            white_overlay = 0.15
             img_array = np.array(image, dtype=np.float32)
             img_array = img_array * (1 - white_overlay) + 255 * white_overlay
             img_array = np.clip(img_array, 0, 255)
@@ -539,15 +525,15 @@ def handler(event):
         color = ImageEnhance.Color(image)
         image = color.enhance(1.01)
         
-        # Detect pattern
+        # Detect pattern - SIMPLIFIED
         pattern_type = detect_pattern_type(filename)
         
         # Create thumbnail FIRST
         thumbnail = create_thumbnail_optimized(image, 1000, 1300)
         
-        # Apply SwinIR AFTER resize (NEW!)
+        # Apply SwinIR AFTER resize - REMOVED FILTER, applies to all patterns
         swinir_applied = False
-        if USE_REPLICATE and pattern_type in ["bc_ac", "b_only"]:
+        if USE_REPLICATE:
             try:
                 logger.info(f"Applying SwinIR AFTER resize for {pattern_type}")
                 thumbnail = apply_swinir_thumbnail_after_resize(thumbnail)
@@ -559,9 +545,7 @@ def handler(event):
         thumbnail = enhance_cubic_details_thumbnail_simple(thumbnail)
         
         detected_type = {
-            "bc_ac": "무도금화이트(0.07)",
-            "b_only": "b_패턴(no_overlay+spotlight2%)",
-            "a_only": "a_패턴(no_overlay+spotlight2%)",
+            "ac_pattern": "무도금화이트(0.12)",
             "other": "기타색상(no_overlay)"
         }.get(pattern_type, "기타색상")
         
@@ -607,14 +591,14 @@ def handler(event):
                 "status": "success",
                 "mirnet_removed": True,
                 "swinir_applied": swinir_applied,
-                "swinir_timing": "AFTER resize (NEW!)",
+                "swinir_timing": "AFTER resize (ALL PATTERNS)",
                 "png_support": True,
                 "has_transparency": has_transparency,
                 "background_composite": has_transparency,
                 "expected_input": "2000x2600",
                 "output_size": "1000x1300",
                 "cubic_enhancement": "simple (no LAB)",
-                "white_overlay": "7% for bc_ac, 0% others",
+                "white_overlay": "12% for ac_, 0% others",
                 "brightness_reduced": True,
                 "sharpness_increased": "1.6-1.7",
                 "spotlight_reduced": "2-3%",
