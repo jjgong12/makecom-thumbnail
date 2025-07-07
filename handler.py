@@ -14,7 +14,7 @@ import cv2
 logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
 
-VERSION = "V32-AC-Pattern-Auto-Background-Removal"
+VERSION = "V33-Ring-Hole-Detection"
 
 # ===== REPLICATE INITIALIZATION =====
 REPLICATE_API_TOKEN = os.environ.get('REPLICATE_API_TOKEN')
@@ -163,13 +163,13 @@ def create_background(size, color="#F5F5F5", style="gradient"):
         return Image.new('RGB', size, color)
 
 def remove_background_with_replicate(image: Image.Image) -> Image.Image:
-    """Remove background using Replicate API"""
+    """Remove background using Replicate API - OPTIMIZED FOR RINGS"""
     if not USE_REPLICATE or not REPLICATE_CLIENT:
         logger.warning("Replicate not available for background removal")
         return image
     
     try:
-        logger.info("🔷 Removing background with Replicate")
+        logger.info("🔷 Removing background with Replicate (ring-optimized)")
         
         # Convert to base64
         buffered = BytesIO()
@@ -178,16 +178,16 @@ def remove_background_with_replicate(image: Image.Image) -> Image.Image:
         img_base64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
         img_data_url = f"data:image/png;base64,{img_base64}"
         
-        # Use rembg model
+        # Use rembg model with OPTIMIZED settings for rings
         output = REPLICATE_CLIENT.run(
             "cjwbw/rembg:fb8af171cfa1616ddcf1242c093f9c46bcada5ad4cf6f2fbe8b81b330ec5c003",
             input={
                 "image": img_data_url,
                 "model": "u2net",
                 "alpha_matting": True,
-                "alpha_matting_foreground_threshold": 270,
-                "alpha_matting_background_threshold": 50,
-                "alpha_matting_erode_size": 10
+                "alpha_matting_foreground_threshold": 240,  # Lowered for ring holes
+                "alpha_matting_background_threshold": 20,   # Lowered
+                "alpha_matting_erode_size": 5              # Reduced
             }
         )
         
@@ -198,6 +198,10 @@ def remove_background_with_replicate(image: Image.Image) -> Image.Image:
             else:
                 result_image = Image.open(BytesIO(base64.b64decode(output)))
             
+            # POST-PROCESS: Clean ring holes
+            if result_image.mode == 'RGBA':
+                result_image = clean_ring_holes(result_image)
+            
             logger.info("✅ Background removal successful")
             return result_image
         else:
@@ -207,6 +211,39 @@ def remove_background_with_replicate(image: Image.Image) -> Image.Image:
     except Exception as e:
         logger.error(f"Background removal error: {str(e)}")
         return image
+
+def clean_ring_holes(image: Image.Image) -> Image.Image:
+    """Post-process to ensure ring holes are transparent"""
+    if image.mode != 'RGBA':
+        return image
+    
+    # Convert to numpy array
+    img_array = np.array(image)
+    alpha = img_array[:, :, 3]
+    
+    # Find contours in alpha channel
+    _, binary = cv2.threshold(alpha, 128, 255, cv2.THRESH_BINARY)
+    contours, _ = cv2.findContours(binary, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+    
+    # Create mask for holes
+    h, w = alpha.shape
+    hole_mask = np.zeros((h, w), dtype=np.uint8)
+    
+    # Find internal contours (holes)
+    for i, contour in enumerate(contours):
+        area = cv2.contourArea(contour)
+        # Check if it's a hole (small area inside the ring)
+        if 100 < area < (h * w * 0.1):  # Adjust these values as needed
+            x, y, cw, ch = cv2.boundingRect(contour)
+            # Check if it's in the center region
+            center_x, center_y = w // 2, h // 2
+            if abs(x + cw//2 - center_x) < w * 0.3 and abs(y + ch//2 - center_y) < h * 0.3:
+                cv2.drawContours(hole_mask, [contour], -1, 255, -1)
+    
+    # Apply hole mask to alpha channel
+    img_array[:, :, 3] = np.where(hole_mask > 0, 0, img_array[:, :, 3])
+    
+    return Image.fromarray(img_array)
 
 def composite_with_background(image, background_color="#F5F5F5"):
     """Composite PNG image with background"""
@@ -292,17 +329,16 @@ def apply_swinir_thumbnail_after_resize(image: Image.Image) -> Image.Image:
 
 def enhance_cubic_details_thumbnail_simple(image: Image.Image) -> Image.Image:
     """Simple cubic enhancement for thumbnails - no LAB conversion"""
-    # Just use PIL-based enhancement for speed
-    # Contrast enhancement
+    # Stronger contrast for thumbnails
     contrast = ImageEnhance.Contrast(image)
-    image = contrast.enhance(1.06)
+    image = contrast.enhance(1.08)  # Increased from 1.06
     
     # Fine detail enhancement for small display
-    image = image.filter(ImageFilter.UnsharpMask(radius=0.3, percent=100, threshold=2))
+    image = image.filter(ImageFilter.UnsharpMask(radius=0.3, percent=120, threshold=2))  # Increased percent
     
     # Micro-contrast for sparkle
     contrast2 = ImageEnhance.Contrast(image)
-    image = contrast2.enhance(1.02)
+    image = contrast2.enhance(1.03)  # Increased from 1.02
     
     return image
 
@@ -354,14 +390,14 @@ def apply_wedding_ring_focus_fast(image: Image.Image) -> Image.Image:
     
     # Enhanced sharpness for cubic visibility
     sharpness = ImageEnhance.Sharpness(image)
-    image = sharpness.enhance(1.6)  # Increased for thumbnails
+    image = sharpness.enhance(1.7)  # Increased for thumbnails
     
     # Slight contrast
     contrast = ImageEnhance.Contrast(image)
-    image = contrast.enhance(1.03)
+    image = contrast.enhance(1.04)  # Increased
     
     # Multi-scale unsharp mask
-    image = image.filter(ImageFilter.UnsharpMask(radius=0.8, percent=90, threshold=2))
+    image = image.filter(ImageFilter.UnsharpMask(radius=0.8, percent=100, threshold=2))
     
     return image
 
@@ -393,7 +429,7 @@ def apply_pattern_enhancement_fast(image, pattern_type):
         img_array = np.clip(img_array, 0, 255)
         image = Image.fromarray(img_array.astype(np.uint8))
         
-        # Reduced brightness
+        # Reduced brightness for ac_
         brightness = ImageEnhance.Brightness(image)
         image = brightness.enhance(1.02)
         
@@ -401,16 +437,16 @@ def apply_pattern_enhancement_fast(image, pattern_type):
         image = color.enhance(0.96)
         
     else:
-        # All other patterns (including a_) - NO white overlay
+        # All other patterns - stronger enhancement for gold
         brightness = ImageEnhance.Brightness(image)
-        image = brightness.enhance(1.06)
+        image = brightness.enhance(1.08)  # Increased from 1.06
         
         color = ImageEnhance.Color(image)
-        image = color.enhance(0.96)
+        image = color.enhance(0.97)  # Slightly increased
         
         # Increased sharpness for other patterns
         sharpness = ImageEnhance.Sharpness(image)
-        image = sharpness.enhance(1.5)
+        image = sharpness.enhance(1.6)  # Increased from 1.5
     
     # Reduced spotlight
     image = apply_center_spotlight_fast(image, 0.03)
@@ -504,7 +540,7 @@ def image_to_base64(image):
     return base64.b64encode(buffered.getvalue()).decode().rstrip('=')
 
 def handler(event):
-    """Optimized thumbnail handler - PNG SUPPORT + POST-RESIZE SWINIR"""
+    """Optimized thumbnail handler - PNG SUPPORT + POST-RESIZE SWINIR + RING HOLE FIX"""
     try:
         logger.info(f"=== Thumbnail {VERSION} Started ===")
         
@@ -567,12 +603,12 @@ def handler(event):
         # Fast white balance
         image = auto_white_balance_fast(image)
         
-        # Basic enhancement (reduced)
+        # Basic enhancement (adjusted for gold)
         brightness = ImageEnhance.Brightness(image)
-        image = brightness.enhance(1.08)  # Reduced from 1.12
+        image = brightness.enhance(1.10)  # Increased from 1.08
         
         contrast = ImageEnhance.Contrast(image)
-        image = contrast.enhance(1.02)
+        image = contrast.enhance(1.03)  # Increased from 1.02
         
         color = ImageEnhance.Color(image)
         image = color.enhance(1.01)
@@ -613,14 +649,14 @@ def handler(event):
             thumbnail = composite_with_background(original_resized, background_color)
             # Re-apply some enhancements after compositing
             sharpness = ImageEnhance.Sharpness(thumbnail)
-            thumbnail = sharpness.enhance(1.3)
+            thumbnail = sharpness.enhance(1.4)  # Increased from 1.3
         
         # Final adjustments
         sharpness = ImageEnhance.Sharpness(thumbnail)
-        thumbnail = sharpness.enhance(1.7)  # Increased for cubic clarity
+        thumbnail = sharpness.enhance(1.8)  # Increased from 1.7 for cubic clarity
         
         brightness = ImageEnhance.Brightness(thumbnail)
-        thumbnail = brightness.enhance(1.03)  # Reduced from 1.06
+        thumbnail = brightness.enhance(1.04)  # Increased from 1.03
         
         # Convert to base64
         thumbnail_base64 = image_to_base64(thumbnail)
@@ -648,14 +684,16 @@ def handler(event):
                 "has_transparency": has_transparency,
                 "background_composite": has_transparency,
                 "background_removal_applied": filename.lower().endswith('.png') if filename else False,
+                "ring_hole_detection": True,
+                "rembg_optimized": "Lower thresholds for ring holes",
                 "expected_input": "2000x2600",
                 "output_size": "1000x1300",
                 "cubic_enhancement": "simple (no LAB)",
                 "white_overlay": "12% for ac_, 0% others",
-                "brightness_reduced": True,
-                "sharpness_increased": "1.6-1.7",
+                "brightness_increased": "Gold +10%, AC +2%",
+                "sharpness_increased": "1.7-1.8",
                 "spotlight_reduced": "2-3%",
-                "processing_order": "Background Removal (PNG) → White Balance → Basic Enhancement → RESIZE → SwinIR → Cubic → Pattern Enhancement → Background Composite"
+                "processing_order": "Background Removal (PNG) → Ring Hole Clean → White Balance → Basic Enhancement → RESIZE → SwinIR → Cubic → Pattern Enhancement → Background Composite"
             }
         }
         
