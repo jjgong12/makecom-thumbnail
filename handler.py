@@ -14,7 +14,7 @@ import cv2
 logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
 
-VERSION = "V29-Speed-Optimized"
+VERSION = "V30-PNG-Support-PostResize-SwinIR"
 
 # ===== REPLICATE INITIALIZATION =====
 REPLICATE_API_TOKEN = os.environ.get('REPLICATE_API_TOKEN')
@@ -91,7 +91,7 @@ def generate_thumbnail_filename(original_filename, image_index):
     return new_filename
 
 def base64_to_image_fast(base64_string):
-    """Fast base64 to image conversion"""
+    """Fast base64 to image conversion - PNG support"""
     try:
         if not base64_string or len(base64_string) < 50:
             raise ValueError("Invalid base64")
@@ -140,15 +140,78 @@ def detect_pattern_type(filename: str) -> str:
     else:
         return "other"
 
-def apply_swinir_thumbnail_fast(image: Image.Image) -> Image.Image:
-    """Fast SwinIR for thumbnails"""
+def create_background(size, color="#F5F5F5", style="gradient"):
+    """Create background for jewelry"""
+    width, height = size
+    
+    if style == "gradient":
+        # Create radial gradient background
+        background = Image.new('RGB', size, color)
+        bg_array = np.array(background, dtype=np.float32)
+        
+        # Create radial gradient
+        y, x = np.ogrid[:height, :width]
+        center_x, center_y = width / 2, height / 2
+        distance = np.sqrt((x - center_x)**2 + (y - center_y)**2) / max(width, height)
+        
+        # Subtle gradient
+        gradient = 1 - (distance * 0.15)
+        gradient = np.clip(gradient, 0.85, 1.0)
+        
+        # Apply gradient
+        bg_array *= gradient[:, :, np.newaxis]
+        
+        return Image.fromarray(bg_array.astype(np.uint8))
+    else:
+        return Image.new('RGB', size, color)
+
+def composite_with_background(image, background_color="#F5F5F5"):
+    """Composite PNG image with background"""
+    if image.mode == 'RGBA':
+        # Create background
+        background = create_background(image.size, background_color, style="gradient")
+        
+        # Get alpha channel
+        alpha = image.split()[3]
+        
+        # Create soft shadow
+        shadow_array = np.array(alpha, dtype=np.float32) / 255.0
+        
+        # Blur for soft shadow
+        shadow_blur = cv2.GaussianBlur(shadow_array, (15, 15), 0)
+        shadow_blur = (shadow_blur * 0.2 * 255).astype(np.uint8)  # 20% opacity
+        
+        # Offset shadow slightly
+        shadow_img = Image.fromarray(shadow_blur, mode='L')
+        shadow_offset = Image.new('L', image.size, 0)
+        shadow_offset.paste(shadow_img, (2, 2))  # 2px offset for thumbnails
+        
+        # Composite: background -> shadow -> image
+        background_with_shadow = background.copy()
+        shadow_layer = Image.new('RGB', image.size, (200, 200, 200))
+        background_with_shadow.paste(shadow_layer, mask=shadow_offset)
+        
+        # Final composite
+        background_with_shadow.paste(image, mask=alpha)
+        
+        return background_with_shadow
+    else:
+        return image
+
+def apply_swinir_thumbnail_after_resize(image: Image.Image) -> Image.Image:
+    """Apply SwinIR AFTER resize - NEW for thumbnails"""
     if not USE_REPLICATE or not REPLICATE_CLIENT:
         return image
     
     try:
-        # Process at original size
         width, height = image.size
-        logger.info(f"Processing SwinIR thumbnail at: {width}x{height}")
+        
+        # Only apply to thumbnail size
+        if width > 1200 or height > 1500:
+            logger.info(f"Skipping SwinIR - too large: {width}x{height}")
+            return image
+        
+        logger.info(f"Applying SwinIR to thumbnail: {width}x{height}")
         
         # Convert to base64
         buffered = BytesIO()
@@ -157,13 +220,14 @@ def apply_swinir_thumbnail_fast(image: Image.Image) -> Image.Image:
         img_base64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
         img_data_url = f"data:image/png;base64,{img_base64}"
         
-        logger.info("🔷 SwinIR thumbnail (fast)")
+        logger.info("🔷 SwinIR thumbnail (post-resize)")
         
         output = REPLICATE_CLIENT.run(
             "jingyunliang/swinir:660d922d33153019e8c263a3bba265de882e7f4f70396546b6c9c8f9d47a021a",
             input={
                 "image": img_data_url,
-                "task_type": "Real-World Image Super-Resolution",  # Faster
+                "task_type": "Real-World Image Super-Resolution",
+                "scale": 1,  # Keep size
                 "noise_level": 10,
                 "jpeg_quality": 50
             }
@@ -335,52 +399,63 @@ def apply_pattern_enhancement_fast(image, pattern_type):
     
     return image
 
-def create_thumbnail_fast(image, target_width=1000, target_height=1300):
-    """Fast thumbnail creation"""
+def create_thumbnail_optimized(image, target_width=1000, target_height=1300):
+    """Optimized thumbnail creation for 2000x2600 input"""
     original_width, original_height = image.size
     
-    # Fixed center
-    image_center = (original_width // 2, original_height // 2)
+    # Check if input is expected 2000x2600 ratio
+    expected_ratio = 2000 / 2600  # 0.769
+    actual_ratio = original_width / original_height
     
-    # Upscale if needed
-    if original_width < target_width or original_height < target_height:
-        scale_factor = max(target_width / original_width, target_height / original_height) * 1.1
-        
-        new_size = (int(original_width * scale_factor), int(original_height * scale_factor))
-        image = image.resize(new_size, Image.Resampling.LANCZOS)
-        image_center = (new_size[0] // 2, new_size[1] // 2)
-        original_width, original_height = new_size
-    
-    # Check for specific sizes
-    if ((1800 <= original_width <= 2200 and 2400 <= original_height <= 2800) or
-        (2800 <= original_width <= 3200 and 3700 <= original_height <= 4100)):
-        
-        crop_ratio = 0.75 if original_width >= 2800 else 0.85
-        
-        crop_width = int(original_width * crop_ratio)
-        crop_height = int(original_height * crop_ratio)
-        
-        left = image_center[0] - crop_width // 2
-        top = image_center[1] - crop_height // 2
-        
-        cropped = image.crop((left, top, left + crop_width, top + crop_height))
-        return cropped.resize((target_width, target_height), Image.Resampling.LANCZOS)
+    if abs(actual_ratio - expected_ratio) < 0.01:
+        # Perfect ratio match - direct resize to 1000x1300
+        return image.resize((target_width, target_height), Image.Resampling.LANCZOS)
     else:
-        # Simple resize
-        width_ratio = target_width / original_width
-        height_ratio = target_height / original_height
-        scale_ratio = min(width_ratio, height_ratio)
+        # Different ratio - use existing logic
+        logger.warning(f"Unexpected ratio: {original_width}x{original_height} ({actual_ratio:.3f})")
         
-        new_size = (int(original_width * scale_ratio), int(original_height * scale_ratio))
-        resized = image.resize(new_size, Image.Resampling.LANCZOS)
+        # Fixed center
+        image_center = (original_width // 2, original_height // 2)
         
-        # Center on white background
-        thumbnail = Image.new('RGB', (target_width, target_height), (255, 255, 255))
-        left = (target_width - new_size[0]) // 2
-        top = (target_height - new_size[1]) // 2
-        thumbnail.paste(resized, (left, top))
+        # Upscale if needed
+        if original_width < target_width or original_height < target_height:
+            scale_factor = max(target_width / original_width, target_height / original_height) * 1.1
+            
+            new_size = (int(original_width * scale_factor), int(original_height * scale_factor))
+            image = image.resize(new_size, Image.Resampling.LANCZOS)
+            image_center = (new_size[0] // 2, new_size[1] // 2)
+            original_width, original_height = new_size
         
-        return thumbnail
+        # Check for specific sizes
+        if ((1800 <= original_width <= 2200 and 2400 <= original_height <= 2800) or
+            (2800 <= original_width <= 3200 and 3700 <= original_height <= 4100)):
+            
+            crop_ratio = 0.75 if original_width >= 2800 else 0.85
+            
+            crop_width = int(original_width * crop_ratio)
+            crop_height = int(original_height * crop_ratio)
+            
+            left = image_center[0] - crop_width // 2
+            top = image_center[1] - crop_height // 2
+            
+            cropped = image.crop((left, top, left + crop_width, top + crop_height))
+            return cropped.resize((target_width, target_height), Image.Resampling.LANCZOS)
+        else:
+            # Simple resize
+            width_ratio = target_width / original_width
+            height_ratio = target_height / original_height
+            scale_ratio = min(width_ratio, height_ratio)
+            
+            new_size = (int(original_width * scale_ratio), int(original_height * scale_ratio))
+            resized = image.resize(new_size, Image.Resampling.LANCZOS)
+            
+            # Center on white background
+            thumbnail = Image.new('RGB', (target_width, target_height), (255, 255, 255))
+            left = (target_width - new_size[0]) // 2
+            top = (target_height - new_size[1]) // 2
+            thumbnail.paste(resized, (left, top))
+            
+            return thumbnail
 
 def image_to_base64(image):
     """Convert to base64 without padding"""
@@ -397,7 +472,7 @@ def image_to_base64(image):
     return base64.b64encode(buffered.getvalue()).decode().rstrip('=')
 
 def handler(event):
-    """Optimized thumbnail handler - SPEED OPTIMIZED"""
+    """Optimized thumbnail handler - PNG SUPPORT + POST-RESIZE SWINIR"""
     try:
         logger.info(f"=== Thumbnail {VERSION} Started ===")
         
@@ -405,6 +480,11 @@ def handler(event):
         image_index = event.get('image_index', 1)
         if isinstance(event.get('input'), dict):
             image_index = event.get('input', {}).get('image_index', image_index)
+        
+        # Get background color
+        background_color = event.get('background_color', '#F5F5F5')
+        if isinstance(event.get('input'), dict):
+            background_color = event.get('input', {}).get('background_color', background_color)
         
         # Fast extraction
         filename = find_filename_fast(event)
@@ -427,6 +507,15 @@ def handler(event):
         
         if not image:
             raise ValueError("Failed to load image")
+        
+        # Check for transparency
+        original_mode = image.mode
+        has_transparency = image.mode == 'RGBA'
+        
+        if has_transparency:
+            logger.info("PNG with transparency detected")
+            # Keep original for compositing
+            original_image = image.copy()
         
         # Basic enhancement
         if image.mode != 'RGB':
@@ -453,21 +542,18 @@ def handler(event):
         # Detect pattern
         pattern_type = detect_pattern_type(filename)
         
-        # NO MIRNet - removed for speed
+        # Create thumbnail FIRST
+        thumbnail = create_thumbnail_optimized(image, 1000, 1300)
         
-        # Apply SwinIR ONLY for unplated white (bc_ac) and b pattern (b_only)
+        # Apply SwinIR AFTER resize (NEW!)
         swinir_applied = False
         if USE_REPLICATE and pattern_type in ["bc_ac", "b_only"]:
             try:
-                image = apply_swinir_thumbnail_fast(image)
+                logger.info(f"Applying SwinIR AFTER resize for {pattern_type}")
+                thumbnail = apply_swinir_thumbnail_after_resize(thumbnail)
                 swinir_applied = True
             except:
                 logger.warning("SwinIR failed, continuing without")
-        else:
-            logger.info(f"Skipping SwinIR for {pattern_type} (speed optimization)")
-        
-        # Create thumbnail
-        thumbnail = create_thumbnail_fast(image, 1000, 1300)
         
         # Simple cubic enhancement (no LAB conversion)
         thumbnail = enhance_cubic_details_thumbnail_simple(thumbnail)
@@ -481,6 +567,17 @@ def handler(event):
         
         # Apply pattern enhancement
         thumbnail = apply_pattern_enhancement_fast(thumbnail, pattern_type)
+        
+        # Handle transparency compositing if needed
+        if has_transparency and 'original_image' in locals():
+            logger.info("Compositing thumbnail with background")
+            # Resize original PNG to thumbnail size
+            original_resized = original_image.resize((1000, 1300), Image.Resampling.LANCZOS)
+            # Composite with background
+            thumbnail = composite_with_background(original_resized, background_color)
+            # Re-apply some enhancements after compositing
+            sharpness = ImageEnhance.Sharpness(thumbnail)
+            thumbnail = sharpness.enhance(1.3)
         
         # Final adjustments
         sharpness = ImageEnhance.Sharpness(thumbnail)
@@ -510,19 +607,18 @@ def handler(event):
                 "status": "success",
                 "mirnet_removed": True,
                 "swinir_applied": swinir_applied,
-                "swinir_patterns": ["bc_ac", "b_only"],
+                "swinir_timing": "AFTER resize (NEW!)",
+                "png_support": True,
+                "has_transparency": has_transparency,
+                "background_composite": has_transparency,
+                "expected_input": "2000x2600",
+                "output_size": "1000x1300",
                 "cubic_enhancement": "simple (no LAB)",
                 "white_overlay": "7% for bc_ac, 0% others",
                 "brightness_reduced": True,
                 "sharpness_increased": "1.6-1.7",
                 "spotlight_reduced": "2-3%",
-                "speed_optimizations": [
-                    "NO MIRNet (removed completely)",
-                    "SwinIR only for bc_ac and b_only",
-                    "Simple cubic enhancement (no LAB)",
-                    "Fast quality check"
-                ],
-                "processing_order": "White Balance → SwinIR (conditional) → Simple Cubic → Pattern Enhancement"
+                "processing_order": "White Balance → Basic Enhancement → RESIZE → SwinIR → Cubic → Pattern Enhancement"
             }
         }
         
