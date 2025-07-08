@@ -14,7 +14,7 @@ import cv2
 logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
 
-VERSION = "V35-Enhanced-Processing"
+VERSION = "V36-Natural-Edge-Processing"
 
 # ===== REPLICATE INITIALIZATION =====
 REPLICATE_API_TOKEN = os.environ.get('REPLICATE_API_TOKEN')
@@ -208,36 +208,103 @@ def remove_background_with_replicate(image: Image.Image) -> Image.Image:
         logger.error(f"Background removal error: {str(e)}")
         return image
 
-def composite_with_background(image, background_color="#F0F0F0"):
-    """Composite PNG image with background"""
+def add_natural_edge_feathering(image: Image.Image) -> Image.Image:
+    """Add natural feathering to edges for smooth transition"""
+    if image.mode != 'RGBA':
+        return image
+    
+    # Get alpha channel
+    r, g, b, a = image.split()
+    
+    # Apply Gaussian blur to alpha channel for feathering
+    a_array = np.array(a, dtype=np.float32)
+    
+    # Create edge mask
+    edges = cv2.Canny(a_array.astype(np.uint8), 50, 150)
+    
+    # Dilate edges slightly
+    kernel = np.ones((3, 3), np.uint8)
+    edges_dilated = cv2.dilate(edges, kernel, iterations=1)
+    
+    # Apply Gaussian blur to edges
+    edge_blur = cv2.GaussianBlur(edges_dilated.astype(np.float32), (5, 5), 1.5)
+    
+    # Blend original alpha with blurred edges
+    alpha_feathered = np.where(edge_blur > 0, 
+                               a_array * 0.9 + edge_blur * 0.1,  # Soften edges
+                               a_array)
+    
+    # Apply overall slight blur to alpha for smoothness
+    alpha_final = cv2.GaussianBlur(alpha_feathered, (3, 3), 0.5)
+    
+    # Create new image with feathered alpha
+    a_new = Image.fromarray(alpha_final.astype(np.uint8))
+    return Image.merge('RGBA', (r, g, b, a_new))
+
+def composite_with_background_natural(image, background_color="#F0F0F0"):
+    """Natural composite with soft shadows and proper blending for thumbnails"""
     if image.mode == 'RGBA':
+        # Apply edge feathering first
+        image = add_natural_edge_feathering(image)
+        
         # Create background
         background = create_background(image.size, background_color, style="gradient")
         
         # Get alpha channel
         alpha = image.split()[3]
         
-        # Create soft shadow
+        # Create multiple shadow layers for natural effect
         shadow_array = np.array(alpha, dtype=np.float32) / 255.0
         
-        # Blur for soft shadow
-        shadow_blur = cv2.GaussianBlur(shadow_array, (15, 15), 0)
-        shadow_blur = (shadow_blur * 0.2 * 255).astype(np.uint8)  # 20% opacity
+        # Layer 1: Soft contact shadow (smaller for thumbnails)
+        shadow1 = cv2.GaussianBlur(shadow_array, (7, 7), 1.5)
+        shadow1 = (shadow1 * 0.12 * 255).astype(np.uint8)  # 12% opacity
         
-        # Offset shadow slightly
-        shadow_img = Image.fromarray(shadow_blur, mode='L')
+        # Layer 2: Medium shadow
+        shadow2 = cv2.GaussianBlur(shadow_array, (15, 15), 3)
+        shadow2 = (shadow2 * 0.06 * 255).astype(np.uint8)  # 6% opacity
+        
+        # Layer 3: Ambient shadow
+        shadow3 = cv2.GaussianBlur(shadow_array, (25, 25), 6)
+        shadow3 = (shadow3 * 0.04 * 255).astype(np.uint8)  # 4% opacity
+        
+        # Composite shadows
+        final_shadow = np.maximum(shadow1, np.maximum(shadow2, shadow3))
+        
+        # Create shadow image with minimal offset
+        shadow_img = Image.fromarray(final_shadow, mode='L')
         shadow_offset = Image.new('L', image.size, 0)
-        shadow_offset.paste(shadow_img, (2, 2))  # 2px offset for thumbnails
         
-        # Composite: background -> shadow -> image
-        background_with_shadow = background.copy()
-        shadow_layer = Image.new('RGB', image.size, (200, 200, 200))
-        background_with_shadow.paste(shadow_layer, mask=shadow_offset)
+        # Very subtle offset (1 pixel for thumbnails)
+        shadow_offset.paste(shadow_img, (1, 1))
         
-        # Final composite
-        background_with_shadow.paste(image, mask=alpha)
+        # Apply shadow to background
+        shadow_layer = Image.new('RGB', image.size, (185, 185, 185))  # Lighter shadow
+        background.paste(shadow_layer, mask=shadow_offset)
         
-        return background_with_shadow
+        # Final composite with proper alpha blending
+        # Use premultiplied alpha for better edge quality
+        r, g, b, a = image.split()
+        
+        # Premultiply RGB by alpha
+        a_array = np.array(a, dtype=np.float32) / 255.0
+        r_array = np.array(r, dtype=np.float32) * a_array
+        g_array = np.array(g, dtype=np.float32) * a_array
+        b_array = np.array(b, dtype=np.float32) * a_array
+        
+        # Convert background to array
+        bg_array = np.array(background, dtype=np.float32)
+        
+        # Composite using proper alpha blending
+        result_r = r_array + bg_array[:,:,0] * (1 - a_array)
+        result_g = g_array + bg_array[:,:,1] * (1 - a_array)
+        result_b = b_array + bg_array[:,:,2] * (1 - a_array)
+        
+        # Stack and convert back
+        result = np.stack([result_r, result_g, result_b], axis=2)
+        result = np.clip(result, 0, 255).astype(np.uint8)
+        
+        return Image.fromarray(result)
     else:
         return image
 
@@ -507,7 +574,7 @@ def image_to_base64(image):
     return base64.b64encode(buffered.getvalue()).decode().rstrip('=')
 
 def handler(event):
-    """Optimized thumbnail handler - ENHANCED VERSION"""
+    """Optimized thumbnail handler - NATURAL EDGE VERSION"""
     try:
         logger.info(f"=== Thumbnail {VERSION} Started ===")
         
@@ -613,7 +680,7 @@ def handler(event):
         
         # STEP 3: BACKGROUND COMPOSITE (if transparent)
         if has_transparency and 'original_transparent' in locals():
-            logger.info("🖼️ STEP 3: Compositing with background")
+            logger.info("🖼️ STEP 3: Natural background compositing")
             
             # Apply enhancements to transparent version
             enhanced_transparent = original_transparent.resize((1000, 1300), Image.Resampling.LANCZOS)
@@ -645,19 +712,19 @@ def handler(event):
                 r2, g2, b2 = rgb_image.split()
                 enhanced_transparent = Image.merge('RGBA', (r2, g2, b2, a))
             
-            # Composite with background
-            thumbnail = composite_with_background(enhanced_transparent, background_color)
+            # Natural composite with soft shadows
+            thumbnail = composite_with_background_natural(enhanced_transparent, background_color)
             
             # Final sharpness after compositing
             sharpness = ImageEnhance.Sharpness(thumbnail)
-            thumbnail = sharpness.enhance(1.4)
+            thumbnail = sharpness.enhance(1.3)  # Reduced for natural look
         
         # Final adjustments
         sharpness = ImageEnhance.Sharpness(thumbnail)
-        thumbnail = sharpness.enhance(2.0)  # Very strong for thumbnails
+        thumbnail = sharpness.enhance(1.9)  # Strong but not excessive
         
         brightness = ImageEnhance.Brightness(thumbnail)
-        thumbnail = brightness.enhance(1.06)  # Final brightness boost
+        thumbnail = brightness.enhance(1.05)  # Final brightness boost
         
         # Convert to base64
         thumbnail_base64 = image_to_base64(thumbnail)
@@ -685,6 +752,9 @@ def handler(event):
                 "background_composite": has_transparency,
                 "background_removal": needs_background_removal,
                 "background_color": background_color,
+                "edge_processing": "Natural feathering",
+                "shadow_style": "Multi-layer soft shadow",
+                "composite_method": "Premultiplied alpha blending",
                 "rembg_settings": "Aggressive (270/10/10)",
                 "expected_input": "2000x2600",
                 "output_size": "1000x1300",
@@ -692,9 +762,9 @@ def handler(event):
                 "white_overlay": "17% for ac_ (1차), 20% (2차)",
                 "brightness_increased": "15%",
                 "contrast_increased": "8%",
-                "sharpness_increased": "2.0 + extra passes",
+                "sharpness_increased": "1.9 + extra passes",
                 "spotlight_increased": "3-4%",
-                "processing_order": "1.Background Removal → 2.Enhancement → 3.Background Composite",
+                "processing_order": "1.Background Removal → 2.Enhancement → 3.Natural Composite",
                 "quality": "95"
             }
         }
