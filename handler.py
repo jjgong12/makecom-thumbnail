@@ -14,7 +14,7 @@ import cv2
 logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
 
-VERSION = "V2-Shadow-Color-Background"
+VERSION = "V3-Light-Gray-Shadow"
 
 # ===== REPLICATE INITIALIZATION =====
 REPLICATE_API_TOKEN = os.environ.get('REPLICATE_API_TOKEN')
@@ -137,74 +137,8 @@ def detect_pattern_type(filename: str) -> str:
     else:
         return "other"
 
-def sample_shadow_color(image: Image.Image) -> str:
-    """Sample shadow color from image edges"""
-    if image.mode != 'RGBA':
-        return "#F5F2ED"  # Default fallback
-    
-    try:
-        r, g, b, a = image.split()
-        a_array = np.array(a)
-        img_array = np.array(image.convert('RGB'))
-        
-        # Find semi-transparent pixels (shadow areas)
-        shadow_mask = (a_array > 30) & (a_array < 200)  # Semi-transparent areas
-        
-        if np.sum(shadow_mask) > 100:
-            # Sample colors from shadow areas
-            shadow_pixels = img_array[shadow_mask]
-            
-            # Get average color of shadow areas
-            avg_r = np.mean(shadow_pixels[:, 0])
-            avg_g = np.mean(shadow_pixels[:, 1])
-            avg_b = np.mean(shadow_pixels[:, 2])
-            
-            # Convert to hex
-            shadow_color = f"#{int(avg_r):02x}{int(avg_g):02x}{int(avg_b):02x}"
-            logger.info(f"Sampled shadow color: {shadow_color}")
-            return shadow_color
-        else:
-            # If no shadow found, sample from edge pixels
-            edge_pixels = []
-            h, w = a_array.shape
-            
-            # Sample edge pixels
-            for i in range(0, h, 10):
-                for j in range(0, w, 10):
-                    if a_array[i, j] > 10:  # Non-transparent
-                        # Check if it's an edge pixel
-                        neighbors = []
-                        for di in [-1, 0, 1]:
-                            for dj in [-1, 0, 1]:
-                                ni, nj = i + di, j + dj
-                                if 0 <= ni < h and 0 <= nj < w:
-                                    neighbors.append(a_array[ni, nj])
-                        
-                        if min(neighbors) < 250:  # Edge pixel
-                            edge_pixels.append(img_array[i, j])
-            
-            if edge_pixels:
-                edge_pixels = np.array(edge_pixels)
-                avg_r = np.mean(edge_pixels[:, 0])
-                avg_g = np.mean(edge_pixels[:, 1])
-                avg_b = np.mean(edge_pixels[:, 2])
-                
-                # Make it slightly lighter for background
-                avg_r = min(255, avg_r * 1.05)
-                avg_g = min(255, avg_g * 1.05)
-                avg_b = min(255, avg_b * 1.05)
-                
-                shadow_color = f"#{int(avg_r):02x}{int(avg_g):02x}{int(avg_b):02x}"
-                logger.info(f"Sampled edge color: {shadow_color}")
-                return shadow_color
-                
-    except Exception as e:
-        logger.warning(f"Shadow color sampling failed: {e}")
-    
-    return "#F5F2ED"  # Default fallback
-
-def create_background(size, color="#F5F2ED", style="gradient"):
-    """Create natural background for jewelry"""
+def create_background(size, color="#F0F0F0", style="gradient"):
+    """Create natural light gray background for jewelry"""
     width, height = size
     
     if style == "gradient":
@@ -218,8 +152,8 @@ def create_background(size, color="#F5F2ED", style="gradient"):
         distance = np.sqrt((x - center_x)**2 + (y - center_y)**2) / max(width, height)
         
         # Very subtle gradient for natural look
-        gradient = 1 - (distance * 0.08)  # Only 8% darkening at edges
-        gradient = np.clip(gradient, 0.92, 1.0)
+        gradient = 1 - (distance * 0.05)  # Only 5% darkening at edges
+        gradient = np.clip(gradient, 0.95, 1.0)
         
         # Apply gradient
         bg_array *= gradient[:, :, np.newaxis]
@@ -307,8 +241,8 @@ def add_natural_edge_feathering(image: Image.Image) -> Image.Image:
     a_new = Image.fromarray(alpha_final.astype(np.uint8))
     return Image.merge('RGBA', (r, g, b, a_new))
 
-def composite_with_background_natural(image, background_color="#F5F2ED"):
-    """Ultra natural composite with dynamic background"""
+def composite_with_light_gray_background(image, background_color="#F0F0F0"):
+    """Natural composite with light gray background - FIXED for ring holes"""
     if image.mode == 'RGBA':
         # Apply strong edge feathering first
         image = add_natural_edge_feathering(image)
@@ -319,20 +253,20 @@ def composite_with_background_natural(image, background_color="#F5F2ED"):
         # Get alpha channel
         alpha = image.split()[3]
         
-        # Create very soft shadows
+        # Create very soft shadows with LIGHT GRAY
         shadow_array = np.array(alpha, dtype=np.float32) / 255.0
         
         # Layer 1: Very soft contact shadow (smaller for thumbnails)
         shadow1 = cv2.GaussianBlur(shadow_array, (7, 7), 2)
-        shadow1 = (shadow1 * 0.06 * 255).astype(np.uint8)  # Very subtle 6%
+        shadow1 = (shadow1 * 0.03 * 255).astype(np.uint8)  # Very subtle 3%
         
         # Layer 2: Diffuse shadow
         shadow2 = cv2.GaussianBlur(shadow_array, (15, 15), 4)
-        shadow2 = (shadow2 * 0.04 * 255).astype(np.uint8)  # 4% opacity
+        shadow2 = (shadow2 * 0.02 * 255).astype(np.uint8)  # 2% opacity
         
         # Layer 3: Ambient occlusion
         shadow3 = cv2.GaussianBlur(shadow_array, (25, 25), 7)
-        shadow3 = (shadow3 * 0.02 * 255).astype(np.uint8)  # Very subtle 2%
+        shadow3 = (shadow3 * 0.01 * 255).astype(np.uint8)  # Very subtle 1%
         
         # Composite shadows
         final_shadow = np.maximum(shadow1, np.maximum(shadow2, shadow3))
@@ -344,18 +278,11 @@ def composite_with_background_natural(image, background_color="#F5F2ED"):
         # Almost no offset (0.5 pixel for thumbnails)
         shadow_offset.paste(shadow_img, (1, 0))
         
-        # Apply shadow to background - use slightly darker version of background color
-        # Parse background color
-        bg_r = int(background_color[1:3], 16)
-        bg_g = int(background_color[3:5], 16)
-        bg_b = int(background_color[5:7], 16)
+        # Apply shadow to background - use light gray shadow
+        # Light gray shadow color (instead of dark)
+        shadow_color = (230, 230, 230)  # Very light gray
         
-        # Make shadow color slightly darker than background
-        shadow_r = int(bg_r * 0.95)
-        shadow_g = int(bg_g * 0.95)
-        shadow_b = int(bg_b * 0.95)
-        
-        shadow_layer = Image.new('RGB', image.size, (shadow_r, shadow_g, shadow_b))
+        shadow_layer = Image.new('RGB', image.size, shadow_color)
         background.paste(shadow_layer, mask=shadow_offset)
         
         # Final composite with proper alpha blending
@@ -650,7 +577,7 @@ def image_to_base64(image):
     return base64.b64encode(buffered.getvalue()).decode().rstrip('=')
 
 def handler(event):
-    """Optimized thumbnail handler - SHADOW COLOR BACKGROUND VERSION"""
+    """Optimized thumbnail handler - LIGHT GRAY SHADOW VERSION"""
     try:
         logger.info(f"=== Thumbnail {VERSION} Started ===")
         
@@ -659,10 +586,8 @@ def handler(event):
         if isinstance(event.get('input'), dict):
             image_index = event.get('input', {}).get('image_index', image_index)
         
-        # Get background color - will be overridden by shadow sampling
-        background_color = event.get('background_color', '#F5F2ED')
-        if isinstance(event.get('input'), dict):
-            background_color = event.get('input', {}).get('background_color', background_color)
+        # Fixed light gray background
+        background_color = '#F0F0F0'  # Light gray
         
         # Fast extraction
         filename = find_filename_fast(event)
@@ -697,13 +622,8 @@ def handler(event):
             has_transparency = image.mode == 'RGBA'
             needs_background_removal = True
         
-        # Sample shadow color from the transparent image
+        # Keep transparent version for later
         if has_transparency:
-            logger.info("Sampling shadow color from transparent areas")
-            background_color = sample_shadow_color(image)
-            logger.info(f"Using sampled background color: {background_color}")
-            
-            # Keep original for compositing
             original_transparent = image.copy()
         
         # Convert to RGB for processing
@@ -760,7 +680,7 @@ def handler(event):
         
         # STEP 3: BACKGROUND COMPOSITE (if transparent)
         if has_transparency and 'original_transparent' in locals():
-            logger.info(f"🖼️ STEP 3: Shadow color background compositing: {background_color}")
+            logger.info(f"🖼️ STEP 3: Light gray background compositing: {background_color}")
             
             # Apply enhancements to transparent version
             enhanced_transparent = original_transparent.resize((1000, 1300), Image.Resampling.LANCZOS)
@@ -792,8 +712,8 @@ def handler(event):
                 r2, g2, b2 = rgb_image.split()
                 enhanced_transparent = Image.merge('RGBA', (r2, g2, b2, a))
             
-            # Natural composite with sampled background color
-            thumbnail = composite_with_background_natural(enhanced_transparent, background_color)
+            # Natural composite with light gray background
+            thumbnail = composite_with_light_gray_background(enhanced_transparent, background_color)
             
             # Final sharpness after compositing
             sharpness = ImageEnhance.Sharpness(thumbnail)
@@ -832,11 +752,10 @@ def handler(event):
                 "background_composite": has_transparency,
                 "background_removal": needs_background_removal,
                 "background_color": background_color,
-                "background_style": "Shadow color gradient (auto-sampled)",
-                "shadow_sampling": "Auto-detect from transparent edges",
+                "background_style": "Light gray gradient (#F0F0F0)",
+                "shadow_color": "Light gray (230, 230, 230)",
+                "shadow_opacity": "Ultra-light (3%/2%/1%)",
                 "edge_processing": "Strong natural feathering",
-                "shadow_style": "Ultra-soft multi-layer (6%/4%/2%)",
-                "shadow_color": f"Dynamic based on background ({background_color})",
                 "composite_method": "Premultiplied alpha blending",
                 "rembg_settings": "Aggressive (270/10/10)",
                 "expected_input": "2000x2600",
@@ -847,7 +766,7 @@ def handler(event):
                 "contrast_increased": "8%",
                 "sharpness_increased": "1.8-1.9 + extra passes",
                 "spotlight_increased": "3-4%",
-                "processing_order": "1.Background Removal → 2.Shadow Sampling → 3.Enhancement → 4.Natural Composite",
+                "processing_order": "1.Background Removal → 2.Enhancement → 3.Light Gray Composite",
                 "quality": "95"
             }
         }
