@@ -16,10 +16,10 @@ logger = logging.getLogger(__name__)
 
 ################################
 # THUMBNAIL HANDLER - 1000x1300
-# VERSION: V4-Minimal-Shadow
+# VERSION: V5-Gray-Background
 ################################
 
-VERSION = "V4-Minimal-Shadow"
+VERSION = "V5-Gray-Background"
 
 # ===== REPLICATE INITIALIZATION =====
 REPLICATE_API_TOKEN = os.environ.get('REPLICATE_API_TOKEN')
@@ -142,7 +142,7 @@ def detect_pattern_type(filename: str) -> str:
     else:
         return "other"
 
-def create_background(size, color="#F0F0F0", style="gradient"):
+def create_background(size, color="#E8E8E8", style="gradient"):
     """Create natural light gray background for jewelry"""
     width, height = size
     
@@ -246,8 +246,8 @@ def add_natural_edge_feathering(image: Image.Image) -> Image.Image:
     a_new = Image.fromarray(alpha_final.astype(np.uint8))
     return Image.merge('RGBA', (r, g, b, a_new))
 
-def composite_with_light_gray_background(image, background_color="#F0F0F0"):
-    """Natural composite with minimal 5px shadow"""
+def composite_with_light_gray_background(image, background_color="#E8E8E8"):
+    """Natural composite with 10px shadow - gray background"""
     if image.mode == 'RGBA':
         # Apply strong edge feathering first
         image = add_natural_edge_feathering(image)
@@ -258,23 +258,23 @@ def composite_with_light_gray_background(image, background_color="#F0F0F0"):
         # Get alpha channel
         alpha = image.split()[3]
         
-        # Create VERY MINIMAL shadow (5px only)
+        # Create 10px shadow
         shadow_array = np.array(alpha, dtype=np.float32) / 255.0
         
-        # Single minimal shadow layer (5px blur)
-        shadow = cv2.GaussianBlur(shadow_array, (5, 5), 1.0)
-        shadow = (shadow * 0.02 * 255).astype(np.uint8)  # Very subtle 2%
+        # Single shadow layer (10px blur)
+        shadow = cv2.GaussianBlur(shadow_array, (9, 9), 2.5)
+        shadow = (shadow * 0.03 * 255).astype(np.uint8)  # Subtle 3%
         
         # Create shadow image with minimal offset
         shadow_img = Image.fromarray(shadow, mode='L')
         shadow_offset = Image.new('L', image.size, 0)
         
-        # Minimal offset (0.5 pixel)
-        shadow_offset.paste(shadow_img, (1, 0))
+        # Minimal offset (1 pixel)
+        shadow_offset.paste(shadow_img, (1, 1))
         
-        # Apply shadow to background - use very light gray shadow
-        # Very light gray shadow color
-        shadow_color = (235, 235, 235)  # Almost same as background
+        # Apply shadow to background - use gray shadow similar to background
+        # Gray shadow color (slightly darker than background)
+        shadow_color = (220, 220, 220)  # Slightly darker than #E8E8E8
         
         shadow_layer = Image.new('RGB', image.size, shadow_color)
         background.paste(shadow_layer, mask=shadow_offset)
@@ -580,8 +580,8 @@ def handler(event):
         if isinstance(event.get('input'), dict):
             image_index = event.get('input', {}).get('image_index', image_index)
         
-        # Fixed light gray background
-        background_color = '#F0F0F0'  # Light gray
+        # Fixed gray background
+        background_color = '#E8E8E8'  # Gray background
         
         # Fast extraction
         filename = find_filename_fast(event)
@@ -746,10 +746,10 @@ def handler(event):
                 "background_composite": has_transparency,
                 "background_removal": needs_background_removal,
                 "background_color": background_color,
-                "background_style": "Light gray gradient (#F0F0F0)",
-                "shadow_color": "Light gray (235, 235, 235)",
-                "shadow_opacity": "Minimal 2% (5px blur only)",
-                "shadow_size": "5 pixels",
+                "background_style": "Gray gradient (#E8E8E8)",
+                "shadow_color": "Gray (220, 220, 220)",
+                "shadow_opacity": "Subtle 3% (10px blur)",
+                "shadow_size": "10 pixels",
                 "edge_processing": "Strong natural feathering",
                 "composite_method": "Premultiplied alpha blending",
                 "rembg_settings": "Aggressive (270/10/10)",
