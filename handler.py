@@ -14,7 +14,7 @@ import cv2
 logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
 
-VERSION = "V34-Safe-Ring-Processing"
+VERSION = "V35-Enhanced-Processing"
 
 # ===== REPLICATE INITIALIZATION =====
 REPLICATE_API_TOKEN = os.environ.get('REPLICATE_API_TOKEN')
@@ -163,13 +163,13 @@ def create_background(size, color="#F0F0F0", style="gradient"):
         return Image.new('RGB', size, color)
 
 def remove_background_with_replicate(image: Image.Image) -> Image.Image:
-    """Remove background using Replicate API - OPTIMIZED FOR JEWELRY"""
+    """Remove background using Replicate API - AGGRESSIVE FOR RING HOLES"""
     if not USE_REPLICATE or not REPLICATE_CLIENT:
         logger.warning("Replicate not available for background removal")
         return image
     
     try:
-        logger.info("🔷 Removing background with Replicate")
+        logger.info("🔷 Removing background with Replicate (aggressive mode)")
         
         # Convert to base64
         buffered = BytesIO()
@@ -178,16 +178,16 @@ def remove_background_with_replicate(image: Image.Image) -> Image.Image:
         img_base64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
         img_data_url = f"data:image/png;base64,{img_base64}"
         
-        # Use rembg model with settings for jewelry
+        # Use rembg model with AGGRESSIVE settings
         output = REPLICATE_CLIENT.run(
             "cjwbw/rembg:fb8af171cfa1616ddcf1242c093f9c46bcada5ad4cf6f2fbe8b81b330ec5c003",
             input={
                 "image": img_data_url,
-                "model": "u2net_human_seg",  # Better for jewelry with holes
+                "model": "u2net",  # Back to u2net for better hole detection
                 "alpha_matting": True,
-                "alpha_matting_foreground_threshold": 250,  # High for jewelry
-                "alpha_matting_background_threshold": 15,    # Low for holes
-                "alpha_matting_erode_size": 8              # Standard for jewelry
+                "alpha_matting_foreground_threshold": 270,  # Higher for aggressive
+                "alpha_matting_background_threshold": 10,    # Very low for holes
+                "alpha_matting_erode_size": 10              # Larger for cleaner edges
             }
         )
         
@@ -291,17 +291,21 @@ def apply_swinir_thumbnail_after_resize(image: Image.Image) -> Image.Image:
     return image
 
 def enhance_cubic_details_thumbnail_simple(image: Image.Image) -> Image.Image:
-    """Simple cubic enhancement for thumbnails - no LAB conversion"""
-    # Stronger contrast for thumbnails
+    """Enhanced cubic details for thumbnails"""
+    # Much stronger contrast
     contrast = ImageEnhance.Contrast(image)
-    image = contrast.enhance(1.08)  # Increased from 1.06
+    image = contrast.enhance(1.12)  # Increased from 1.08
     
-    # Fine detail enhancement for small display
-    image = image.filter(ImageFilter.UnsharpMask(radius=0.3, percent=120, threshold=2))  # Increased percent
+    # Strong detail enhancement
+    image = image.filter(ImageFilter.UnsharpMask(radius=0.4, percent=140, threshold=2))  # Increased
     
-    # Micro-contrast for sparkle
+    # Additional micro-contrast
     contrast2 = ImageEnhance.Contrast(image)
-    image = contrast2.enhance(1.03)  # Increased from 1.02
+    image = contrast2.enhance(1.05)  # Increased from 1.03
+    
+    # Extra sharpness
+    sharpness = ImageEnhance.Sharpness(image)
+    image = sharpness.enhance(1.3)  # Added
     
     return image
 
@@ -330,8 +334,8 @@ def auto_white_balance_fast(image: Image.Image) -> Image.Image:
     
     return Image.fromarray(np.clip(img_array, 0, 255).astype(np.uint8))
 
-def apply_center_spotlight_fast(image: Image.Image, intensity: float = 0.03) -> Image.Image:
-    """Fast center spotlight"""
+def apply_center_spotlight_fast(image: Image.Image, intensity: float = 0.04) -> Image.Image:
+    """Fast center spotlight - Slightly increased"""
     width, height = image.size
     
     y, x = np.ogrid[:height, :width]
@@ -347,20 +351,20 @@ def apply_center_spotlight_fast(image: Image.Image, intensity: float = 0.03) -> 
     return Image.fromarray(np.clip(img_array, 0, 255).astype(np.uint8))
 
 def apply_wedding_ring_focus_fast(image: Image.Image) -> Image.Image:
-    """Fast wedding ring enhancement with cubic focus"""
-    # Reduced spotlight
-    image = apply_center_spotlight_fast(image, 0.02)
+    """Enhanced wedding ring focus for thumbnails"""
+    # Slightly increased spotlight
+    image = apply_center_spotlight_fast(image, 0.03)
     
-    # Enhanced sharpness for cubic visibility
+    # Much stronger sharpness
     sharpness = ImageEnhance.Sharpness(image)
-    image = sharpness.enhance(1.7)  # Increased for thumbnails
+    image = sharpness.enhance(1.9)  # Increased from 1.7
     
-    # Slight contrast
+    # Stronger contrast
     contrast = ImageEnhance.Contrast(image)
-    image = contrast.enhance(1.04)  # Increased
+    image = contrast.enhance(1.06)  # Increased from 1.04
     
-    # Multi-scale unsharp mask
-    image = image.filter(ImageFilter.UnsharpMask(radius=0.8, percent=100, threshold=2))
+    # Strong multi-scale unsharp mask
+    image = image.filter(ImageFilter.UnsharpMask(radius=1.0, percent=120, threshold=2))
     
     return image
 
@@ -381,12 +385,12 @@ def calculate_quality_metrics_fast(image: Image.Image) -> dict:
     }
 
 def apply_pattern_enhancement_fast(image, pattern_type):
-    """Fast pattern enhancement - 12% white overlay for ac_ only"""
+    """Fast pattern enhancement - 17% white overlay for ac_ (1차)"""
     
-    # Apply white overlay ONLY to ac_pattern (12% - increased from 7%)
+    # Apply white overlay ONLY to ac_pattern (17% - increased from 12%)
     if pattern_type == "ac_pattern":
-        # Unplated white - 12% white overlay
-        white_overlay = 0.12
+        # Unplated white - 17% white overlay (1차: 12% → 17%, 5% 증가)
+        white_overlay = 0.17
         img_array = np.array(image, dtype=np.float32)
         img_array = img_array * (1 - white_overlay) + 255 * white_overlay
         img_array = np.clip(img_array, 0, 255)
@@ -400,29 +404,29 @@ def apply_pattern_enhancement_fast(image, pattern_type):
         image = color.enhance(0.96)
         
     else:
-        # All other patterns - stronger enhancement for gold
+        # All other patterns - much stronger enhancement
         brightness = ImageEnhance.Brightness(image)
-        image = brightness.enhance(1.08)  # Increased from 1.06
+        image = brightness.enhance(1.12)  # Increased from 1.08
         
         color = ImageEnhance.Color(image)
-        image = color.enhance(0.97)  # Slightly increased
+        image = color.enhance(0.98)  # Slightly increased
         
-        # Increased sharpness for other patterns
+        # Strong sharpness
         sharpness = ImageEnhance.Sharpness(image)
-        image = sharpness.enhance(1.6)  # Increased from 1.5
+        image = sharpness.enhance(1.8)  # Increased from 1.6
     
-    # Reduced spotlight
-    image = apply_center_spotlight_fast(image, 0.03)
+    # Slightly increased spotlight
+    image = apply_center_spotlight_fast(image, 0.04)
     
     # Wedding ring enhancement
     image = apply_wedding_ring_focus_fast(image)
     
-    # Fast quality check (only for ac_pattern)
+    # Fast quality check (only for ac_pattern) - 2차 처리
     if pattern_type == "ac_pattern":
         metrics = calculate_quality_metrics_fast(image)
         if metrics["brightness"] < 240:
-            # Apply 15% white overlay as correction (2차: 10% → 15%, 5% 증가)
-            white_overlay = 0.15
+            # Apply 20% white overlay as correction (2차: 15% → 20%, 5% 증가)
+            white_overlay = 0.20
             img_array = np.array(image, dtype=np.float32)
             img_array = img_array * (1 - white_overlay) + 255 * white_overlay
             img_array = np.clip(img_array, 0, 255)
@@ -497,13 +501,13 @@ def image_to_base64(image):
         background.paste(image, mask=image.split()[3])
         image = background
     
-    image.save(buffered, format='PNG', optimize=False, quality=92)
+    image.save(buffered, format='PNG', optimize=False, quality=95)
     buffered.seek(0)
     
     return base64.b64encode(buffered.getvalue()).decode().rstrip('=')
 
 def handler(event):
-    """Optimized thumbnail handler - CLEAR ORDER: Remove BG → Enhance → Composite"""
+    """Optimized thumbnail handler - ENHANCED VERSION"""
     try:
         logger.info(f"=== Thumbnail {VERSION} Started ===")
         
@@ -570,12 +574,12 @@ def handler(event):
         # Fast white balance
         image = auto_white_balance_fast(image)
         
-        # Basic enhancement (stronger for thumbnails)
+        # Stronger basic enhancement
         brightness = ImageEnhance.Brightness(image)
-        image = brightness.enhance(1.12)  # Increased
+        image = brightness.enhance(1.15)  # Increased from 1.12
         
         contrast = ImageEnhance.Contrast(image)
-        image = contrast.enhance(1.05)  # Increased
+        image = contrast.enhance(1.08)  # Increased from 1.05
         
         color = ImageEnhance.Color(image)
         image = color.enhance(1.01)
@@ -596,15 +600,15 @@ def handler(event):
             except:
                 logger.warning("SwinIR failed, continuing without")
         
-        # Cubic enhancement
+        # Enhanced cubic details
         thumbnail = enhance_cubic_details_thumbnail_simple(thumbnail)
         
         detected_type = {
-            "ac_pattern": "무도금화이트(0.12)",
+            "ac_pattern": "무도금화이트(0.17/0.20)",
             "other": "기타색상(no_overlay)"
         }.get(pattern_type, "기타색상")
         
-        # Apply pattern enhancement
+        # Apply pattern enhancement (includes 2차 처리)
         thumbnail = apply_pattern_enhancement_fast(thumbnail, pattern_type)
         
         # STEP 3: BACKGROUND COMPOSITE (if transparent)
@@ -621,17 +625,18 @@ def handler(event):
                 
                 # Apply same enhancements
                 rgb_image = auto_white_balance_fast(rgb_image)
+                rgb_image = enhance_cubic_details_thumbnail_simple(rgb_image)
                 brightness = ImageEnhance.Brightness(rgb_image)
-                rgb_image = brightness.enhance(1.12)
+                rgb_image = brightness.enhance(1.15)
                 contrast = ImageEnhance.Contrast(rgb_image)
-                rgb_image = contrast.enhance(1.05)
+                rgb_image = contrast.enhance(1.08)
                 sharpness = ImageEnhance.Sharpness(rgb_image)
-                rgb_image = sharpness.enhance(1.7)
+                rgb_image = sharpness.enhance(1.9)
                 
                 # Pattern enhancement based on type
                 if pattern_type == "ac_pattern":
-                    # White overlay for ac_
-                    white_overlay = 0.12
+                    # 17% white overlay
+                    white_overlay = 0.17
                     img_array = np.array(rgb_image, dtype=np.float32)
                     img_array = img_array * (1 - white_overlay) + 255 * white_overlay
                     rgb_image = Image.fromarray(np.clip(img_array, 0, 255).astype(np.uint8))
@@ -645,14 +650,14 @@ def handler(event):
             
             # Final sharpness after compositing
             sharpness = ImageEnhance.Sharpness(thumbnail)
-            thumbnail = sharpness.enhance(1.3)
+            thumbnail = sharpness.enhance(1.4)
         
         # Final adjustments
         sharpness = ImageEnhance.Sharpness(thumbnail)
-        thumbnail = sharpness.enhance(1.8)  # Strong for thumbnails
+        thumbnail = sharpness.enhance(2.0)  # Very strong for thumbnails
         
         brightness = ImageEnhance.Brightness(thumbnail)
-        thumbnail = brightness.enhance(1.05)  # Final brightness boost
+        thumbnail = brightness.enhance(1.06)  # Final brightness boost
         
         # Convert to base64
         thumbnail_base64 = image_to_base64(thumbnail)
@@ -680,16 +685,17 @@ def handler(event):
                 "background_composite": has_transparency,
                 "background_removal": needs_background_removal,
                 "background_color": background_color,
+                "rembg_settings": "Aggressive (270/10/10)",
                 "expected_input": "2000x2600",
                 "output_size": "1000x1300",
-                "cubic_enhancement": "simple (no LAB)",
-                "white_overlay": "12% for ac_, 0% others",
-                "brightness_increased": "12%",
-                "contrast_increased": "5%",
-                "sharpness_increased": "1.8",
-                "spotlight_reduced": "2-3%",
+                "cubic_enhancement": "Strong (140% unsharp)",
+                "white_overlay": "17% for ac_ (1차), 20% (2차)",
+                "brightness_increased": "15%",
+                "contrast_increased": "8%",
+                "sharpness_increased": "2.0 + extra passes",
+                "spotlight_increased": "3-4%",
                 "processing_order": "1.Background Removal → 2.Enhancement → 3.Background Composite",
-                "quality": "92"
+                "quality": "95"
             }
         }
         
