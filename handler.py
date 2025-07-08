@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 # VERSION: V5.1-Natural-Gray
 ################################
 
-VERSION = "V5.1-Natural-Gray"
+VERSION = "V5.2-No-Shadow"
 
 # ===== REPLICATE INITIALIZATION =====
 REPLICATE_API_TOKEN = os.environ.get('REPLICATE_API_TOKEN')
@@ -214,98 +214,50 @@ def remove_background_with_replicate(image: Image.Image) -> Image.Image:
         return image
 
 def add_natural_edge_feathering(image: Image.Image) -> Image.Image:
-    """Add STRONGER natural feathering to edges - V5.1 IMPROVED"""
+    """Add MINIMAL natural feathering to edges - V5.2 MINIMAL"""
     if image.mode != 'RGBA':
         return image
     
     # Get alpha channel
     r, g, b, a = image.split()
     
-    # Apply stronger Gaussian blur to alpha channel
+    # Apply minimal Gaussian blur to alpha channel for natural edges
     a_array = np.array(a, dtype=np.float32)
     
-    # Create edge mask with lower thresholds
-    edges = cv2.Canny(a_array.astype(np.uint8), 20, 80)  # Lower thresholds
+    # Just apply a simple, subtle blur to the alpha channel
+    # No edge detection, no complex processing - just natural softening
+    alpha_blurred = cv2.GaussianBlur(a_array, (3, 3), 1.0)  # Very subtle blur
     
-    # Dilate edges more for thumbnails
-    kernel = np.ones((5, 5), np.uint8)  # Moderate kernel for thumbnails
-    edges_dilated = cv2.dilate(edges, kernel, iterations=2)
-    
-    # Apply stronger Gaussian blur to edges
-    edge_blur = cv2.GaussianBlur(edges_dilated.astype(np.float32), (11, 11), 3.0)  # Stronger for thumbnail
-    
-    # Blend original alpha with blurred edges more
-    alpha_feathered = np.where(edge_blur > 0, 
-                               a_array * 0.75 + edge_blur * 0.25,  # More feathering
-                               a_array)
-    
-    # Apply overall blur to alpha for smoothness
-    alpha_final = cv2.GaussianBlur(alpha_feathered, (5, 5), 1.5)  # Stronger blur
-    
-    # Create new image with feathered alpha
-    a_new = Image.fromarray(alpha_final.astype(np.uint8))
+    # Create new image with slightly blurred alpha
+    a_new = Image.fromarray(alpha_blurred.astype(np.uint8))
     return Image.merge('RGBA', (r, g, b, a_new))
 
 def composite_with_light_gray_background(image, background_color="#E8E8E8"):
-    """Natural composite with 15px shadow - V5.1 IMPROVED"""
+    """Natural composite WITHOUT shadow - V5.2 NO SHADOW"""
     if image.mode == 'RGBA':
-        # Apply strong edge feathering first
+        # Apply minimal edge feathering first
         image = add_natural_edge_feathering(image)
         
         # Create background
         background = create_background(image.size, background_color, style="gradient")
         
-        # Get alpha channel
-        alpha = image.split()[3]
-        
-        # Create STRONGER 15px shadow (increased from 10px)
-        shadow_array = np.array(alpha, dtype=np.float32) / 255.0
-        
-        # Multiple shadow layers for better effect
-        shadow1 = cv2.GaussianBlur(shadow_array, (13, 13), 3.5)  # 15px blur
-        shadow2 = cv2.GaussianBlur(shadow_array, (21, 21), 5.0)  # Softer outer
-        
-        # Combine shadows with increased opacity
-        shadow = (shadow1 * 0.04 + shadow2 * 0.03) * 255  # 7% total (increased)
-        shadow = shadow.astype(np.uint8)
-        
-        # Create shadow image with slightly larger offset
-        shadow_img = Image.fromarray(shadow, mode='L')
-        shadow_offset = Image.new('L', image.size, 0)
-        
-        # Slightly larger offset (2 pixels)
-        shadow_offset.paste(shadow_img, (2, 2))
-        
-        # Apply shadow to background - use darker gray shadow
-        # Darker gray shadow color for better visibility
-        shadow_color = (210, 210, 210)  # Darker than before
-        
-        shadow_layer = Image.new('RGB', image.size, shadow_color)
-        background.paste(shadow_layer, mask=shadow_offset)
-        
-        # Final composite with proper alpha blending
-        # Use premultiplied alpha for better edge quality
+        # NO SHADOW - Direct composite only
+        # Use simple alpha blending without any shadow effects
         r, g, b, a = image.split()
         
-        # Premultiply RGB by alpha
-        a_array = np.array(a, dtype=np.float32) / 255.0
-        r_array = np.array(r, dtype=np.float32) * a_array
-        g_array = np.array(g, dtype=np.float32) * a_array
-        b_array = np.array(b, dtype=np.float32) * a_array
-        
-        # Convert background to array
+        # Convert to arrays for blending
+        fg_array = np.array(image.convert('RGB'), dtype=np.float32)
         bg_array = np.array(background, dtype=np.float32)
+        alpha_array = np.array(a, dtype=np.float32) / 255.0
         
-        # Composite using proper alpha blending
-        result_r = r_array + bg_array[:,:,0] * (1 - a_array)
-        result_g = g_array + bg_array[:,:,1] * (1 - a_array)
-        result_b = b_array + bg_array[:,:,2] * (1 - a_array)
+        # Simple alpha blending - no premultiplication, no complex processing
+        # This creates the most natural transition
+        for i in range(3):
+            bg_array[:,:,i] = fg_array[:,:,i] * alpha_array + bg_array[:,:,i] * (1 - alpha_array)
         
-        # Stack and convert back
-        result = np.stack([result_r, result_g, result_b], axis=2)
-        result = np.clip(result, 0, 255).astype(np.uint8)
-        
-        return Image.fromarray(result)
+        # Convert back
+        result = Image.fromarray(bg_array.astype(np.uint8))
+        return result
     else:
         return image
 
@@ -575,7 +527,7 @@ def image_to_base64(image):
     return base64.b64encode(buffered.getvalue()).decode().rstrip('=')
 
 def handler(event):
-    """Optimized thumbnail handler - V5.1 NATURAL GRAY VERSION"""
+    """Optimized thumbnail handler - V5.2 NO SHADOW VERSION"""
     try:
         logger.info(f"=== Thumbnail {VERSION} Started ===")
         
@@ -678,7 +630,7 @@ def handler(event):
         
         # STEP 3: BACKGROUND COMPOSITE (if transparent)
         if has_transparency and 'original_transparent' in locals():
-            logger.info(f"🖼️ STEP 3: Natural gray background compositing: {background_color}")
+            logger.info(f"🖼️ STEP 3: Natural background compositing (NO SHADOW): {background_color}")
             
             # Apply enhancements to transparent version
             enhanced_transparent = original_transparent.resize((1000, 1300), Image.Resampling.LANCZOS)
@@ -751,11 +703,9 @@ def handler(event):
                 "background_removal": needs_background_removal,
                 "background_color": background_color,
                 "background_style": "Gray gradient (#E8E8E8)",
-                "shadow_color": "Darker gray (210, 210, 210)",
-                "shadow_opacity": "7% (15px blur) - INCREASED",
-                "shadow_size": "15 pixels - INCREASED",
-                "edge_processing": "STRONGER natural feathering",
-                "composite_method": "Premultiplied alpha blending",
+                "shadow": "REMOVED - No shadow for natural look",
+                "edge_processing": "Minimal natural feathering (3x3 blur)",
+                "composite_method": "Simple alpha blending",
                 "rembg_settings": "Aggressive (270/10/10)",
                 "expected_input": "2000x2600",
                 "output_size": "1000x1300",
@@ -765,7 +715,7 @@ def handler(event):
                 "contrast_increased": "6% - REDUCED", 
                 "sharpness_increased": "1.7-1.8 + extra passes - REDUCED",
                 "spotlight_increased": "2.5-3.5% - REDUCED",
-                "processing_order": "1.Background Removal → 2.Enhancement → 3.Natural Gray Composite",
+                "processing_order": "1.Background Removal → 2.Enhancement → 3.Natural Composite (No Shadow)",
                 "quality": "95"
             }
         }
