@@ -14,7 +14,12 @@ import cv2
 logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
 
-VERSION = "V3-Light-Gray-Shadow"
+################################
+# THUMBNAIL HANDLER - 1000x1300
+# VERSION: V4-Minimal-Shadow
+################################
+
+VERSION = "V4-Minimal-Shadow"
 
 # ===== REPLICATE INITIALIZATION =====
 REPLICATE_API_TOKEN = os.environ.get('REPLICATE_API_TOKEN')
@@ -242,7 +247,7 @@ def add_natural_edge_feathering(image: Image.Image) -> Image.Image:
     return Image.merge('RGBA', (r, g, b, a_new))
 
 def composite_with_light_gray_background(image, background_color="#F0F0F0"):
-    """Natural composite with light gray background - FIXED for ring holes"""
+    """Natural composite with minimal 5px shadow"""
     if image.mode == 'RGBA':
         # Apply strong edge feathering first
         image = add_natural_edge_feathering(image)
@@ -253,34 +258,23 @@ def composite_with_light_gray_background(image, background_color="#F0F0F0"):
         # Get alpha channel
         alpha = image.split()[3]
         
-        # Create very soft shadows with LIGHT GRAY
+        # Create VERY MINIMAL shadow (5px only)
         shadow_array = np.array(alpha, dtype=np.float32) / 255.0
         
-        # Layer 1: Very soft contact shadow (smaller for thumbnails)
-        shadow1 = cv2.GaussianBlur(shadow_array, (7, 7), 2)
-        shadow1 = (shadow1 * 0.03 * 255).astype(np.uint8)  # Very subtle 3%
-        
-        # Layer 2: Diffuse shadow
-        shadow2 = cv2.GaussianBlur(shadow_array, (15, 15), 4)
-        shadow2 = (shadow2 * 0.02 * 255).astype(np.uint8)  # 2% opacity
-        
-        # Layer 3: Ambient occlusion
-        shadow3 = cv2.GaussianBlur(shadow_array, (25, 25), 7)
-        shadow3 = (shadow3 * 0.01 * 255).astype(np.uint8)  # Very subtle 1%
-        
-        # Composite shadows
-        final_shadow = np.maximum(shadow1, np.maximum(shadow2, shadow3))
+        # Single minimal shadow layer (5px blur)
+        shadow = cv2.GaussianBlur(shadow_array, (5, 5), 1.0)
+        shadow = (shadow * 0.02 * 255).astype(np.uint8)  # Very subtle 2%
         
         # Create shadow image with minimal offset
-        shadow_img = Image.fromarray(final_shadow, mode='L')
+        shadow_img = Image.fromarray(shadow, mode='L')
         shadow_offset = Image.new('L', image.size, 0)
         
-        # Almost no offset (0.5 pixel for thumbnails)
+        # Minimal offset (0.5 pixel)
         shadow_offset.paste(shadow_img, (1, 0))
         
-        # Apply shadow to background - use light gray shadow
-        # Light gray shadow color (instead of dark)
-        shadow_color = (230, 230, 230)  # Very light gray
+        # Apply shadow to background - use very light gray shadow
+        # Very light gray shadow color
+        shadow_color = (235, 235, 235)  # Almost same as background
         
         shadow_layer = Image.new('RGB', image.size, shadow_color)
         background.paste(shadow_layer, mask=shadow_offset)
@@ -753,8 +747,9 @@ def handler(event):
                 "background_removal": needs_background_removal,
                 "background_color": background_color,
                 "background_style": "Light gray gradient (#F0F0F0)",
-                "shadow_color": "Light gray (230, 230, 230)",
-                "shadow_opacity": "Ultra-light (3%/2%/1%)",
+                "shadow_color": "Light gray (235, 235, 235)",
+                "shadow_opacity": "Minimal 2% (5px blur only)",
+                "shadow_size": "5 pixels",
                 "edge_processing": "Strong natural feathering",
                 "composite_method": "Premultiplied alpha blending",
                 "rembg_settings": "Aggressive (270/10/10)",
