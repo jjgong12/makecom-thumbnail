@@ -4,3 +4,4 @@ numpy==1.24.3
 opencv-python-headless==4.8.1.78
 replicate==0.32.1
 requests==2.31.0
+rembg[gpu]==2.0.67 
