@@ -142,8 +142,8 @@ def detect_pattern_type(filename: str) -> str:
     else:
         return "other"
 
-def create_background(size, color="#E8E8E8", style="gradient"):
-    """Create natural light gray background for jewelry - V10.4 BALANCED"""
+def create_background(size, color="#D5D5D5", style="gradient"):
+    """Create natural gray background for jewelry - V10.4 BALANCED"""
     width, height = size
     
     if style == "gradient":
@@ -218,11 +218,11 @@ def remove_background_with_replicate(image: Image.Image) -> Image.Image:
         return image
 
 def ensure_ring_holes_transparent_simple(image: Image.Image) -> Image.Image:
-    """SIMPLE but effective ring hole detection - V10.4"""
+    """IMPROVED ring hole detection - V10.4"""
     if image.mode != 'RGBA':
         return image
     
-    logger.info("🔍 Simple hole detection started")
+    logger.info("🔍 Improved hole detection started")
     
     # Get alpha channel
     r, g, b, a = image.split()
@@ -230,17 +230,26 @@ def ensure_ring_holes_transparent_simple(image: Image.Image) -> Image.Image:
     
     h, w = alpha_array.shape
     
-    # STAGE 1: Find transparent regions (simple threshold)
-    potential_holes = (alpha_array < 130)  # Single threshold
+    # STAGE 1: Multi-level threshold for better detection
+    # Try multiple thresholds to catch various transparency levels
+    hole_candidates = np.zeros_like(alpha_array, dtype=bool)
+    for threshold in [80, 100, 120, 140]:
+        potential_holes = (alpha_array < threshold)
+        hole_candidates = hole_candidates | potential_holes
     
-    # STAGE 2: Simple morphological operations
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-    potential_holes = cv2.morphologyEx(potential_holes.astype(np.uint8), cv2.MORPH_CLOSE, kernel)
+    # STAGE 2: Morphological operations to connect partial holes
+    kernel_small = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    kernel_medium = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    
+    # Close small gaps
+    hole_candidates = cv2.morphologyEx(hole_candidates.astype(np.uint8), cv2.MORPH_CLOSE, kernel_medium)
+    # Remove noise
+    hole_candidates = cv2.morphologyEx(hole_candidates, cv2.MORPH_OPEN, kernel_small)
     
     # STAGE 3: Find connected components
-    num_labels, labels = cv2.connectedComponents(potential_holes)
+    num_labels, labels = cv2.connectedComponents(hole_candidates)
     
-    # STAGE 4: Analyze each component (simple criteria)
+    # STAGE 4: Analyze each component with relaxed criteria
     for label in range(1, num_labels):
         hole_mask = (labels == label)
         hole_size = np.sum(hole_mask)
@@ -253,16 +262,20 @@ def ensure_ring_holes_transparent_simple(image: Image.Image) -> Image.Image:
             center_y = (min_y + max_y) // 2
             center_x = (min_x + max_x) // 2
             
-            # Simple criteria - if it's in the center area and reasonable size
-            if (0.2 * h < center_y < 0.8 * h) and (0.2 * w < center_x < 0.8 * w):
+            # More relaxed criteria - wider range for ring holes
+            if (0.1 * h < center_y < 0.9 * h) and (0.1 * w < center_x < 0.9 * w):
                 width = max_x - min_x
                 height = max_y - min_y
-                if 0.5 < width/height < 2.0 and hole_size < (h * w * 0.1):
-                    # Make it transparent
-                    alpha_array[hole_mask] = 0
+                aspect_ratio = width / height if height > 0 else 1
+                
+                # Accept wider range of shapes and sizes
+                if 0.3 < aspect_ratio < 3.0 and hole_size < (h * w * 0.15):
+                    # Slightly expand the hole for cleaner edges
+                    dilated_mask = cv2.dilate(hole_mask.astype(np.uint8), kernel_small, iterations=1)
+                    alpha_array[dilated_mask > 0] = 0
                     logger.info(f"Found hole at ({center_x}, {center_y}), size: {hole_size}")
     
-    logger.info("✅ Simple hole detection complete")
+    logger.info("✅ Improved hole detection complete")
     
     # Create new image with corrected alpha
     a_new = Image.fromarray(alpha_array)
@@ -574,7 +587,7 @@ def handler(event):
             image_index = event.get('input', {}).get('image_index', image_index)
         
         # Light gray background - BALANCED V10.4
-        background_color = '#E8E8E8'  # Light gray for natural look
+        background_color = '#D5D5D5'  # Proper gray for natural look
         
         # Fast extraction
         filename = find_filename_fast(event)
@@ -742,13 +755,13 @@ def handler(event):
                 "background_composite": has_transparency,
                 "background_removal": needs_background_removal,
                 "background_color": background_color,
-                "background_style": "Light gray (#E8E8E8)",
+                "background_style": "Natural gray (#D5D5D5)",
                 "gradient_edge_darkening": "5%",
                 "edge_processing": "Natural soft edge (80/20 blend)",
                 "composite_method": "Simple alpha blending",
                 "rembg_settings": "Conservative (240/50/8)",
-                "ring_hole_detection": "Simple effective detection",
-                "hole_detection_details": "Single threshold 130, simple morphology",
+                "ring_hole_detection": "Improved multi-threshold detection",
+                "hole_detection_details": "Multi-threshold (80,100,120,140), improved morphology",
                 "expected_input": "2000x2600",
                 "output_size": "1000x1300",
                 "cubic_enhancement": "Gentle (120% unsharp)",
