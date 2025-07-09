@@ -16,10 +16,10 @@ logger = logging.getLogger(__name__)
 
 ################################
 # THUMBNAIL HANDLER - 1000x1300
-# VERSION: V10.4-Natural-Balance
+# VERSION: V10.5-BiRefNet-Optimized
 ################################
 
-VERSION = "V10.4-Natural-Balance"
+VERSION = "V10.5-BiRefNet-Optimized"
 
 # ===== REPLICATE INITIALIZATION =====
 REPLICATE_API_TOKEN = os.environ.get('REPLICATE_API_TOKEN')
@@ -168,53 +168,87 @@ def create_background(size, color="#C8C8C8", style="gradient"):
         return Image.new('RGB', size, color)
 
 def remove_background_with_replicate(image: Image.Image) -> Image.Image:
-    """Remove background using Replicate API - V10.4 CONSERVATIVE"""
-    if not USE_REPLICATE or not REPLICATE_CLIENT:
-        logger.warning("Replicate not available for background removal")
-        return image
-    
+    """Remove background using BiRefNet-general-lite - V10.4 OPTIMIZED"""
     try:
-        logger.info("🔷 Removing background with Replicate (V10.4 conservative)")
+        # Replicate 대신 로컬 rembg 사용 (더 빠름)
+        from rembg import remove, new_session
         
-        # Convert to base64
+        logger.info("🔷 Removing background with BiRefNet-general-lite (V10.4 optimized)")
+        
+        # 세션 캐싱으로 속도 향상
+        if not hasattr(remove_background_with_replicate, 'session'):
+            logger.info("Initializing BiRefNet-general-lite session...")
+            remove_background_with_replicate.session = new_session('birefnet-general-lite')
+        
+        # PIL Image를 bytes로 변환
         buffered = BytesIO()
         image.save(buffered, format="PNG")
         buffered.seek(0)
-        img_base64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
-        img_data_url = f"data:image/png;base64,{img_base64}"
         
-        # Use rembg model with CONSERVATIVE settings
-        output = REPLICATE_CLIENT.run(
-            "cjwbw/rembg:fb8af171cfa1616ddcf1242c093f9c46bcada5ad4cf6f2fbe8b81b330ec5c003",
-            input={
-                "image": img_data_url,
-                "model": "u2net",  
-                "alpha_matting": True,
-                "alpha_matting_foreground_threshold": 240,  # Conservative
-                "alpha_matting_background_threshold": 50,    # Conservative
-                "alpha_matting_erode_size": 8               # Smaller
-            }
+        # 배경 제거 with alpha matting
+        output = remove(
+            buffered.getvalue(), 
+            session=remove_background_with_replicate.session,
+            alpha_matting=True,
+            alpha_matting_foreground_threshold=240,
+            alpha_matting_background_threshold=50,
+            alpha_matting_erode_size=8
         )
         
-        if output:
-            if isinstance(output, str):
-                response = requests.get(output)
-                result_image = Image.open(BytesIO(response.content))
-            else:
-                result_image = Image.open(BytesIO(base64.b64decode(output)))
-            
-            # Enhanced hole processing
-            if result_image.mode == 'RGBA':
-                result_image = ensure_ring_holes_transparent_simple(result_image)
-            
-            logger.info("✅ Background removal successful")
-            return result_image
-        else:
-            logger.warning("No output from background removal")
-            return image
-            
+        # 결과를 PIL Image로 변환
+        result_image = Image.open(BytesIO(output))
+        
+        # Enhanced hole processing
+        if result_image.mode == 'RGBA':
+            result_image = ensure_ring_holes_transparent_simple(result_image)
+        
+        logger.info("✅ Background removal successful with BiRefNet")
+        return result_image
+        
     except Exception as e:
-        logger.error(f"Background removal error: {str(e)}")
+        logger.error(f"BiRefNet failed, falling back to Replicate: {e}")
+        
+        # 폴백: 기존 Replicate 방식 사용
+        if USE_REPLICATE and REPLICATE_CLIENT:
+            try:
+                logger.info("🔷 Fallback to Replicate rembg")
+                
+                # Convert to base64
+                buffered = BytesIO()
+                image.save(buffered, format="PNG")
+                buffered.seek(0)
+                img_base64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
+                img_data_url = f"data:image/png;base64,{img_base64}"
+                
+                # Use rembg model with CONSERVATIVE settings
+                output = REPLICATE_CLIENT.run(
+                    "cjwbw/rembg:fb8af171cfa1616ddcf1242c093f9c46bcada5ad4cf6f2fbe8b81b330ec5c003",
+                    input={
+                        "image": img_data_url,
+                        "model": "u2net",
+                        "alpha_matting": True,
+                        "alpha_matting_foreground_threshold": 240,
+                        "alpha_matting_background_threshold": 50,
+                        "alpha_matting_erode_size": 8
+                    }
+                )
+                
+                if output:
+                    if isinstance(output, str):
+                        response = requests.get(output)
+                        result_image = Image.open(BytesIO(response.content))
+                    else:
+                        result_image = Image.open(BytesIO(base64.b64decode(output)))
+                    
+                    if result_image.mode == 'RGBA':
+                        result_image = ensure_ring_holes_transparent_simple(result_image)
+                    
+                    return result_image
+            except Exception as e2:
+                logger.error(f"Replicate also failed: {e2}")
+        
+        # 최종 폴백: 원본 반환
+        logger.warning("All background removal methods failed, returning original")
         return image
 
 def ensure_ring_holes_transparent_simple(image: Image.Image) -> Image.Image:
@@ -762,7 +796,10 @@ def handler(event):
                 "gradient_edge_darkening": "5%",
                 "edge_processing": "Natural soft edge (60/40 blend + double feather)",
                 "composite_method": "Simple alpha blending",
-                "rembg_settings": "Conservative (240/50/8)",
+                "rembg_settings": "BiRefNet-general-lite (local) with fallback",
+                "background_removal_model": "birefnet-general-lite",
+                "model_size": "~100MB",
+                "inference_speed": "Fast (local processing)",
                 "ring_hole_detection": "Improved multi-threshold detection",
                 "hole_detection_details": "Multi-threshold (80,100,120,140), improved morphology",
                 "expected_input": "2000x2600",
