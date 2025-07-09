@@ -16,10 +16,10 @@ logger = logging.getLogger(__name__)
 
 ################################
 # THUMBNAIL HANDLER - 1000x1300
-# VERSION: V5.3-Darker-Gray
+# VERSION: V5.4-Deeper-Gray
 ################################
 
-VERSION = "V5.3-Darker-Gray"
+VERSION = "V5.4-Deeper-Gray"
 
 # ===== REPLICATE INITIALIZATION =====
 REPLICATE_API_TOKEN = os.environ.get('REPLICATE_API_TOKEN')
@@ -142,8 +142,8 @@ def detect_pattern_type(filename: str) -> str:
     else:
         return "other"
 
-def create_background(size, color="#D8D8D8", style="gradient"):
-    """Create natural light gray background for jewelry"""
+def create_background(size, color="#CCCCCC", style="gradient"):
+    """Create natural gray background for jewelry - V5.4 DEEPER GRAY"""
     width, height = size
     
     if style == "gradient":
@@ -157,8 +157,8 @@ def create_background(size, color="#D8D8D8", style="gradient"):
         distance = np.sqrt((x - center_x)**2 + (y - center_y)**2) / max(width, height)
         
         # Subtle gradient for natural look with slightly darker edges
-        gradient = 1 - (distance * 0.08)  # 8% darkening at edges (increased from 5%)
-        gradient = np.clip(gradient, 0.92, 1.0)
+        gradient = 1 - (distance * 0.10)  # 10% darkening at edges (increased from 8%)
+        gradient = np.clip(gradient, 0.90, 1.0)
         
         # Apply gradient
         bg_array *= gradient[:, :, np.newaxis]
@@ -168,13 +168,13 @@ def create_background(size, color="#D8D8D8", style="gradient"):
         return Image.new('RGB', size, color)
 
 def remove_background_with_replicate(image: Image.Image) -> Image.Image:
-    """Remove background using Replicate API - AGGRESSIVE FOR RING HOLES"""
+    """Remove background using Replicate API - V5.4 MORE AGGRESSIVE"""
     if not USE_REPLICATE or not REPLICATE_CLIENT:
         logger.warning("Replicate not available for background removal")
         return image
     
     try:
-        logger.info("🔷 Removing background with Replicate (aggressive mode)")
+        logger.info("🔷 Removing background with Replicate (V5.4 extra aggressive)")
         
         # Convert to base64
         buffered = BytesIO()
@@ -183,16 +183,16 @@ def remove_background_with_replicate(image: Image.Image) -> Image.Image:
         img_base64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
         img_data_url = f"data:image/png;base64,{img_base64}"
         
-        # Use rembg model with AGGRESSIVE settings
+        # Use rembg model with EVEN MORE AGGRESSIVE settings
         output = REPLICATE_CLIENT.run(
             "cjwbw/rembg:fb8af171cfa1616ddcf1242c093f9c46bcada5ad4cf6f2fbe8b81b330ec5c003",
             input={
                 "image": img_data_url,
-                "model": "u2net",  # Back to u2net for better hole detection
+                "model": "u2net",  # u2net for better hole detection
                 "alpha_matting": True,
-                "alpha_matting_foreground_threshold": 270,  # Higher for aggressive
-                "alpha_matting_background_threshold": 10,    # Very low for holes
-                "alpha_matting_erode_size": 10              # Larger for cleaner edges
+                "alpha_matting_foreground_threshold": 280,  # Even higher for more aggressive
+                "alpha_matting_background_threshold": 5,     # Even lower for holes
+                "alpha_matting_erode_size": 12              # Larger for cleaner edges
             }
         )
         
@@ -202,6 +202,10 @@ def remove_background_with_replicate(image: Image.Image) -> Image.Image:
                 result_image = Image.open(BytesIO(response.content))
             else:
                 result_image = Image.open(BytesIO(base64.b64decode(output)))
+            
+            # Additional check for ring holes
+            if result_image.mode == 'RGBA':
+                result_image = ensure_ring_holes_transparent(result_image)
             
             logger.info("✅ Background removal successful")
             return result_image
@@ -213,8 +217,45 @@ def remove_background_with_replicate(image: Image.Image) -> Image.Image:
         logger.error(f"Background removal error: {str(e)}")
         return image
 
+def ensure_ring_holes_transparent(image: Image.Image) -> Image.Image:
+    """Ensure ring holes are properly transparent - V5.4 NEW"""
+    if image.mode != 'RGBA':
+        return image
+    
+    # Get alpha channel
+    r, g, b, a = image.split()
+    alpha_array = np.array(a)
+    
+    # Find potential ring hole areas (closed regions with low alpha)
+    # Use flood fill to detect enclosed areas
+    h, w = alpha_array.shape
+    
+    # Create a padded version for flood fill
+    padded = np.pad(alpha_array, 1, mode='constant', constant_values=0)
+    
+    # Flood fill from outside
+    filled = padded.copy()
+    cv2.floodFill(filled, None, (0, 0), 255)
+    
+    # Remove padding
+    filled = filled[1:-1, 1:-1]
+    
+    # Holes are areas that weren't filled
+    holes = (filled != 255) & (alpha_array < 200)
+    
+    # Set hole areas to fully transparent
+    alpha_array[holes] = 0
+    
+    # Apply slight erosion to clean edges around holes
+    kernel = np.ones((3, 3), np.uint8)
+    alpha_array = cv2.morphologyEx(alpha_array, cv2.MORPH_OPEN, kernel)
+    
+    # Create new image with corrected alpha
+    a_new = Image.fromarray(alpha_array)
+    return Image.merge('RGBA', (r, g, b, a_new))
+
 def add_natural_edge_feathering(image: Image.Image) -> Image.Image:
-    """Add MINIMAL natural feathering to edges - V5.3 MINIMAL"""
+    """Add MINIMAL natural feathering to edges - V5.4 MINIMAL"""
     if image.mode != 'RGBA':
         return image
     
@@ -232,8 +273,8 @@ def add_natural_edge_feathering(image: Image.Image) -> Image.Image:
     a_new = Image.fromarray(alpha_blurred.astype(np.uint8))
     return Image.merge('RGBA', (r, g, b, a_new))
 
-def composite_with_light_gray_background(image, background_color="#D8D8D8"):
-    """Natural composite WITHOUT shadow - V5.3 DARKER GRAY"""
+def composite_with_light_gray_background(image, background_color="#CCCCCC"):
+    """Natural composite WITHOUT shadow - V5.4 DEEPER GRAY"""
     if image.mode == 'RGBA':
         # Apply minimal edge feathering first
         image = add_natural_edge_feathering(image)
@@ -311,7 +352,7 @@ def apply_swinir_thumbnail_after_resize(image: Image.Image) -> Image.Image:
     return image
 
 def enhance_cubic_details_thumbnail_simple(image: Image.Image) -> Image.Image:
-    """Enhanced cubic details for thumbnails - V5.3"""
+    """Enhanced cubic details for thumbnails - V5.4"""
     # Moderate contrast
     contrast = ImageEnhance.Contrast(image)
     image = contrast.enhance(1.10)  # Moderate contrast
@@ -355,7 +396,7 @@ def auto_white_balance_fast(image: Image.Image) -> Image.Image:
     return Image.fromarray(np.clip(img_array, 0, 255).astype(np.uint8))
 
 def apply_center_spotlight_fast(image: Image.Image, intensity: float = 0.035) -> Image.Image:
-    """Fast center spotlight - V5.3"""
+    """Fast center spotlight - V5.4"""
     width, height = image.size
     
     y, x = np.ogrid[:height, :width]
@@ -371,7 +412,7 @@ def apply_center_spotlight_fast(image: Image.Image, intensity: float = 0.035) ->
     return Image.fromarray(np.clip(img_array, 0, 255).astype(np.uint8))
 
 def apply_wedding_ring_focus_fast(image: Image.Image) -> Image.Image:
-    """Enhanced wedding ring focus for thumbnails - V5.3"""
+    """Enhanced wedding ring focus for thumbnails - V5.4"""
     # Moderate spotlight
     image = apply_center_spotlight_fast(image, 0.025)  # Subtle spotlight
     
@@ -405,11 +446,11 @@ def calculate_quality_metrics_fast(image: Image.Image) -> dict:
     }
 
 def apply_pattern_enhancement_fast(image, pattern_type):
-    """Fast pattern enhancement - 15% white overlay for ac_ (1차) - V5.3"""
+    """Fast pattern enhancement - 15% white overlay for ac_ (1차) - V5.4"""
     
     # Apply white overlay ONLY to ac_pattern (15% - reduced from 17%)
     if pattern_type == "ac_pattern":
-        # Unplated white - 15% white overlay - V5.3
+        # Unplated white - 15% white overlay - V5.4
         white_overlay = 0.15
         img_array = np.array(image, dtype=np.float32)
         img_array = img_array * (1 - white_overlay) + 255 * white_overlay
@@ -445,7 +486,7 @@ def apply_pattern_enhancement_fast(image, pattern_type):
     if pattern_type == "ac_pattern":
         metrics = calculate_quality_metrics_fast(image)
         if metrics["brightness"] < 240:
-            # Apply 18% white overlay as correction - V5.3
+            # Apply 18% white overlay as correction - V5.4
             white_overlay = 0.18  # Secondary correction
             img_array = np.array(image, dtype=np.float32)
             img_array = img_array * (1 - white_overlay) + 255 * white_overlay
@@ -527,7 +568,7 @@ def image_to_base64(image):
     return base64.b64encode(buffered.getvalue()).decode().rstrip('=')
 
 def handler(event):
-    """Optimized thumbnail handler - V5.3 DARKER GRAY VERSION"""
+    """Optimized thumbnail handler - V5.4 DEEPER GRAY VERSION"""
     try:
         logger.info(f"=== Thumbnail {VERSION} Started ===")
         
@@ -536,8 +577,8 @@ def handler(event):
         if isinstance(event.get('input'), dict):
             image_index = event.get('input', {}).get('image_index', image_index)
         
-        # Fixed gray background - DARKER
-        background_color = '#D8D8D8'  # Darker gray background
+        # Fixed gray background - DEEPER V5.4
+        background_color = '#CCCCCC'  # Deeper gray background
         
         # Fast extraction
         filename = find_filename_fast(event)
@@ -567,7 +608,7 @@ def handler(event):
         needs_background_removal = False
         
         if filename and filename.lower().endswith('.png'):
-            logger.info("📸 STEP 1: PNG detected - removing background")
+            logger.info("📸 STEP 1: PNG detected - removing background with V5.4 settings")
             image = remove_background_with_replicate(image)
             has_transparency = image.mode == 'RGBA'
             needs_background_removal = True
@@ -591,7 +632,7 @@ def handler(event):
         # Fast white balance
         image = auto_white_balance_fast(image)
         
-        # Moderate basic enhancement - V5.3
+        # Moderate basic enhancement - V5.4
         brightness = ImageEnhance.Brightness(image)
         image = brightness.enhance(1.12)  # Moderate brightness
         
@@ -636,6 +677,9 @@ def handler(event):
             enhanced_transparent = original_transparent.resize((1000, 1300), Image.Resampling.LANCZOS)
             
             if enhanced_transparent.mode == 'RGBA':
+                # Ensure ring holes are transparent
+                enhanced_transparent = ensure_ring_holes_transparent(enhanced_transparent)
+                
                 # Split channels
                 r, g, b, a = enhanced_transparent.split()
                 rgb_image = Image.merge('RGB', (r, g, b))
@@ -652,7 +696,7 @@ def handler(event):
                 
                 # Pattern enhancement based on type
                 if pattern_type == "ac_pattern":
-                    # 15% white overlay - V5.3
+                    # 15% white overlay - V5.4
                     white_overlay = 0.15
                     img_array = np.array(rgb_image, dtype=np.float32)
                     img_array = img_array * (1 - white_overlay) + 255 * white_overlay
@@ -662,14 +706,14 @@ def handler(event):
                 r2, g2, b2 = rgb_image.split()
                 enhanced_transparent = Image.merge('RGBA', (r2, g2, b2, a))
             
-            # Natural composite with light gray background
+            # Natural composite with deeper gray background
             thumbnail = composite_with_light_gray_background(enhanced_transparent, background_color)
             
             # Final sharpness after compositing
             sharpness = ImageEnhance.Sharpness(thumbnail)
             thumbnail = sharpness.enhance(1.15)  # Subtle sharpness for natural look
         
-        # Final adjustments - V5.3
+        # Final adjustments - V5.4
         sharpness = ImageEnhance.Sharpness(thumbnail)
         thumbnail = sharpness.enhance(1.7)  # Moderate sharpness
         
@@ -702,11 +746,13 @@ def handler(event):
                 "background_composite": has_transparency,
                 "background_removal": needs_background_removal,
                 "background_color": background_color,
-                "background_style": "Darker gray gradient (#D8D8D8)",
+                "background_style": "Deeper gray gradient (#CCCCCC)",
+                "gradient_edge_darkening": "10%",
                 "shadow": "REMOVED - No shadow for natural look",
                 "edge_processing": "Minimal natural feathering (3x3 blur)",
                 "composite_method": "Simple alpha blending",
-                "rembg_settings": "Aggressive (270/10/10)",
+                "rembg_settings": "Extra aggressive (280/5/12)",
+                "ring_hole_detection": "Flood fill detection + morphology",
                 "expected_input": "2000x2600",
                 "output_size": "1000x1300",
                 "cubic_enhancement": "Moderate (130% unsharp)",
