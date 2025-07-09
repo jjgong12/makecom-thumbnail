@@ -16,10 +16,10 @@ logger = logging.getLogger(__name__)
 
 ################################
 # THUMBNAIL HANDLER - 1000x1300
-# VERSION: V10.6-Improved-Hole-Detection
+# VERSION: V10.7-Delicate-Ring-Preservation
 ################################
 
-VERSION = "V10.6-Improved-Hole-Detection"
+VERSION = "V10.7-Delicate-Ring-Preservation"
 
 # ===== REPLICATE INITIALIZATION =====
 REPLICATE_API_TOKEN = os.environ.get('REPLICATE_API_TOKEN')
@@ -167,51 +167,82 @@ def create_background(size, color="#C8C8C8", style="gradient"):
     else:
         return Image.new('RGB', size, color)
 
-def remove_background_with_replicate(image: Image.Image) -> Image.Image:
-    """Remove background using BiRefNet-general-lite - V10.6 PRIORITY"""
+def remove_background_with_delicate_settings(image: Image.Image) -> Image.Image:
+    """Remove background with DELICATE settings for wedding rings - V10.7"""
     try:
-        # Try local rembg FIRST (BiRefNet priority)
+        # Try local rembg FIRST with DELICATE settings
         from rembg import remove, new_session
         
-        logger.info("🔷 Removing background with BiRefNet-general-lite (V10.6 priority)")
+        logger.info("🔷 Removing background with BiRefNet - DELICATE settings for wedding rings")
         
         # Session caching for speed
-        if not hasattr(remove_background_with_replicate, 'session'):
-            logger.info("Initializing BiRefNet-general-lite session...")
-            remove_background_with_replicate.session = new_session('birefnet-general-lite')
+        if not hasattr(remove_background_with_delicate_settings, 'session'):
+            logger.info("Initializing BiRefNet-general session for delicate processing...")
+            # Use general model instead of lite for better quality
+            remove_background_with_delicate_settings.session = new_session('birefnet-general')
         
         # Convert PIL Image to bytes
         buffered = BytesIO()
         image.save(buffered, format="PNG")
         buffered.seek(0)
         
-        # Remove background with alpha matting
+        # Remove background with DELICATE settings for rings
         output = remove(
             buffered.getvalue(), 
-            session=remove_background_with_replicate.session,
+            session=remove_background_with_delicate_settings.session,
             alpha_matting=True,
-            alpha_matting_foreground_threshold=240,
-            alpha_matting_background_threshold=50,
-            alpha_matting_erode_size=8
+            alpha_matting_foreground_threshold=200,  # LOWERED from 240 - more inclusive
+            alpha_matting_background_threshold=80,   # RAISED from 50 - less aggressive
+            alpha_matting_erode_size=2              # REDUCED from 8 - minimal erosion
         )
         
         # Convert result to PIL Image
         result_image = Image.open(BytesIO(output))
         
-        # Enhanced hole processing - V10.6
+        # Apply ring protection
         if result_image.mode == 'RGBA':
-            result_image = ensure_ring_holes_transparent_improved(result_image)
+            result_image = protect_wedding_ring_edges(result_image)
+            result_image = ensure_ring_holes_transparent_delicate(result_image)
         
-        logger.info("✅ Background removal successful with BiRefNet")
+        logger.info("✅ Background removal successful with delicate settings")
         return result_image
         
     except Exception as e:
-        logger.error(f"BiRefNet failed, falling back to Replicate: {e}")
+        logger.error(f"BiRefNet failed, trying alternative methods: {e}")
         
-        # Fallback: Replicate method
+        # Try alternative local model
+        try:
+            from rembg import remove, new_session
+            
+            logger.info("🔷 Trying u2netp model for better ring preservation")
+            
+            if not hasattr(remove_background_with_delicate_settings, 'u2netp_session'):
+                remove_background_with_delicate_settings.u2netp_session = new_session('u2netp')
+            
+            output = remove(
+                buffered.getvalue(),
+                session=remove_background_with_delicate_settings.u2netp_session,
+                alpha_matting=True,
+                alpha_matting_foreground_threshold=180,  # Even more inclusive
+                alpha_matting_background_threshold=100,  # Very conservative
+                alpha_matting_erode_size=1              # Minimal erosion
+            )
+            
+            result_image = Image.open(BytesIO(output))
+            
+            if result_image.mode == 'RGBA':
+                result_image = protect_wedding_ring_edges(result_image)
+                result_image = ensure_ring_holes_transparent_delicate(result_image)
+            
+            return result_image
+            
+        except Exception as e2:
+            logger.error(f"u2netp also failed: {e2}")
+        
+        # Fallback: Replicate method with DELICATE settings
         if USE_REPLICATE and REPLICATE_CLIENT:
             try:
-                logger.info("🔷 Fallback to Replicate rembg")
+                logger.info("🔷 Fallback to Replicate rembg with delicate settings")
                 
                 # Convert to base64
                 buffered = BytesIO()
@@ -220,16 +251,17 @@ def remove_background_with_replicate(image: Image.Image) -> Image.Image:
                 img_base64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
                 img_data_url = f"data:image/png;base64,{img_base64}"
                 
-                # Use rembg model with CONSERVATIVE settings
+                # Use rembg model with DELICATE settings
                 output = REPLICATE_CLIENT.run(
                     "cjwbw/rembg:fb8af171cfa1616ddcf1242c093f9c46bcada5ad4cf6f2fbe8b81b330ec5c003",
                     input={
                         "image": img_data_url,
-                        "model": "u2net",
+                        "model": "u2netp",  # Better for detailed objects
                         "alpha_matting": True,
-                        "alpha_matting_foreground_threshold": 240,
-                        "alpha_matting_background_threshold": 50,
-                        "alpha_matting_erode_size": 8
+                        "alpha_matting_foreground_threshold": 180,  # More inclusive
+                        "alpha_matting_background_threshold": 100,   # Conservative
+                        "alpha_matting_erode_size": 2,              # Minimal
+                        "return_mask": False
                     }
                 )
                 
@@ -241,22 +273,56 @@ def remove_background_with_replicate(image: Image.Image) -> Image.Image:
                         result_image = Image.open(BytesIO(base64.b64decode(output)))
                     
                     if result_image.mode == 'RGBA':
-                        result_image = ensure_ring_holes_transparent_improved(result_image)
+                        result_image = protect_wedding_ring_edges(result_image)
+                        result_image = ensure_ring_holes_transparent_delicate(result_image)
                     
                     return result_image
-            except Exception as e2:
-                logger.error(f"Replicate also failed: {e2}")
+            except Exception as e3:
+                logger.error(f"Replicate also failed: {e3}")
         
         # Final fallback: return original
         logger.warning("All background removal methods failed, returning original")
         return image
 
-def ensure_ring_holes_transparent_improved(image: Image.Image) -> Image.Image:
-    """ENHANCED ring hole detection - V10.6 with better accuracy"""
+def protect_wedding_ring_edges(image: Image.Image) -> Image.Image:
+    """Protect wedding ring edges from erosion - NEW in V10.7"""
     if image.mode != 'RGBA':
         return image
     
-    logger.info("🔍 Enhanced hole detection V10.6 started")
+    logger.info("🛡️ Protecting wedding ring edges")
+    
+    # Get alpha channel
+    r, g, b, a = image.split()
+    alpha_array = np.array(a, dtype=np.uint8)
+    
+    # Detect ring edges (high gradient areas)
+    grad_x = cv2.Sobel(alpha_array, cv2.CV_64F, 1, 0, ksize=3)
+    grad_y = cv2.Sobel(alpha_array, cv2.CV_64F, 0, 1, ksize=3)
+    gradient_mag = np.sqrt(grad_x**2 + grad_y**2)
+    
+    # Find strong edges (likely ring boundaries)
+    strong_edges = gradient_mag > 50
+    
+    # Dilate edge areas to create protection zone
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    protection_zone = cv2.dilate(strong_edges.astype(np.uint8), kernel, iterations=2)
+    
+    # Ensure these areas remain opaque
+    alpha_array[protection_zone > 0] = np.maximum(alpha_array[protection_zone > 0], 200)
+    
+    # Smooth the alpha channel slightly
+    alpha_array = cv2.GaussianBlur(alpha_array, (3, 3), 1.0)
+    
+    # Create new image with protected alpha
+    a_new = Image.fromarray(alpha_array)
+    return Image.merge('RGBA', (r, g, b, a_new))
+
+def ensure_ring_holes_transparent_delicate(image: Image.Image) -> Image.Image:
+    """DELICATE ring hole detection - V10.7 for wedding rings"""
+    if image.mode != 'RGBA':
+        return image
+    
+    logger.info("🔍 Delicate hole detection V10.7 started")
     
     # Get alpha channel
     r, g, b, a = image.split()
@@ -267,54 +333,36 @@ def ensure_ring_holes_transparent_improved(image: Image.Image) -> Image.Image:
     # Create a copy for modifications
     alpha_modified = alpha_array.copy()
     
-    # STAGE 1: Detect potential holes with multiple methods
+    # STAGE 1: Very careful hole detection
+    # Only look for very clear holes (very low alpha values)
+    hole_mask = np.zeros_like(alpha_array, dtype=bool)
     
-    # Method 1: Multi-threshold detection
-    hole_mask1 = np.zeros_like(alpha_array, dtype=bool)
-    for threshold in [60, 80, 100, 120, 140, 160]:
+    # Only very transparent areas
+    for threshold in [30, 50, 70]:
         potential_holes = (alpha_array < threshold)
-        hole_mask1 = hole_mask1 | potential_holes
+        hole_mask = hole_mask | potential_holes
     
-    # Method 2: Edge-based detection (find closed contours)
-    edges = cv2.Canny(alpha_array, 50, 150)
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-    edges_closed = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel)
+    # STAGE 2: Minimal morphological operations
+    kernel_tiny = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
     
-    # Method 3: Gradient-based detection
-    grad_x = cv2.Sobel(alpha_array, cv2.CV_64F, 1, 0, ksize=3)
-    grad_y = cv2.Sobel(alpha_array, cv2.CV_64F, 0, 1, ksize=3)
-    gradient_mag = np.sqrt(grad_x**2 + grad_y**2)
-    gradient_holes = gradient_mag > 30
+    # Very gentle closing
+    hole_mask = cv2.morphologyEx(hole_mask.astype(np.uint8), cv2.MORPH_CLOSE, kernel_tiny, iterations=1)
     
-    # Combine all methods
-    combined_mask = hole_mask1.astype(np.uint8)
+    # STAGE 3: Find connected components with strict criteria
+    num_labels, labels = cv2.connectedComponents(hole_mask)
     
-    # STAGE 2: Enhanced morphological operations
-    # Connect partial holes better
-    kernel_connect = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
-    kernel_small = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-    kernel_medium = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-    
-    # First close gaps aggressively
-    combined_mask = cv2.morphologyEx(combined_mask, cv2.MORPH_CLOSE, kernel_connect, iterations=2)
-    
-    # Then open to remove noise
-    combined_mask = cv2.morphologyEx(combined_mask, cv2.MORPH_OPEN, kernel_small)
-    
-    # Fill small holes within larger holes
-    filled = cv2.morphologyEx(combined_mask, cv2.MORPH_CLOSE, kernel_medium, iterations=3)
-    
-    # STAGE 3: Find connected components with relaxed criteria
-    num_labels, labels = cv2.connectedComponents(filled)
-    
-    # STAGE 4: Analyze each component with improved criteria
+    # STAGE 4: Only process very clear holes
     holes_found = 0
     for label in range(1, num_labels):
-        hole_mask = (labels == label)
-        hole_size = np.sum(hole_mask)
+        hole_candidate = (labels == label)
+        hole_size = np.sum(hole_candidate)
         
+        # Skip very small noise
+        if hole_size < 50:
+            continue
+            
         # Get component properties
-        coords = np.where(hole_mask)
+        coords = np.where(hole_candidate)
         if len(coords[0]) == 0:
             continue
             
@@ -323,55 +371,22 @@ def ensure_ring_holes_transparent_improved(image: Image.Image) -> Image.Image:
         center_y = (min_y + max_y) // 2
         center_x = (min_x + max_x) // 2
         
-        width = max_x - min_x
-        height = max_y - min_y
-        
-        # Skip if too small or too large
-        if width < 10 or height < 10 or hole_size < 100:
-            continue
-        if hole_size > (h * w * 0.25):  # Too large
+        # Check if it's truly inside the ring (not at edges)
+        margin = 0.15  # 15% margin from edges
+        if not (margin * h < center_y < (1-margin) * h and margin * w < center_x < (1-margin) * w):
             continue
         
-        # Check position - more flexible for ring holes
-        if (0.05 * h < center_y < 0.95 * h) and (0.05 * w < center_x < 0.95 * w):
-            aspect_ratio = width / height if height > 0 else 1
-            
-            # Check circularity (how close to a circle)
-            area = width * height
-            circularity = hole_size / area if area > 0 else 0
-            
-            # Accept various shapes but prefer circular ones
-            if 0.2 < aspect_ratio < 5.0:
-                # Additional check: is it mostly enclosed?
-                contour_mask = np.zeros_like(hole_mask, dtype=np.uint8)
-                contour_mask[hole_mask] = 255
-                contours, _ = cv2.findContours(contour_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                
-                if contours:
-                    # Check if contour is closed and reasonable
-                    for cnt in contours:
-                        area = cv2.contourArea(cnt)
-                        if area > 100:  # Reasonable size
-                            # Fill the hole completely
-                            cv2.drawContours(alpha_modified, [cnt], -1, 0, -1)
-                            
-                            # Also expand slightly for cleaner edges
-                            hole_expanded = cv2.dilate(contour_mask, kernel_small, iterations=2)
-                            alpha_modified[hole_expanded > 0] = 0
-                            
-                            holes_found += 1
-                            logger.info(f"Found hole {holes_found} at ({center_x}, {center_y}), size: {hole_size}, aspect: {aspect_ratio:.2f}")
+        # Check average alpha value in the region
+        avg_alpha = np.mean(alpha_array[hole_candidate])
+        
+        # Only process if it's really transparent
+        if avg_alpha < 50:  # Very transparent
+            # Make it fully transparent but don't expand
+            alpha_modified[hole_candidate] = 0
+            holes_found += 1
+            logger.info(f"Found clear hole {holes_found} at ({center_x}, {center_y}), avg_alpha: {avg_alpha:.1f}")
     
-    # STAGE 5: Additional pass for missed holes using flood fill
-    # Look for nearly enclosed regions
-    for y in range(0, h, 50):  # Sample grid
-        for x in range(0, w, 50):
-            if alpha_modified[y, x] < 150:  # Potential hole area
-                # Try flood fill
-                mask = np.zeros((h+2, w+2), np.uint8)
-                cv2.floodFill(alpha_modified, mask, (x, y), 0, loDiff=50, upDiff=50)
-    
-    logger.info(f"✅ Enhanced hole detection complete - found {holes_found} holes")
+    logger.info(f"✅ Delicate hole detection complete - found {holes_found} holes")
     
     # Create new image with corrected alpha
     a_new = Image.fromarray(alpha_modified)
@@ -695,7 +710,7 @@ def image_to_base64(image):
     return base64.b64encode(buffered.getvalue()).decode().rstrip('=')
 
 def handler(event):
-    """Optimized thumbnail handler - V10.6 with improved hole detection"""
+    """Optimized thumbnail handler - V10.7 with delicate ring preservation"""
     try:
         logger.info(f"=== Thumbnail {VERSION} Started ===")
         
@@ -735,8 +750,8 @@ def handler(event):
         needs_background_removal = False
         
         if filename and filename.lower().endswith('.png'):
-            logger.info("📸 STEP 1: PNG detected - removing background with V10.6 BiRefNet priority")
-            image = remove_background_with_replicate(image)
+            logger.info("📸 STEP 1: PNG detected - removing background with V10.7 delicate settings")
+            image = remove_background_with_delicate_settings(image)
             has_transparency = image.mode == 'RGBA'
             needs_background_removal = True
         
@@ -804,8 +819,8 @@ def handler(event):
             enhanced_transparent = create_thumbnail_optimized(original_transparent, 1000, 1300)
             
             if enhanced_transparent.mode == 'RGBA':
-                # Enhanced hole detection - V10.6
-                enhanced_transparent = ensure_ring_holes_transparent_improved(enhanced_transparent)
+                # Delicate hole detection - V10.7
+                enhanced_transparent = ensure_ring_holes_transparent_delicate(enhanced_transparent)
                 
                 # Split channels
                 r, g, b, a = enhanced_transparent.split()
@@ -877,21 +892,23 @@ def handler(event):
                 "gradient_edge_darkening": "5%",
                 "edge_processing": "Natural soft edge (60/40 blend + double feather)",
                 "composite_method": "Simple alpha blending",
-                "rembg_settings": "BiRefNet-general-lite (priority) with fallback",
-                "background_removal_model": "birefnet-general-lite",
-                "model_priority": "Local BiRefNet first, then Replicate fallback",
-                "inference_speed": "Fast (local processing priority)",
-                "ring_hole_detection": "V10.6 Enhanced multi-method detection",
-                "hole_detection_methods": [
-                    "Multi-threshold (60-160)",
-                    "Edge-based contour detection",
-                    "Gradient magnitude analysis",
-                    "Morphological closing (7x7)",
-                    "Flood fill for missed areas"
+                "rembg_settings": "DELICATE settings for wedding rings",
+                "background_removal_models": [
+                    "birefnet-general (primary)",
+                    "u2netp (secondary)",
+                    "replicate u2netp (fallback)"
                 ],
+                "delicate_settings": {
+                    "foreground_threshold": "180-200 (lowered)",
+                    "background_threshold": "80-100 (raised)",
+                    "erode_size": "1-2 (minimal)"
+                },
+                "ring_protection": "Edge protection + gradient detection",
+                "hole_detection": "V10.7 Delicate - only very clear holes",
+                "hole_threshold": "avg_alpha < 50",
                 "thumbnail_crop_method": "Tight crop for 80%+ ring coverage",
                 "crop_factor": "0.75 for expected ratio",
-                "processing_order": "1.Background Removal → 2.Gentle Enhancement → 3.Natural Composite",
+                "processing_order": "1.Delicate Background Removal → 2.Gentle Enhancement → 3.Natural Composite",
                 "expected_input": "2000x2600 (±30px tolerance)",
                 "output_size": "1000x1300",
                 "ring_coverage": "80%+ of frame",
@@ -902,7 +919,7 @@ def handler(event):
                 "sharpness_increased": "1.5-1.6",
                 "spotlight_increased": "2.0%",
                 "quality": "95",
-                "safety_features": "Ring preservation priority"
+                "safety_features": "Wedding ring preservation priority"
             }
         }
         
