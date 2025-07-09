@@ -16,10 +16,10 @@ logger = logging.getLogger(__name__)
 
 ################################
 # THUMBNAIL HANDLER - 1000x1300
-# VERSION: V5.5-Lighter-Gray-Enhanced-Holes
+# VERSION: V5.5-FIXED
 ################################
 
-VERSION = "V5.5-Lighter-Gray-Enhanced-Holes"
+VERSION = "V5.5-FIXED"
 
 # ===== REPLICATE INITIALIZATION =====
 REPLICATE_API_TOKEN = os.environ.get('REPLICATE_API_TOKEN')
@@ -168,13 +168,13 @@ def create_background(size, color="#D4D4D4", style="gradient"):
         return Image.new('RGB', size, color)
 
 def remove_background_with_replicate(image: Image.Image) -> Image.Image:
-    """Remove background using Replicate API - V5.5 ENHANCED FOR HOLES"""
+    """Remove background using Replicate API - V5.5 BALANCED"""
     if not USE_REPLICATE or not REPLICATE_CLIENT:
         logger.warning("Replicate not available for background removal")
         return image
     
     try:
-        logger.info("🔷 Removing background with Replicate (V5.5 ultra aggressive)")
+        logger.info("🔷 Removing background with Replicate (V5.5 balanced)")
         
         # Convert to base64
         buffered = BytesIO()
@@ -183,16 +183,16 @@ def remove_background_with_replicate(image: Image.Image) -> Image.Image:
         img_base64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
         img_data_url = f"data:image/png;base64,{img_base64}"
         
-        # Use rembg model with ULTRA AGGRESSIVE settings for holes
+        # Use rembg model with BALANCED settings
         output = REPLICATE_CLIENT.run(
             "cjwbw/rembg:fb8af171cfa1616ddcf1242c093f9c46bcada5ad4cf6f2fbe8b81b330ec5c003",
             input={
                 "image": img_data_url,
                 "model": "u2net",  # u2net for better hole detection
                 "alpha_matting": True,
-                "alpha_matting_foreground_threshold": 300,  # Ultra high
-                "alpha_matting_background_threshold": 2,     # Ultra low for holes
-                "alpha_matting_erode_size": 15              # Larger for cleaner edges
+                "alpha_matting_foreground_threshold": 270,  # Balanced
+                "alpha_matting_background_threshold": 10,    # Balanced for holes
+                "alpha_matting_erode_size": 10              # Moderate
             }
         )
         
@@ -203,7 +203,7 @@ def remove_background_with_replicate(image: Image.Image) -> Image.Image:
             else:
                 result_image = Image.open(BytesIO(base64.b64decode(output)))
             
-            # ENHANCED hole detection
+            # BALANCED hole detection
             if result_image.mode == 'RGBA':
                 result_image = ensure_ring_holes_transparent_enhanced(result_image)
             
@@ -218,58 +218,60 @@ def remove_background_with_replicate(image: Image.Image) -> Image.Image:
         return image
 
 def ensure_ring_holes_transparent_enhanced(image: Image.Image) -> Image.Image:
-    """ENHANCED ring hole detection - V5.5 MORE AGGRESSIVE"""
+    """BALANCED ring hole detection - V5.5 FIXED"""
     if image.mode != 'RGBA':
         return image
     
-    logger.info("🔍 Enhanced hole detection started")
+    logger.info("🔍 Balanced hole detection started")
     
     # Get alpha channel
     r, g, b, a = image.split()
     alpha_array = np.array(a, dtype=np.uint8)
     
-    # Multi-pass hole detection
+    # Save original for safety
+    original_alpha = alpha_array.copy()
+    
     h, w = alpha_array.shape
     
-    # PASS 1: Flood fill from edges
-    padded = np.pad(alpha_array, 1, mode='constant', constant_values=0)
-    filled = padded.copy()
-    cv2.floodFill(filled, None, (0, 0), 255)
-    filled = filled[1:-1, 1:-1]
+    # PASS 1: Find already transparent areas (alpha < 50)
+    existing_holes = (alpha_array < 50)
     
-    # PASS 2: Find potential holes (not reached by flood fill)
-    potential_holes = (filled != 255)
+    # PASS 2: Slightly expand existing holes only
+    kernel_small = np.ones((3, 3), np.uint8)
+    holes_expanded = cv2.dilate(existing_holes.astype(np.uint8), kernel_small, iterations=1)
     
-    # PASS 3: Expand hole regions
-    kernel = np.ones((5, 5), np.uint8)
-    potential_holes = cv2.dilate(potential_holes.astype(np.uint8), kernel, iterations=2)
+    # PASS 3: Find connected components of holes
+    num_labels, labels = cv2.connectedComponents(holes_expanded)
     
-    # PASS 4: Find connected components of holes
-    num_labels, labels = cv2.connectedComponents(potential_holes)
-    
-    # PASS 5: Process each hole separately
+    # PASS 4: Process only significant holes
     for label in range(1, num_labels):
         hole_mask = (labels == label)
+        hole_size = np.sum(hole_mask)
         
-        # Check if this is a valid hole (enclosed region)
-        hole_coords = np.where(hole_mask)
-        if len(hole_coords[0]) > 10:  # Minimum hole size
-            # Expand this specific hole
-            hole_mask_expanded = cv2.dilate(hole_mask.astype(np.uint8), kernel, iterations=1)
-            alpha_array[hole_mask_expanded > 0] = 0
+        # Only process medium-sized holes (not too small, not too big)
+        if 50 < hole_size < (h * w * 0.1):  # Max 10% of image
+            # Get hole boundaries
+            coords = np.where(hole_mask)
+            min_y, max_y = coords[0].min(), coords[0].max()
+            min_x, max_x = coords[1].min(), coords[1].max()
+            
+            # Check if hole is somewhat circular (not too elongated)
+            width = max_x - min_x
+            height = max_y - min_y
+            if 0.5 < width/height < 2.0:  # Reasonable aspect ratio
+                # Apply transparency only to this specific hole
+                alpha_array[hole_mask] = 0
     
-    # PASS 6: Clean up edges
-    alpha_array = cv2.morphologyEx(alpha_array, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
+    # PASS 5: Very gentle edge smoothing
+    alpha_array = cv2.medianBlur(alpha_array, 3)
     
-    # PASS 7: Additional center hole check for rings
-    center_y, center_x = h // 2, w // 2
-    center_region = alpha_array[center_y-50:center_y+50, center_x-50:center_x+50]
-    if center_region.shape[0] > 0 and center_region.shape[1] > 0:
-        # If center has low alpha values, ensure it's transparent
-        if np.mean(center_region) < 100:
-            cv2.circle(alpha_array, (center_x, center_y), 30, 0, -1)
+    # Safety check: preserve most of the ring
+    transparent_ratio = np.sum(alpha_array < 50) / (h * w)
+    if transparent_ratio > 0.3:  # If more than 30% transparent, revert
+        logger.warning("Too much transparency detected, using original")
+        alpha_array = original_alpha
     
-    logger.info(f"✅ Hole detection complete - found {num_labels-1} holes")
+    logger.info(f"✅ Hole detection complete - {transparent_ratio*100:.1f}% transparent")
     
     # Create new image with corrected alpha
     a_new = Image.fromarray(alpha_array)
@@ -589,7 +591,7 @@ def image_to_base64(image):
     return base64.b64encode(buffered.getvalue()).decode().rstrip('=')
 
 def handler(event):
-    """Optimized thumbnail handler - V5.5 LIGHTER GRAY + ENHANCED HOLES VERSION"""
+    """Optimized thumbnail handler - V5.5 FIXED VERSION"""
     try:
         logger.info(f"=== Thumbnail {VERSION} Started ===")
         
@@ -629,7 +631,7 @@ def handler(event):
         needs_background_removal = False
         
         if filename and filename.lower().endswith('.png'):
-            logger.info("📸 STEP 1: PNG detected - removing background with V5.5 ultra settings")
+            logger.info("📸 STEP 1: PNG detected - removing background with V5.5 balanced settings")
             image = remove_background_with_replicate(image)
             has_transparency = image.mode == 'RGBA'
             needs_background_removal = True
@@ -776,9 +778,9 @@ def handler(event):
                 "shadow": "REMOVED - No shadow for natural look",
                 "edge_processing": "Minimal natural feathering (3x3 blur)",
                 "composite_method": "Simple alpha blending",
-                "rembg_settings": "Ultra aggressive (300/2/15)",
-                "ring_hole_detection": "Enhanced multi-pass detection (7 passes)",
-                "hole_detection_details": "Flood fill + Component analysis + Center check + Dilation",
+                "rembg_settings": "Balanced (270/10/10)",
+                "ring_hole_detection": "Balanced detection (5 passes)",
+                "hole_detection_details": "Existing holes + Size check + Aspect ratio + Safety limit",
                 "expected_input": "2000x2600",
                 "output_size": "1000x1300",
                 "cubic_enhancement": "Moderate (130% unsharp)",
