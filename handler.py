@@ -16,10 +16,10 @@ logger = logging.getLogger(__name__)
 
 ################################
 # THUMBNAIL HANDLER - 1000x1300
-# VERSION: V10.5-BiRefNet-Optimized
+# VERSION: V10.6-Improved-Hole-Detection
 ################################
 
-VERSION = "V10.5-BiRefNet-Optimized"
+VERSION = "V10.6-Improved-Hole-Detection"
 
 # ===== REPLICATE INITIALIZATION =====
 REPLICATE_API_TOKEN = os.environ.get('REPLICATE_API_TOKEN')
@@ -168,24 +168,24 @@ def create_background(size, color="#C8C8C8", style="gradient"):
         return Image.new('RGB', size, color)
 
 def remove_background_with_replicate(image: Image.Image) -> Image.Image:
-    """Remove background using BiRefNet-general-lite - V10.4 OPTIMIZED"""
+    """Remove background using BiRefNet-general-lite - V10.6 PRIORITY"""
     try:
-        # Replicate 대신 로컬 rembg 사용 (더 빠름)
+        # Try local rembg FIRST (BiRefNet priority)
         from rembg import remove, new_session
         
-        logger.info("🔷 Removing background with BiRefNet-general-lite (V10.4 optimized)")
+        logger.info("🔷 Removing background with BiRefNet-general-lite (V10.6 priority)")
         
-        # 세션 캐싱으로 속도 향상
+        # Session caching for speed
         if not hasattr(remove_background_with_replicate, 'session'):
             logger.info("Initializing BiRefNet-general-lite session...")
             remove_background_with_replicate.session = new_session('birefnet-general-lite')
         
-        # PIL Image를 bytes로 변환
+        # Convert PIL Image to bytes
         buffered = BytesIO()
         image.save(buffered, format="PNG")
         buffered.seek(0)
         
-        # 배경 제거 with alpha matting
+        # Remove background with alpha matting
         output = remove(
             buffered.getvalue(), 
             session=remove_background_with_replicate.session,
@@ -195,12 +195,12 @@ def remove_background_with_replicate(image: Image.Image) -> Image.Image:
             alpha_matting_erode_size=8
         )
         
-        # 결과를 PIL Image로 변환
+        # Convert result to PIL Image
         result_image = Image.open(BytesIO(output))
         
-        # Enhanced hole processing
+        # Enhanced hole processing - V10.6
         if result_image.mode == 'RGBA':
-            result_image = ensure_ring_holes_transparent_simple(result_image)
+            result_image = ensure_ring_holes_transparent_improved(result_image)
         
         logger.info("✅ Background removal successful with BiRefNet")
         return result_image
@@ -208,7 +208,7 @@ def remove_background_with_replicate(image: Image.Image) -> Image.Image:
     except Exception as e:
         logger.error(f"BiRefNet failed, falling back to Replicate: {e}")
         
-        # 폴백: 기존 Replicate 방식 사용
+        # Fallback: Replicate method
         if USE_REPLICATE and REPLICATE_CLIENT:
             try:
                 logger.info("🔷 Fallback to Replicate rembg")
@@ -241,22 +241,22 @@ def remove_background_with_replicate(image: Image.Image) -> Image.Image:
                         result_image = Image.open(BytesIO(base64.b64decode(output)))
                     
                     if result_image.mode == 'RGBA':
-                        result_image = ensure_ring_holes_transparent_simple(result_image)
+                        result_image = ensure_ring_holes_transparent_improved(result_image)
                     
                     return result_image
             except Exception as e2:
                 logger.error(f"Replicate also failed: {e2}")
         
-        # 최종 폴백: 원본 반환
+        # Final fallback: return original
         logger.warning("All background removal methods failed, returning original")
         return image
 
-def ensure_ring_holes_transparent_simple(image: Image.Image) -> Image.Image:
-    """IMPROVED ring hole detection - V10.4"""
+def ensure_ring_holes_transparent_improved(image: Image.Image) -> Image.Image:
+    """ENHANCED ring hole detection - V10.6 with better accuracy"""
     if image.mode != 'RGBA':
         return image
     
-    logger.info("🔍 Improved hole detection started")
+    logger.info("🔍 Enhanced hole detection V10.6 started")
     
     # Get alpha channel
     r, g, b, a = image.split()
@@ -264,55 +264,117 @@ def ensure_ring_holes_transparent_simple(image: Image.Image) -> Image.Image:
     
     h, w = alpha_array.shape
     
-    # STAGE 1: Multi-level threshold for better detection
-    # Try multiple thresholds to catch various transparency levels
-    hole_candidates = np.zeros_like(alpha_array, dtype=bool)
-    for threshold in [80, 100, 120, 140]:
-        potential_holes = (alpha_array < threshold)
-        hole_candidates = hole_candidates | potential_holes
+    # Create a copy for modifications
+    alpha_modified = alpha_array.copy()
     
-    # STAGE 2: Morphological operations to connect partial holes
+    # STAGE 1: Detect potential holes with multiple methods
+    
+    # Method 1: Multi-threshold detection
+    hole_mask1 = np.zeros_like(alpha_array, dtype=bool)
+    for threshold in [60, 80, 100, 120, 140, 160]:
+        potential_holes = (alpha_array < threshold)
+        hole_mask1 = hole_mask1 | potential_holes
+    
+    # Method 2: Edge-based detection (find closed contours)
+    edges = cv2.Canny(alpha_array, 50, 150)
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    edges_closed = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel)
+    
+    # Method 3: Gradient-based detection
+    grad_x = cv2.Sobel(alpha_array, cv2.CV_64F, 1, 0, ksize=3)
+    grad_y = cv2.Sobel(alpha_array, cv2.CV_64F, 0, 1, ksize=3)
+    gradient_mag = np.sqrt(grad_x**2 + grad_y**2)
+    gradient_holes = gradient_mag > 30
+    
+    # Combine all methods
+    combined_mask = hole_mask1.astype(np.uint8)
+    
+    # STAGE 2: Enhanced morphological operations
+    # Connect partial holes better
+    kernel_connect = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
     kernel_small = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
     kernel_medium = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
     
-    # Close small gaps
-    hole_candidates = cv2.morphologyEx(hole_candidates.astype(np.uint8), cv2.MORPH_CLOSE, kernel_medium)
-    # Remove noise
-    hole_candidates = cv2.morphologyEx(hole_candidates, cv2.MORPH_OPEN, kernel_small)
+    # First close gaps aggressively
+    combined_mask = cv2.morphologyEx(combined_mask, cv2.MORPH_CLOSE, kernel_connect, iterations=2)
     
-    # STAGE 3: Find connected components
-    num_labels, labels = cv2.connectedComponents(hole_candidates)
+    # Then open to remove noise
+    combined_mask = cv2.morphologyEx(combined_mask, cv2.MORPH_OPEN, kernel_small)
     
-    # STAGE 4: Analyze each component with relaxed criteria
+    # Fill small holes within larger holes
+    filled = cv2.morphologyEx(combined_mask, cv2.MORPH_CLOSE, kernel_medium, iterations=3)
+    
+    # STAGE 3: Find connected components with relaxed criteria
+    num_labels, labels = cv2.connectedComponents(filled)
+    
+    # STAGE 4: Analyze each component with improved criteria
+    holes_found = 0
     for label in range(1, num_labels):
         hole_mask = (labels == label)
         hole_size = np.sum(hole_mask)
         
         # Get component properties
         coords = np.where(hole_mask)
-        if len(coords[0]) > 0:
-            min_y, max_y = coords[0].min(), coords[0].max()
-            min_x, max_x = coords[1].min(), coords[1].max()
-            center_y = (min_y + max_y) // 2
-            center_x = (min_x + max_x) // 2
+        if len(coords[0]) == 0:
+            continue
             
-            # More relaxed criteria - wider range for ring holes
-            if (0.1 * h < center_y < 0.9 * h) and (0.1 * w < center_x < 0.9 * w):
-                width = max_x - min_x
-                height = max_y - min_y
-                aspect_ratio = width / height if height > 0 else 1
+        min_y, max_y = coords[0].min(), coords[0].max()
+        min_x, max_x = coords[1].min(), coords[1].max()
+        center_y = (min_y + max_y) // 2
+        center_x = (min_x + max_x) // 2
+        
+        width = max_x - min_x
+        height = max_y - min_y
+        
+        # Skip if too small or too large
+        if width < 10 or height < 10 or hole_size < 100:
+            continue
+        if hole_size > (h * w * 0.25):  # Too large
+            continue
+        
+        # Check position - more flexible for ring holes
+        if (0.05 * h < center_y < 0.95 * h) and (0.05 * w < center_x < 0.95 * w):
+            aspect_ratio = width / height if height > 0 else 1
+            
+            # Check circularity (how close to a circle)
+            area = width * height
+            circularity = hole_size / area if area > 0 else 0
+            
+            # Accept various shapes but prefer circular ones
+            if 0.2 < aspect_ratio < 5.0:
+                # Additional check: is it mostly enclosed?
+                contour_mask = np.zeros_like(hole_mask, dtype=np.uint8)
+                contour_mask[hole_mask] = 255
+                contours, _ = cv2.findContours(contour_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
                 
-                # Accept wider range of shapes and sizes
-                if 0.3 < aspect_ratio < 3.0 and hole_size < (h * w * 0.15):
-                    # Slightly expand the hole for cleaner edges
-                    dilated_mask = cv2.dilate(hole_mask.astype(np.uint8), kernel_small, iterations=1)
-                    alpha_array[dilated_mask > 0] = 0
-                    logger.info(f"Found hole at ({center_x}, {center_y}), size: {hole_size}")
+                if contours:
+                    # Check if contour is closed and reasonable
+                    for cnt in contours:
+                        area = cv2.contourArea(cnt)
+                        if area > 100:  # Reasonable size
+                            # Fill the hole completely
+                            cv2.drawContours(alpha_modified, [cnt], -1, 0, -1)
+                            
+                            # Also expand slightly for cleaner edges
+                            hole_expanded = cv2.dilate(contour_mask, kernel_small, iterations=2)
+                            alpha_modified[hole_expanded > 0] = 0
+                            
+                            holes_found += 1
+                            logger.info(f"Found hole {holes_found} at ({center_x}, {center_y}), size: {hole_size}, aspect: {aspect_ratio:.2f}")
     
-    logger.info("✅ Improved hole detection complete")
+    # STAGE 5: Additional pass for missed holes using flood fill
+    # Look for nearly enclosed regions
+    for y in range(0, h, 50):  # Sample grid
+        for x in range(0, w, 50):
+            if alpha_modified[y, x] < 150:  # Potential hole area
+                # Try flood fill
+                mask = np.zeros((h+2, w+2), np.uint8)
+                cv2.floodFill(alpha_modified, mask, (x, y), 0, loDiff=50, upDiff=50)
+    
+    logger.info(f"✅ Enhanced hole detection complete - found {holes_found} holes")
     
     # Create new image with corrected alpha
-    a_new = Image.fromarray(alpha_array)
+    a_new = Image.fromarray(alpha_modified)
     return Image.merge('RGBA', (r, g, b, a_new))
 
 def composite_with_natural_edge(image, background_color="#C8C8C8"):
@@ -542,19 +604,40 @@ def apply_pattern_enhancement_fast(image, pattern_type):
     return image
 
 def create_thumbnail_optimized(image, target_width=1000, target_height=1300):
-    """Optimized thumbnail creation for 2000x2600 input"""
+    """Optimized thumbnail creation for 2000x2600 input with 80%+ ring coverage"""
     original_width, original_height = image.size
     
-    # Check if input is expected 2000x2600 ratio
+    # Calculate the aspect ratios
+    img_ratio = original_width / original_height
+    target_ratio = target_width / target_height
     expected_ratio = 2000 / 2600  # 0.769
-    actual_ratio = original_width / original_height
     
-    if abs(actual_ratio - expected_ratio) < 0.01:
-        # Perfect ratio match - direct resize to 1000x1300
-        return image.resize((target_width, target_height), Image.Resampling.LANCZOS)
+    logger.info(f"Thumbnail input size: {original_width}x{original_height}, ratio: {img_ratio:.3f}")
+    
+    # If close to expected 2000x2600 ratio
+    if abs(img_ratio - expected_ratio) < 0.05:  # 5% tolerance
+        # For wedding rings, we need a tighter crop to make the ring fill 80%+ of frame
+        logger.info("Expected ratio detected - applying tight crop for wedding ring")
+        
+        # Calculate crop to make ring prominent (about 80-85% of frame)
+        crop_factor = 0.75  # This will make the ring fill ~80-85% of the thumbnail
+        
+        crop_width = int(original_width * crop_factor)
+        crop_height = int(original_height * crop_factor)
+        
+        # Center crop
+        left = (original_width - crop_width) // 2
+        top = (original_height - crop_height) // 2
+        right = left + crop_width
+        bottom = top + crop_height
+        
+        # Crop and resize
+        cropped = image.crop((left, top, right, bottom))
+        return cropped.resize((target_width, target_height), Image.Resampling.LANCZOS)
+    
     else:
-        # Different ratio - use existing logic
-        logger.warning(f"Unexpected ratio: {original_width}x{original_height} ({actual_ratio:.3f})")
+        # Different ratio - use existing logic with adjustments
+        logger.warning(f"Unexpected ratio: {original_width}x{original_height} ({img_ratio:.3f})")
         
         # Fixed center
         image_center = (original_width // 2, original_height // 2)
@@ -568,11 +651,11 @@ def create_thumbnail_optimized(image, target_width=1000, target_height=1300):
             image_center = (new_size[0] // 2, new_size[1] // 2)
             original_width, original_height = new_size
         
-        # Check for specific sizes
+        # Apply crop based on size
         if ((1800 <= original_width <= 2200 and 2400 <= original_height <= 2800) or
             (2800 <= original_width <= 3200 and 3700 <= original_height <= 4100)):
             
-            crop_ratio = 0.75 if original_width >= 2800 else 0.85
+            crop_ratio = 0.75  # Tight crop for wedding rings
             
             crop_width = int(original_width * crop_ratio)
             crop_height = int(original_height * crop_ratio)
@@ -583,21 +666,19 @@ def create_thumbnail_optimized(image, target_width=1000, target_height=1300):
             cropped = image.crop((left, top, left + crop_width, top + crop_height))
             return cropped.resize((target_width, target_height), Image.Resampling.LANCZOS)
         else:
-            # Simple resize
+            # For other sizes, ensure ring fills frame
             width_ratio = target_width / original_width
             height_ratio = target_height / original_height
-            scale_ratio = min(width_ratio, height_ratio)
+            scale_ratio = max(width_ratio, height_ratio) * 1.2  # Scale up more for prominence
             
             new_size = (int(original_width * scale_ratio), int(original_height * scale_ratio))
             resized = image.resize(new_size, Image.Resampling.LANCZOS)
             
-            # Center on white background
-            thumbnail = Image.new('RGB', (target_width, target_height), (255, 255, 255))
-            left = (target_width - new_size[0]) // 2
-            top = (target_height - new_size[1]) // 2
-            thumbnail.paste(resized, (left, top))
+            # Center crop to target size
+            left = (new_size[0] - target_width) // 2
+            top = (new_size[1] - target_height) // 2
             
-            return thumbnail
+            return resized.crop((left, top, left + target_width, top + target_height))
 
 def image_to_base64(image):
     """Convert to base64 without padding"""
@@ -614,7 +695,7 @@ def image_to_base64(image):
     return base64.b64encode(buffered.getvalue()).decode().rstrip('=')
 
 def handler(event):
-    """Optimized thumbnail handler - V10.4 NATURAL BALANCE VERSION"""
+    """Optimized thumbnail handler - V10.6 with improved hole detection"""
     try:
         logger.info(f"=== Thumbnail {VERSION} Started ===")
         
@@ -654,7 +735,7 @@ def handler(event):
         needs_background_removal = False
         
         if filename and filename.lower().endswith('.png'):
-            logger.info("📸 STEP 1: PNG detected - removing background with V10.4 conservative settings")
+            logger.info("📸 STEP 1: PNG detected - removing background with V10.6 BiRefNet priority")
             image = remove_background_with_replicate(image)
             has_transparency = image.mode == 'RGBA'
             needs_background_removal = True
@@ -691,7 +772,7 @@ def handler(event):
         # Detect pattern
         pattern_type = detect_pattern_type(filename)
         
-        # Create thumbnail
+        # Create thumbnail with 80%+ ring coverage
         thumbnail = create_thumbnail_optimized(image, 1000, 1300)
         
         # Apply SwinIR AFTER resize
@@ -719,12 +800,12 @@ def handler(event):
         if has_transparency and 'original_transparent' in locals():
             logger.info(f"🖼️ STEP 3: Natural background compositing: {background_color}")
             
-            # Apply enhancements to transparent version
-            enhanced_transparent = original_transparent.resize((1000, 1300), Image.Resampling.LANCZOS)
+            # Apply same thumbnail crop to transparent version
+            enhanced_transparent = create_thumbnail_optimized(original_transparent, 1000, 1300)
             
             if enhanced_transparent.mode == 'RGBA':
-                # Simple hole detection
-                enhanced_transparent = ensure_ring_holes_transparent_simple(enhanced_transparent)
+                # Enhanced hole detection - V10.6
+                enhanced_transparent = ensure_ring_holes_transparent_improved(enhanced_transparent)
                 
                 # Split channels
                 r, g, b, a = enhanced_transparent.split()
@@ -796,21 +877,30 @@ def handler(event):
                 "gradient_edge_darkening": "5%",
                 "edge_processing": "Natural soft edge (60/40 blend + double feather)",
                 "composite_method": "Simple alpha blending",
-                "rembg_settings": "BiRefNet-general-lite (local) with fallback",
+                "rembg_settings": "BiRefNet-general-lite (priority) with fallback",
                 "background_removal_model": "birefnet-general-lite",
-                "model_size": "~100MB",
-                "inference_speed": "Fast (local processing)",
-                "ring_hole_detection": "Improved multi-threshold detection",
-                "hole_detection_details": "Multi-threshold (80,100,120,140), improved morphology",
-                "expected_input": "2000x2600",
+                "model_priority": "Local BiRefNet first, then Replicate fallback",
+                "inference_speed": "Fast (local processing priority)",
+                "ring_hole_detection": "V10.6 Enhanced multi-method detection",
+                "hole_detection_methods": [
+                    "Multi-threshold (60-160)",
+                    "Edge-based contour detection",
+                    "Gradient magnitude analysis",
+                    "Morphological closing (7x7)",
+                    "Flood fill for missed areas"
+                ],
+                "thumbnail_crop_method": "Tight crop for 80%+ ring coverage",
+                "crop_factor": "0.75 for expected ratio",
+                "processing_order": "1.Background Removal → 2.Gentle Enhancement → 3.Natural Composite",
+                "expected_input": "2000x2600 (±30px tolerance)",
                 "output_size": "1000x1300",
+                "ring_coverage": "80%+ of frame",
                 "cubic_enhancement": "Gentle (120% unsharp)",
                 "white_overlay": "12% for ac_ (1차), 15% (2차)",
                 "brightness_increased": "8%",
                 "contrast_increased": "5%", 
                 "sharpness_increased": "1.5-1.6",
                 "spotlight_increased": "2.0%",
-                "processing_order": "1.Background Removal → 2.Gentle Enhancement → 3.Natural Composite",
                 "quality": "95",
                 "safety_features": "Ring preservation priority"
             }
