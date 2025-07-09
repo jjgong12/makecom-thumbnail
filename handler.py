@@ -142,7 +142,7 @@ def detect_pattern_type(filename: str) -> str:
     else:
         return "other"
 
-def create_background(size, color="#D5D5D5", style="gradient"):
+def create_background(size, color="#C8C8C8", style="gradient"):
     """Create natural gray background for jewelry - V10.4 BALANCED"""
     width, height = size
     
@@ -281,7 +281,7 @@ def ensure_ring_holes_transparent_simple(image: Image.Image) -> Image.Image:
     a_new = Image.fromarray(alpha_array)
     return Image.merge('RGBA', (r, g, b, a_new))
 
-def composite_with_natural_edge(image, background_color="#E8E8E8"):
+def composite_with_natural_edge(image, background_color="#C8C8C8"):
     """Natural composite with soft edges - V10.4 BALANCED"""
     if image.mode == 'RGBA':
         # Create background
@@ -295,11 +295,14 @@ def composite_with_natural_edge(image, background_color="#E8E8E8"):
         bg_array = np.array(background, dtype=np.float32)
         alpha_array = np.array(a, dtype=np.float32) / 255.0
         
-        # Simple edge softening - just a tiny blur on alpha
-        alpha_soft = cv2.GaussianBlur(alpha_array, (3, 3), 0.5)
+        # More aggressive edge softening for natural blend
+        alpha_soft = cv2.GaussianBlur(alpha_array, (7, 7), 2.0)  # Increased blur
         
-        # Use mostly original alpha with a bit of soft edge
-        alpha_final = alpha_array * 0.8 + alpha_soft * 0.2
+        # Use more soft edge for smoother transition
+        alpha_final = alpha_array * 0.6 + alpha_soft * 0.4  # More soft blend
+        
+        # Apply additional feathering at edges
+        alpha_final = cv2.GaussianBlur(alpha_final, (3, 3), 1.0)
         
         # Simple alpha blending
         for i in range(3):
@@ -587,7 +590,7 @@ def handler(event):
             image_index = event.get('input', {}).get('image_index', image_index)
         
         # Light gray background - BALANCED V10.4
-        background_color = '#D5D5D5'  # Proper gray for natural look
+        background_color = '#C8C8C8'  # Darker gray for better contrast
         
         # Fast extraction
         filename = find_filename_fast(event)
@@ -755,9 +758,9 @@ def handler(event):
                 "background_composite": has_transparency,
                 "background_removal": needs_background_removal,
                 "background_color": background_color,
-                "background_style": "Natural gray (#D5D5D5)",
+                "background_style": "Natural gray (#C8C8C8)",
                 "gradient_edge_darkening": "5%",
-                "edge_processing": "Natural soft edge (80/20 blend)",
+                "edge_processing": "Natural soft edge (60/40 blend + double feather)",
                 "composite_method": "Simple alpha blending",
                 "rembg_settings": "Conservative (240/50/8)",
                 "ring_hole_detection": "Improved multi-threshold detection",
