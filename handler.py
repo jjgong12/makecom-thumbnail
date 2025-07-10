@@ -16,10 +16,10 @@ logger = logging.getLogger(__name__)
 
 ################################
 # THUMBNAIL HANDLER - 1000x1300
-# VERSION: V12.0-Optimized-Consistent-Sizing
+# VERSION: V13.0-Advanced-Ring-Detection
 ################################
 
-VERSION = "V12.0-Optimized-Consistent-Sizing"
+VERSION = "V13.0-Advanced-Ring-Detection"
 
 # ===== GLOBAL INITIALIZATION FOR PERFORMANCE =====
 REPLICATE_API_TOKEN = os.environ.get('REPLICATE_API_TOKEN')
@@ -173,7 +173,7 @@ def create_background(size, color="#C8C8C8", style="gradient"):
         return Image.new('RGB', size, color)
 
 def multi_threshold_background_removal_optimized(image: Image.Image) -> Image.Image:
-    """OPTIMIZED: Remove background with REDUCED thresholds - V12.0"""
+    """OPTIMIZED: Remove background with REDUCED thresholds - V13.0"""
     try:
         from rembg import remove
         
@@ -183,7 +183,7 @@ def multi_threshold_background_removal_optimized(image: Image.Image) -> Image.Im
             if REMBG_SESSION is None:
                 return image
         
-        logger.info("🔷 Multi-threshold background removal V12.0 (Optimized)")
+        logger.info("🔷 Multi-threshold background removal V13.0 (Optimized)")
         
         buffered = BytesIO()
         image.save(buffered, format="PNG")
@@ -249,7 +249,7 @@ def calculate_edge_quality_fast(alpha_channel):
     return np.clip(edge_smoothness, 0, 1)
 
 def apply_natural_edge_processing_optimized(image: Image.Image) -> Image.Image:
-    """OPTIMIZED: Natural edge processing with REDUCED kernels - V12.0"""
+    """OPTIMIZED: Natural edge processing with REDUCED kernels - V13.0"""
     if image.mode != 'RGBA':
         return image
     
@@ -369,11 +369,11 @@ def create_thumbnail_with_consistent_sizing(image, target_width=1000, target_hei
     return thumbnail
 
 def composite_with_natural_blend(image, background_color="#C8C8C8"):
-    """Natural composite with perfect edge blending - V12.0 (UNCHANGED - CRITICAL)"""
+    """Natural composite with perfect edge blending - V13.0 (UNCHANGED - CRITICAL)"""
     if image.mode != 'RGBA':
         return image
     
-    logger.info("🖼️ Natural blending V12.0")
+    logger.info("🖼️ Natural blending V13.0")
     
     background = create_background(image.size, background_color, style="gradient")
     
@@ -430,71 +430,348 @@ def composite_with_natural_blend(image, background_color="#C8C8C8"):
     
     return Image.fromarray(np.clip(result, 0, 255).astype(np.uint8))
 
-def ensure_ring_holes_transparent_multi_threshold(image: Image.Image) -> Image.Image:
-    """Multi-threshold hole detection - V12.0 (UNCHANGED - CRITICAL FEATURE)"""
+def ensure_ring_holes_transparent_advanced(image: Image.Image) -> Image.Image:
+    """Advanced multi-stage ring hole detection with precision algorithms - V13.0"""
     if image.mode != 'RGBA':
         return image
     
-    logger.info("🔍 Multi-threshold hole detection V12.0")
+    logger.info("🔍 Advanced Ring Hole Detection V13.0 - Multi-Stage Precision")
     
     r, g, b, a = image.split()
     alpha_array = np.array(a, dtype=np.uint8)
+    rgb_array = np.array(image.convert('RGB'), dtype=np.float32)
     
     h, w = alpha_array.shape
     
+    # Initialize combined hole mask
     hole_mask_combined = np.zeros_like(alpha_array, dtype=bool)
     
-    # KEEP ALL THRESHOLDS - Critical for hole detection accuracy
-    thresholds = range(10, 100, 10)  # 10, 20, 30, ..., 90
+    # ===== STAGE 1: Multi-Threshold Detection =====
+    logger.info("Stage 1: Multi-threshold scanning")
+    
+    # Extended threshold range with finer steps
+    thresholds = list(range(5, 100, 5))  # More granular: 5, 10, 15, ..., 95
+    
+    stage1_candidates = []
     
     for threshold in thresholds:
         potential_holes = alpha_array < threshold
         
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-        potential_holes = cv2.morphologyEx(
-            potential_holes.astype(np.uint8), 
-            cv2.MORPH_OPEN, kernel
-        )
-        
-        num_labels, labels = cv2.connectedComponents(potential_holes)
-        
-        for label in range(1, num_labels):
-            component = (labels == label)
-            component_size = np.sum(component)
+        # Multiple morphological operations for different hole sizes
+        for kernel_size in [3, 5, 7]:
+            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
+            cleaned = cv2.morphologyEx(potential_holes.astype(np.uint8), cv2.MORPH_OPEN, kernel)
             
-            if component_size < 30 or component_size > (h * w * 0.1):
-                continue
+            num_labels, labels = cv2.connectedComponents(cleaned)
             
-            coords = np.where(component)
-            if len(coords[0]) == 0:
-                continue
+            for label in range(1, num_labels):
+                component = (labels == label)
+                component_size = np.sum(component)
                 
-            min_y, max_y = coords[0].min(), coords[0].max()
-            min_x, max_x = coords[1].min(), coords[1].max()
-            center_y = (min_y + max_y) // 2
-            center_x = (min_x + max_x) // 2
+                # Size filtering
+                min_size = max(20, h * w * 0.0001)  # Dynamic minimum
+                max_size = h * w * 0.15  # 15% max
+                
+                if min_size < component_size < max_size:
+                    coords = np.where(component)
+                    if len(coords[0]) > 0:
+                        stage1_candidates.append({
+                            'mask': component,
+                            'threshold': threshold,
+                            'kernel_size': kernel_size,
+                            'size': component_size,
+                            'coords': coords
+                        })
+    
+    logger.info(f"Stage 1 found {len(stage1_candidates)} candidates")
+    
+    # ===== STAGE 2: Geometric Analysis =====
+    logger.info("Stage 2: Geometric validation")
+    
+    stage2_candidates = []
+    
+    for candidate in stage1_candidates:
+        coords = candidate['coords']
+        mask = candidate['mask']
+        
+        # Bounding box analysis
+        min_y, max_y = coords[0].min(), coords[0].max()
+        min_x, max_x = coords[1].min(), coords[1].max()
+        center_y = (min_y + max_y) // 2
+        center_x = (min_x + max_x) // 2
+        width = max_x - min_x
+        height = max_y - min_y
+        
+        # Skip if too close to edges
+        margin = 0.08  # 8% margin
+        if not (margin * h < center_y < (1-margin) * h and 
+                margin * w < center_x < (1-margin) * w):
+            continue
+        
+        # Aspect ratio check
+        aspect_ratio = width / height if height > 0 else 0
+        if not (0.4 < aspect_ratio < 2.5):  # Slightly wider range
+            continue
+        
+        # Circularity check
+        area = candidate['size']
+        contour = np.column_stack(coords[::-1])
+        if len(contour) > 3:
+            perimeter = cv2.arcLength(contour, True)
+            if perimeter > 0:
+                circularity = 4 * np.pi * area / (perimeter ** 2)
+                if circularity < 0.3:  # Too irregular
+                    continue
+            else:
+                circularity = 0
+        else:
+            circularity = 0
+        
+        # Solidity check (convexity)
+        if len(contour) > 3:
+            hull = cv2.convexHull(contour)
+            hull_area = cv2.contourArea(hull)
+            if hull_area > 0:
+                solidity = area / hull_area
+                if solidity < 0.7:  # Too concave
+                    continue
+            else:
+                solidity = 0
+        else:
+            solidity = 0
+        
+        candidate['center'] = (center_x, center_y)
+        candidate['aspect_ratio'] = aspect_ratio
+        candidate['circularity'] = circularity
+        candidate['solidity'] = solidity
+        
+        stage2_candidates.append(candidate)
+    
+    logger.info(f"Stage 2 validated {len(stage2_candidates)} candidates")
+    
+    # ===== STAGE 3: Color Uniformity Analysis =====
+    logger.info("Stage 3: Color uniformity analysis")
+    
+    stage3_candidates = []
+    
+    for candidate in stage2_candidates:
+        mask = candidate['mask']
+        
+        # Analyze color within the hole region
+        hole_pixels = rgb_array[mask]
+        
+        if len(hole_pixels) > 0:
+            # Color statistics
+            color_mean = np.mean(hole_pixels, axis=0)
+            color_std = np.std(hole_pixels, axis=0)
             
-            margin = 0.1
-            if not (margin * h < center_y < (1-margin) * h and 
-                    margin * w < center_x < (1-margin) * w):
+            # Check if colors are uniform (characteristic of holes)
+            max_std = np.max(color_std)
+            mean_std = np.mean(color_std)
+            
+            # Holes typically have uniform color
+            if mean_std > 30:  # Too much color variation
                 continue
             
-            width = max_x - min_x
-            height = max_y - min_y
-            aspect_ratio = width / height if height > 0 else 0
+            # Check if it's bright (holes are usually bright/white)
+            brightness = np.mean(color_mean)
+            if brightness < 180:  # Too dark for a hole
+                continue
             
-            if 0.5 < aspect_ratio < 2.0:
-                avg_alpha = np.mean(alpha_array[component])
-                if avg_alpha < threshold * 0.8:
-                    hole_mask_combined |= component
+            candidate['color_uniformity'] = mean_std
+            candidate['brightness'] = brightness
+            
+            stage3_candidates.append(candidate)
     
-    alpha_modified = alpha_array.copy()
-    if np.any(hole_mask_combined):
-        hole_mask_float = hole_mask_combined.astype(np.float32)
-        hole_mask_smooth = cv2.GaussianBlur(hole_mask_float, (5, 5), 1.0)
+    logger.info(f"Stage 3 validated {len(stage3_candidates)} candidates")
+    
+    # ===== STAGE 4: Context Analysis =====
+    logger.info("Stage 4: Context-based validation")
+    
+    stage4_candidates = []
+    
+    for candidate in stage3_candidates:
+        mask = candidate['mask']
+        center_x, center_y = candidate['center']
         
-        alpha_modified = alpha_array * (1 - hole_mask_smooth)
+        # Create dilated mask to analyze surroundings
+        dilated = cv2.dilate(mask.astype(np.uint8), 
+                           cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15)))
+        surrounding = dilated & ~mask
+        
+        # Check if surrounded by opaque pixels (enclosed hole)
+        surrounding_alpha = alpha_array[surrounding]
+        if len(surrounding_alpha) > 0:
+            opaque_ratio = np.sum(surrounding_alpha > 200) / len(surrounding_alpha)
+            
+            if opaque_ratio < 0.6:  # Not well enclosed
+                continue
+            
+            # Check surrounding brightness contrast
+            surrounding_pixels = rgb_array[surrounding]
+            surrounding_brightness = np.mean(surrounding_pixels)
+            hole_brightness = candidate['brightness']
+            
+            # Holes should be brighter than surroundings
+            if hole_brightness < surrounding_brightness * 1.1:
+                continue
+            
+            candidate['enclosure_ratio'] = opaque_ratio
+            candidate['brightness_contrast'] = hole_brightness / (surrounding_brightness + 1)
+            
+            stage4_candidates.append(candidate)
     
+    logger.info(f"Stage 4 validated {len(stage4_candidates)} candidates")
+    
+    # ===== STAGE 5: Edge-Based Detection =====
+    logger.info("Stage 5: Edge-based hole detection")
+    
+    # Convert to grayscale for edge detection
+    gray = cv2.cvtColor(rgb_array.astype(np.uint8), cv2.COLOR_RGB2GRAY)
+    
+    # Multiple edge detection methods
+    edges_canny = cv2.Canny(gray, 50, 150)
+    edges_sobel = cv2.Sobel(gray, cv2.CV_64F, 1, 1, ksize=3)
+    edges_sobel = np.abs(edges_sobel) > 50
+    
+    # Combine edge maps
+    edges_combined = edges_canny | edges_sobel.astype(np.uint8)
+    
+    # Find closed contours
+    contours, _ = cv2.findContours(edges_combined, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
+    
+    for contour in contours:
+        area = cv2.contourArea(contour)
+        
+        # Size filtering
+        if not (h * w * 0.0001 < area < h * w * 0.1):
+            continue
+        
+        # Create mask from contour
+        contour_mask = np.zeros_like(alpha_array)
+        cv2.fillPoly(contour_mask, [contour], 255)
+        contour_mask = contour_mask > 0
+        
+        # Check if it's a hole (low alpha inside)
+        avg_alpha_inside = np.mean(alpha_array[contour_mask])
+        if avg_alpha_inside < 50:  # Likely a hole
+            
+            # Verify it's not already detected
+            overlap_found = False
+            for candidate in stage4_candidates:
+                overlap = np.sum(candidate['mask'] & contour_mask) / np.sum(contour_mask)
+                if overlap > 0.5:
+                    overlap_found = True
+                    break
+            
+            if not overlap_found:
+                # Check basic geometric properties
+                x, y, w_cont, h_cont = cv2.boundingRect(contour)
+                aspect_ratio = w_cont / h_cont if h_cont > 0 else 0
+                
+                if 0.4 < aspect_ratio < 2.5:
+                    stage4_candidates.append({
+                        'mask': contour_mask,
+                        'source': 'edge_detection',
+                        'area': area,
+                        'avg_alpha': avg_alpha_inside
+                    })
+    
+    logger.info(f"Stage 5 added edge-based detections, total: {len(stage4_candidates)}")
+    
+    # ===== STAGE 6: Machine Learning-Style Scoring =====
+    logger.info("Stage 6: Scoring and final selection")
+    
+    final_holes = []
+    
+    for candidate in stage4_candidates:
+        score = 0.0
+        
+        # Geometric score
+        if 'aspect_ratio' in candidate:
+            ar_score = 1.0 - abs(1.0 - candidate['aspect_ratio']) * 0.5
+            score += ar_score * 20
+        
+        if 'circularity' in candidate:
+            score += candidate['circularity'] * 30
+        
+        if 'solidity' in candidate:
+            score += candidate['solidity'] * 20
+        
+        # Color score
+        if 'color_uniformity' in candidate:
+            uniformity_score = 1.0 - (candidate['color_uniformity'] / 50)
+            score += max(0, uniformity_score) * 15
+        
+        if 'brightness' in candidate:
+            brightness_score = candidate['brightness'] / 255
+            score += brightness_score * 10
+        
+        # Context score
+        if 'enclosure_ratio' in candidate:
+            score += candidate['enclosure_ratio'] * 25
+        
+        if 'brightness_contrast' in candidate:
+            contrast_score = min(2.0, candidate['brightness_contrast']) / 2.0
+            score += contrast_score * 15
+        
+        # Alpha score
+        mask = candidate['mask']
+        avg_alpha = np.mean(alpha_array[mask])
+        alpha_score = 1.0 - (avg_alpha / 255)
+        score += alpha_score * 20
+        
+        candidate['final_score'] = score
+        
+        # Threshold for acceptance
+        if score > 50:  # Adjust based on testing
+            final_holes.append(candidate)
+    
+    # Sort by score and apply
+    final_holes.sort(key=lambda x: x['final_score'], reverse=True)
+    
+    logger.info(f"Final selection: {len(final_holes)} holes detected")
+    
+    # ===== STAGE 7: Apply Holes with Smooth Transitions =====
+    alpha_modified = alpha_array.copy().astype(np.float32)
+    
+    for hole in final_holes:
+        mask = hole['mask']
+        
+        # Multi-scale smoothing for natural transitions
+        mask_float = mask.astype(np.float32)
+        
+        # Progressive Gaussian blur for smooth edges
+        smooth_masks = []
+        for sigma in [1.0, 2.0, 3.0, 5.0]:
+            smoothed = cv2.GaussianBlur(mask_float, (0, 0), sigma)
+            smooth_masks.append(smoothed)
+        
+        # Combine smooth masks with weights
+        final_mask = np.zeros_like(mask_float)
+        weights = [0.4, 0.3, 0.2, 0.1]
+        
+        for smooth_mask, weight in zip(smooth_masks, weights):
+            final_mask += smooth_mask * weight
+        
+        # Apply with feathering
+        alpha_modified = alpha_modified * (1 - final_mask)
+        
+        logger.info(f"Applied hole with score: {hole['final_score']:.2f}")
+    
+    # ===== STAGE 8: Post-Processing =====
+    # Clean up any artifacts
+    alpha_modified = cv2.medianBlur(alpha_modified.astype(np.uint8), 3)
+    
+    # Ensure complete transparency in hole centers
+    for hole in final_holes:
+        mask = hole['mask']
+        # Erode mask to get center
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+        center_mask = cv2.erode(mask.astype(np.uint8), kernel)
+        alpha_modified[center_mask > 0] = 0
+    
+    # Convert back to image
     a_new = Image.fromarray(alpha_modified.astype(np.uint8))
     return Image.merge('RGBA', (r, g, b, a_new))
 
@@ -686,9 +963,9 @@ def image_to_base64(image):
     return base64.b64encode(buffered.getvalue()).decode().rstrip('=')
 
 def handler(event):
-    """Optimized thumbnail handler - V12.0 with consistent ring sizing"""
+    """Optimized thumbnail handler - V13.0 with advanced ring hole detection"""
     try:
-        logger.info(f"=== Thumbnail {VERSION} Started - Optimized ===")
+        logger.info(f"=== Thumbnail {VERSION} Started - Advanced Ring Detection ===")
         
         image_index = event.get('image_index', 1)
         if isinstance(event.get('input'), dict):
@@ -784,8 +1061,8 @@ def handler(event):
             enhanced_transparent = create_thumbnail_with_consistent_sizing(original_transparent, 1000, 1300)
             
             if enhanced_transparent.mode == 'RGBA':
-                # CRITICAL: Multi-threshold hole detection
-                enhanced_transparent = ensure_ring_holes_transparent_multi_threshold(enhanced_transparent)
+                # CRITICAL: Advanced ring hole detection V13.0
+                enhanced_transparent = ensure_ring_holes_transparent_advanced(enhanced_transparent)
                 
                 r, g, b, a = enhanced_transparent.split()
                 rgb_image = Image.merge('RGB', (r, g, b))
@@ -846,7 +1123,7 @@ def handler(event):
                 "background_color": background_color,
                 "background_style": "Natural gray (#C8C8C8)",
                 "gradient_edge_darkening": "5%",
-                "edge_processing": "Natural multi-stage edge blending V12.0",
+                "edge_processing": "Natural multi-stage edge blending V13.0",
                 "composite_method": "Advanced natural blending with edge color correction",
                 "background_removal_method": "Optimized multi-threshold (3 levels)",
                 "threshold_configs": "3 levels: 240/50, 220/70, 200/90",
@@ -859,8 +1136,33 @@ def handler(event):
                     "Anti-aliasing with sub-pixel accuracy",
                     "Bilateral filtering for smoothness"
                 ],
-                "hole_detection": "Multi-threshold (10-90 step 10) - UNCHANGED",
-                "hole_shape_check": "Aspect ratio 0.5-2.0",
+                "ring_hole_detection": [
+                    "✅ 8-Stage Advanced Detection Algorithm V13.0",
+                    "✅ Multi-threshold scanning (5-95, step 5)",
+                    "✅ Geometric validation (circularity, solidity)",
+                    "✅ Color uniformity analysis",
+                    "✅ Context-based validation",
+                    "✅ Edge-based detection (Canny + Sobel)",
+                    "✅ ML-style scoring system",
+                    "✅ Multi-scale smooth transitions",
+                    "✅ Post-processing cleanup"
+                ],
+                "hole_detection_features": {
+                    "thresholds": "19 levels (5-95, step 5)",
+                    "kernel_sizes": "3, 5, 7 for different hole sizes",
+                    "geometric_checks": "Aspect ratio, circularity, solidity",
+                    "color_analysis": "Uniformity < 30, brightness > 180",
+                    "context_validation": "Enclosure ratio > 60%",
+                    "edge_detection": "Combined Canny + Sobel",
+                    "scoring_weights": {
+                        "geometry": "40 points",
+                        "color": "25 points",
+                        "context": "25 points",
+                        "alpha": "20 points"
+                    },
+                    "smoothing": "4-level Gaussian (σ=1,2,3,5)",
+                    "score_threshold": "50+ for acceptance"
+                },
                 "consistent_sizing_features": [
                     "✅ Alpha channel based bounds detection",
                     "✅ Diagonal size normalization",
@@ -886,7 +1188,7 @@ def handler(event):
                     "Reduced logging overhead"
                 ],
                 "preserved_features": [
-                    "✅ Multi-threshold hole detection (unchanged)",
+                    "✅ Advanced ring hole detection V13.0",
                     "✅ Consistent ring sizing (unchanged)",
                     "✅ Natural edge blending (all 6 stages)",
                     "✅ SwinIR enhancement",
