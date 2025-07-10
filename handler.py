@@ -16,10 +16,10 @@ logger = logging.getLogger(__name__)
 
 ################################
 # THUMBNAIL HANDLER - 1000x1300
-# VERSION: V13.0-Advanced-Ring-Detection
+# VERSION: V13.1-Precision-BG-Removal
 ################################
 
-VERSION = "V13.0-Advanced-Ring-Detection"
+VERSION = "V13.1-Precision-BG-Removal"
 
 # ===== GLOBAL INITIALIZATION FOR PERFORMANCE =====
 REPLICATE_API_TOKEN = os.environ.get('REPLICATE_API_TOKEN')
@@ -172,8 +172,8 @@ def create_background(size, color="#C8C8C8", style="gradient"):
     else:
         return Image.new('RGB', size, color)
 
-def multi_threshold_background_removal_optimized(image: Image.Image) -> Image.Image:
-    """OPTIMIZED: Remove background with REDUCED thresholds - V13.0"""
+def multi_threshold_background_removal_precision(image: Image.Image) -> Image.Image:
+    """PRECISION: Remove background with MORE PRECISE thresholds - V13.1"""
     try:
         from rembg import remove
         
@@ -183,7 +183,7 @@ def multi_threshold_background_removal_optimized(image: Image.Image) -> Image.Im
             if REMBG_SESSION is None:
                 return image
         
-        logger.info("🔷 Multi-threshold background removal V13.0 (Optimized)")
+        logger.info("🔷 Precision background removal V13.1 - Enhanced")
         
         buffered = BytesIO()
         image.save(buffered, format="PNG")
@@ -193,11 +193,15 @@ def multi_threshold_background_removal_optimized(image: Image.Image) -> Image.Im
         best_result = None
         best_score = -1
         
-        # REDUCED from 5 to 3 thresholds
+        # PRECISION: More threshold configs for better edge detection
         threshold_configs = [
+            {"fg": 250, "bg": 40, "erode": 0},   # Ultra Conservative
             {"fg": 240, "bg": 50, "erode": 0},   # Conservative
+            {"fg": 230, "bg": 60, "erode": 1},   # Balanced Conservative
             {"fg": 220, "bg": 70, "erode": 1},   # Balanced
+            {"fg": 210, "bg": 80, "erode": 1},   # Balanced Aggressive
             {"fg": 200, "bg": 90, "erode": 2},   # Aggressive
+            {"fg": 190, "bg": 100, "erode": 2},  # More Aggressive
         ]
         
         for config in threshold_configs:
@@ -216,10 +220,14 @@ def multi_threshold_background_removal_optimized(image: Image.Image) -> Image.Im
                 if result_image.mode == 'RGBA':
                     alpha = np.array(result_image.split()[3])
                     
-                    edge_quality = calculate_edge_quality_fast(alpha)
+                    edge_quality = calculate_edge_quality_precision(alpha)
                     object_preservation = np.sum(alpha > 200) / alpha.size
+                    edge_precision = calculate_edge_precision(alpha)
                     
-                    score = edge_quality * 0.7 + object_preservation * 0.3
+                    # Enhanced scoring with edge precision
+                    score = edge_quality * 0.5 + object_preservation * 0.3 + edge_precision * 0.2
+                    
+                    logger.info(f"Config {config['fg']}/{config['bg']} - Score: {score:.3f}")
                     
                     if score > best_score:
                         best_score = score
@@ -230,17 +238,17 @@ def multi_threshold_background_removal_optimized(image: Image.Image) -> Image.Im
                 continue
         
         if best_result:
-            best_result = apply_natural_edge_processing_optimized(best_result)
+            best_result = apply_natural_edge_processing_precision(best_result)
             return best_result
         else:
             return image
             
     except Exception as e:
-        logger.error(f"Multi-threshold removal failed: {e}")
+        logger.error(f"Precision removal failed: {e}")
         return image
 
-def calculate_edge_quality_fast(alpha_channel):
-    """FAST edge quality score calculation"""
+def calculate_edge_quality_precision(alpha_channel):
+    """PRECISION edge quality score calculation"""
     edges = cv2.Sobel(alpha_channel, cv2.CV_64F, 1, 1, ksize=3)
     edge_magnitude = np.abs(edges)
     
@@ -248,12 +256,23 @@ def calculate_edge_quality_fast(alpha_channel):
     
     return np.clip(edge_smoothness, 0, 1)
 
-def apply_natural_edge_processing_optimized(image: Image.Image) -> Image.Image:
-    """OPTIMIZED: Natural edge processing with REDUCED kernels - V13.0"""
+def calculate_edge_precision(alpha_channel):
+    """Calculate edge precision score"""
+    # Detect thin edges that might be jewelry details
+    edges = cv2.Canny(alpha_channel, 100, 200)
+    thin_edges = cv2.morphologyEx(edges, cv2.MORPH_GRADIENT, np.ones((3,3)))
+    
+    # Calculate how well thin details are preserved
+    detail_preservation = np.sum(thin_edges > 0) / thin_edges.size
+    
+    return min(detail_preservation * 10, 1.0)  # Scale up but cap at 1.0
+
+def apply_natural_edge_processing_precision(image: Image.Image) -> Image.Image:
+    """PRECISION: Natural edge processing with finer control - V13.1"""
     if image.mode != 'RGBA':
         return image
     
-    logger.info("🎨 Applying natural edge processing (Optimized)")
+    logger.info("🎨 Applying precision edge processing")
     
     r, g, b, a = image.split()
     alpha_array = np.array(a, dtype=np.float32)
@@ -261,8 +280,8 @@ def apply_natural_edge_processing_optimized(image: Image.Image) -> Image.Image:
     edges = cv2.Canny(alpha_array.astype(np.uint8), 50, 150)
     edge_mask = edges > 0
     
-    # REDUCED kernel sizes from [3, 5, 7, 9] to [3, 5, 9]
-    kernel_sizes = [3, 5, 9]
+    # PRECISION: More kernel sizes for smoother transitions
+    kernel_sizes = [3, 5, 7, 9, 11]
     feathered_alpha = alpha_array.copy()
     
     for size in kernel_sizes:
@@ -272,7 +291,7 @@ def apply_natural_edge_processing_optimized(image: Image.Image) -> Image.Image:
         blur_size = size * 2 - 1
         edge_alpha = cv2.GaussianBlur(alpha_array, (blur_size, blur_size), size/2)
         
-        weight = 1.0 - (size - 3) / 6.0
+        weight = 1.0 - (size - 3) / 8.0  # Adjusted for more kernel sizes
         feathered_alpha[dilated_edge > 0] = (
             feathered_alpha[dilated_edge > 0] * weight + 
             edge_alpha[dilated_edge > 0] * (1 - weight)
@@ -286,8 +305,9 @@ def apply_natural_edge_processing_optimized(image: Image.Image) -> Image.Image:
     if np.any(dark_edges):
         feathered_alpha[dark_edges] *= 0.3
     
+    # Enhanced bilateral filter for better edge preservation
     feathered_alpha = cv2.bilateralFilter(
-        feathered_alpha.astype(np.uint8), 9, 75, 75
+        feathered_alpha.astype(np.uint8), 11, 85, 85
     ).astype(np.float32)
     
     feathered_alpha = cv2.GaussianBlur(feathered_alpha, (3, 3), 0.5)
@@ -369,11 +389,11 @@ def create_thumbnail_with_consistent_sizing(image, target_width=1000, target_hei
     return thumbnail
 
 def composite_with_natural_blend(image, background_color="#C8C8C8"):
-    """Natural composite with perfect edge blending - V13.0 (UNCHANGED - CRITICAL)"""
+    """Natural composite with perfect edge blending - V13.1 (UNCHANGED - CRITICAL)"""
     if image.mode != 'RGBA':
         return image
     
-    logger.info("🖼️ Natural blending V13.0")
+    logger.info("🖼️ Natural blending V13.1")
     
     background = create_background(image.size, background_color, style="gradient")
     
@@ -431,11 +451,11 @@ def composite_with_natural_blend(image, background_color="#C8C8C8"):
     return Image.fromarray(np.clip(result, 0, 255).astype(np.uint8))
 
 def ensure_ring_holes_transparent_advanced(image: Image.Image) -> Image.Image:
-    """Advanced multi-stage ring hole detection with precision algorithms - V13.0"""
+    """Advanced multi-stage ring hole detection with precision algorithms - V13.1"""
     if image.mode != 'RGBA':
         return image
     
-    logger.info("🔍 Advanced Ring Hole Detection V13.0 - Multi-Stage Precision")
+    logger.info("🔍 Advanced Ring Hole Detection V13.1 - Multi-Stage Precision")
     
     r, g, b, a = image.split()
     alpha_array = np.array(a, dtype=np.uint8)
@@ -835,10 +855,9 @@ def enhance_cubic_details_thumbnail_simple(image: Image.Image) -> Image.Image:
     return image
 
 def auto_white_balance_fast(image: Image.Image) -> Image.Image:
-    """OPTIMIZED: Fast white balance with increased sampling"""
+    """Fast white balance"""
     img_array = np.array(image, dtype=np.float32)
     
-    # INCREASED sampling interval from ::10 to ::15
     sampled = img_array[::15, ::15]
     gray_mask = (
         (np.abs(sampled[:,:,0] - sampled[:,:,1]) < 15) & 
@@ -890,8 +909,7 @@ def apply_wedding_ring_focus_fast(image: Image.Image) -> Image.Image:
     return image
 
 def calculate_quality_metrics_fast(image: Image.Image) -> dict:
-    """OPTIMIZED: Fast quality metrics with increased sampling"""
-    # INCREASED sampling interval from ::20 to ::30
+    """Fast quality metrics"""
     img_array = np.array(image)[::30, ::30]
     
     r_avg = np.mean(img_array[:,:,0])
@@ -906,16 +924,18 @@ def calculate_quality_metrics_fast(image: Image.Image) -> dict:
         "cool_tone_diff": cool_tone_diff
     }
 
-def apply_pattern_enhancement_fast(image, pattern_type):
-    """Fast pattern enhancement - 12% white overlay for ac_"""
+def apply_pattern_enhancement_consistent(image, pattern_type):
+    """CONSISTENT pattern enhancement - Same for both thumbnail and enhancement"""
     
     if pattern_type == "ac_pattern":
+        # Apply 12% white overlay FIRST
         white_overlay = 0.12
         img_array = np.array(image, dtype=np.float32)
         img_array = img_array * (1 - white_overlay) + 255 * white_overlay
         img_array = np.clip(img_array, 0, 255)
         image = Image.fromarray(img_array.astype(np.uint8))
         
+        # Then apply same enhancements
         brightness = ImageEnhance.Brightness(image)
         image = brightness.enhance(1.005)
         
@@ -923,6 +943,7 @@ def apply_pattern_enhancement_fast(image, pattern_type):
         image = color.enhance(0.98)
         
     else:
+        # Other patterns
         brightness = ImageEnhance.Brightness(image)
         image = brightness.enhance(1.08)
         
@@ -932,14 +953,15 @@ def apply_pattern_enhancement_fast(image, pattern_type):
         sharpness = ImageEnhance.Sharpness(image)
         image = sharpness.enhance(1.5)
     
+    # Common enhancements
     image = apply_center_spotlight_fast(image, 0.025)
-    
     image = apply_wedding_ring_focus_fast(image)
     
-    # Fast quality check (only for ac_pattern) - 2차 처리
+    # Quality check for ac_pattern (2차 처리) - CONSISTENT
     if pattern_type == "ac_pattern":
         metrics = calculate_quality_metrics_fast(image)
         if metrics["brightness"] < 235:
+            # Apply additional 15% overlay
             white_overlay = 0.15
             img_array = np.array(image, dtype=np.float32)
             img_array = img_array * (1 - white_overlay) + 255 * white_overlay
@@ -963,9 +985,9 @@ def image_to_base64(image):
     return base64.b64encode(buffered.getvalue()).decode().rstrip('=')
 
 def handler(event):
-    """Optimized thumbnail handler - V13.0 with advanced ring hole detection"""
+    """Optimized thumbnail handler - V13.1 with precision background removal"""
     try:
-        logger.info(f"=== Thumbnail {VERSION} Started - Advanced Ring Detection ===")
+        logger.info(f"=== Thumbnail {VERSION} Started - Precision BG Removal ===")
         
         image_index = event.get('image_index', 1)
         if isinstance(event.get('input'), dict):
@@ -999,8 +1021,8 @@ def handler(event):
         needs_background_removal = False
         
         if filename and filename.lower().endswith('.png'):
-            logger.info("📸 STEP 1: PNG detected - optimized multi-threshold background removal")
-            image = multi_threshold_background_removal_optimized(image)
+            logger.info("📸 STEP 1: PNG detected - precision multi-threshold background removal")
+            image = multi_threshold_background_removal_precision(image)
             has_transparency = image.mode == 'RGBA'
             needs_background_removal = True
         
@@ -1051,7 +1073,8 @@ def handler(event):
             "other": "기타색상(no_overlay)"
         }.get(pattern_type, "기타색상")
         
-        thumbnail = apply_pattern_enhancement_fast(thumbnail, pattern_type)
+        # Use CONSISTENT enhancement
+        thumbnail = apply_pattern_enhancement_consistent(thumbnail, pattern_type)
         
         # STEP 3: BACKGROUND COMPOSITE (if transparent)
         if has_transparency and 'original_transparent' in locals():
@@ -1061,7 +1084,7 @@ def handler(event):
             enhanced_transparent = create_thumbnail_with_consistent_sizing(original_transparent, 1000, 1300)
             
             if enhanced_transparent.mode == 'RGBA':
-                # CRITICAL: Advanced ring hole detection V13.0
+                # CRITICAL: Advanced ring hole detection V13.1
                 enhanced_transparent = ensure_ring_holes_transparent_advanced(enhanced_transparent)
                 
                 r, g, b, a = enhanced_transparent.split()
@@ -1076,6 +1099,7 @@ def handler(event):
                 sharpness = ImageEnhance.Sharpness(rgb_image)
                 rgb_image = sharpness.enhance(1.6)
                 
+                # CONSISTENT ac_pattern processing
                 if pattern_type == "ac_pattern":
                     white_overlay = 0.12
                     img_array = np.array(rgb_image, dtype=np.float32)
@@ -1123,21 +1147,29 @@ def handler(event):
                 "background_color": background_color,
                 "background_style": "Natural gray (#C8C8C8)",
                 "gradient_edge_darkening": "5%",
-                "edge_processing": "Natural multi-stage edge blending V13.0",
+                "edge_processing": "Precision multi-stage edge blending V13.1",
                 "composite_method": "Advanced natural blending with edge color correction",
-                "background_removal_method": "Optimized multi-threshold (3 levels)",
-                "threshold_configs": "3 levels: 240/50, 220/70, 200/90",
-                "edge_quality_scoring": "Automatic best result selection",
+                "background_removal_method": "Precision multi-threshold (7 levels)",
+                "threshold_configs": "7 levels: 250/40 to 190/100",
+                "edge_quality_scoring": "Enhanced with edge precision metric",
+                "precision_features": [
+                    "✅ 7 threshold levels for better edge detection",
+                    "✅ Edge precision scoring added",
+                    "✅ Enhanced bilateral filtering (11, 85, 85)",
+                    "✅ 5 kernel sizes for smoother transitions",
+                    "✅ Consistent pattern enhancement",
+                    "✅ Same processing for thumbnail & enhancement"
+                ],
                 "natural_edge_features": [
-                    "Multi-kernel feathering (3,5,9)",
+                    "Multi-kernel feathering (3,5,7,9,11)",
                     "Dark edge pixel removal",
                     "Progressive alpha blending",
                     "Edge color spill correction",
                     "Anti-aliasing with sub-pixel accuracy",
-                    "Bilateral filtering for smoothness"
+                    "Enhanced bilateral filtering"
                 ],
                 "ring_hole_detection": [
-                    "✅ 8-Stage Advanced Detection Algorithm V13.0",
+                    "✅ 8-Stage Advanced Detection Algorithm V13.1",
                     "✅ Multi-threshold scanning (5-95, step 5)",
                     "✅ Geometric validation (circularity, solidity)",
                     "✅ Color uniformity analysis",
@@ -1147,6 +1179,11 @@ def handler(event):
                     "✅ Multi-scale smooth transitions",
                     "✅ Post-processing cleanup"
                 ],
+                "consistent_enhancement": {
+                    "ac_pattern": "12% white overlay → enhancements → quality check → 15% if needed",
+                    "other": "Standard enhancements without overlay",
+                    "common": "Center spotlight + wedding ring focus"
+                },
                 "hole_detection_features": {
                     "thresholds": "19 levels (5-95, step 5)",
                     "kernel_sizes": "3, 5, 7 for different hole sizes",
@@ -1175,30 +1212,12 @@ def handler(event):
                 "size_normalization": "All rings scaled to same diagonal size",
                 "bounds_detection": "Alpha channel + bounding rectangle",
                 "crop_adjustment": "Aspect ratio aware with boundary checks",
-                "processing_order": "1.Multi-threshold BG Removal → 2.Enhancement → 3.Natural Composite",
+                "processing_order": "1.Precision BG Removal → 2.Enhancement → 3.Natural Composite",
                 "expected_input": "2000x2600 (flexible)",
                 "output_size": "1000x1300",
                 "ring_coverage": "75% of diagonal (consistent across all thumbnails)",
-                "optimization_notes": [
-                    "Background removal: 5→3 thresholds (-40% time)",
-                    "Edge kernels: 4→3 steps (-25% time)",
-                    "White balance sampling: ::10→::15 (-33% samples)",
-                    "Quality metrics sampling: ::20→::30 (-33% samples)",
-                    "Global rembg session initialization",
-                    "Reduced logging overhead"
-                ],
-                "preserved_features": [
-                    "✅ Advanced ring hole detection V13.0",
-                    "✅ Consistent ring sizing (unchanged)",
-                    "✅ Natural edge blending (all 6 stages)",
-                    "✅ SwinIR enhancement",
-                    "✅ Pattern detection (ac_)",
-                    "✅ Natural composite method",
-                    "✅ All quality features"
-                ],
-                "performance_gain": "~30% faster processing",
                 "cubic_enhancement": "Gentle (120% unsharp)",
-                "white_overlay": "12% for ac_ (1차), 15% (2차)",
+                "white_overlay": "12% for ac_ (1차), 15% (2차) - CONSISTENT",
                 "brightness_increased": "8%",
                 "contrast_increased": "5%", 
                 "sharpness_increased": "1.5-1.6",
