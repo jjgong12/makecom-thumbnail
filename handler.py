@@ -11,15 +11,15 @@ import replicate
 import string
 import cv2
 
-logging.basicConfig(level=logging.WARNING)
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 ################################
 # THUMBNAIL HANDLER - 1000x1300
-# VERSION: V11.0-Natural-Edge-Center-Detection
+# VERSION: V11.1-Consistent-Ring-Sizing
 ################################
 
-VERSION = "V11.0-Natural-Edge-Center-Detection"
+VERSION = "V11.1-Consistent-Ring-Sizing"
 
 # ===== REPLICATE INITIALIZATION =====
 REPLICATE_API_TOKEN = os.environ.get('REPLICATE_API_TOKEN')
@@ -309,56 +309,99 @@ def apply_natural_edge_processing(image: Image.Image) -> Image.Image:
     a_new = Image.fromarray(feathered_alpha.astype(np.uint8))
     return Image.merge('RGBA', (r, g, b, a_new))
 
-def detect_ring_center(image: Image.Image) -> tuple:
-    """Detect wedding ring center using object detection - V11.0"""
-    logger.info("🎯 Detecting ring center")
-    
-    # Convert to grayscale for processing
-    if image.mode == 'RGBA':
-        # Use alpha channel for detection
-        alpha = np.array(image.split()[3])
-        gray = alpha
-    else:
+def detect_ring_bounds_from_alpha(image: Image.Image) -> tuple:
+    """Detect actual ring bounds from alpha channel for consistent sizing"""
+    if image.mode != 'RGBA':
+        # If no alpha, use grayscale detection
         gray = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2GRAY)
+        _, binary = cv2.threshold(gray, 50, 255, cv2.THRESH_BINARY)
+    else:
+        # Use alpha channel for precise detection
+        alpha = np.array(image.split()[3])
+        _, binary = cv2.threshold(alpha, 30, 255, cv2.THRESH_BINARY)
     
-    # Find object contours
-    _, binary = cv2.threshold(gray, 50, 255, cv2.THRESH_BINARY)
-    contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    # Find all non-zero pixels (actual object pixels)
+    coords = cv2.findNonZero(binary)
     
-    if not contours:
-        logger.warning("No contours found, using image center")
-        return image.size[0] // 2, image.size[1] // 2
+    if coords is None:
+        logger.warning("No object found in image, using full image")
+        return 0, 0, image.size[0], image.size[1], image.size[0]//2, image.size[1]//2, min(image.size)
     
-    # Find largest contour (should be the ring)
-    largest_contour = max(contours, key=cv2.contourArea)
+    # Get bounding rectangle of actual object
+    x, y, w, h = cv2.boundingRect(coords)
     
-    # Get bounding box
-    x, y, w, h = cv2.boundingRect(largest_contour)
-    
-    # Calculate center of bounding box
+    # Calculate center of the actual object
     center_x = x + w // 2
     center_y = y + h // 2
     
-    # Refine center using moments (more accurate for irregular shapes)
-    M = cv2.moments(largest_contour)
-    if M["m00"] != 0:
-        refined_cx = int(M["m10"] / M["m00"])
-        refined_cy = int(M["m01"] / M["m00"])
+    # Calculate the diagonal size of the ring (for consistent scaling)
+    diagonal = np.sqrt(w**2 + h**2)
+    
+    logger.info(f"Ring bounds: x={x}, y={y}, w={w}, h={h}, center=({center_x}, {center_y}), diagonal={diagonal:.1f}")
+    
+    return x, y, w, h, center_x, center_y, diagonal
+
+def create_thumbnail_with_consistent_sizing(image, target_width=1000, target_height=1300):
+    """Create thumbnail with consistent ring sizing across all images"""
+    original_width, original_height = image.size
+    
+    logger.info(f"Creating consistent thumbnail from {original_width}x{original_height}")
+    
+    # Detect actual ring bounds
+    x, y, w, h, center_x, center_y, diagonal = detect_ring_bounds_from_alpha(image)
+    
+    # Target ring size: 75% of thumbnail diagonal
+    target_diagonal = np.sqrt(target_width**2 + target_height**2) * 0.75
+    
+    # Calculate scale factor to make ring consistent size
+    scale_factor = target_diagonal / diagonal if diagonal > 0 else 1.0
+    
+    logger.info(f"Ring diagonal: {diagonal:.1f}, target: {target_diagonal:.1f}, scale: {scale_factor:.3f}")
+    
+    # Calculate crop size that will result in target size after scaling
+    crop_width = int(target_width / scale_factor)
+    crop_height = int(target_height / scale_factor)
+    
+    # Ensure crop doesn't exceed image bounds
+    crop_width = min(crop_width, original_width)
+    crop_height = min(crop_height, original_height)
+    
+    # Adjust crop to maintain aspect ratio
+    crop_ratio = crop_width / crop_height
+    target_ratio = target_width / target_height
+    
+    if crop_ratio > target_ratio:
+        # Too wide, adjust width
+        crop_width = int(crop_height * target_ratio)
+    else:
+        # Too tall, adjust height  
+        crop_height = int(crop_width / target_ratio)
+    
+    # Calculate crop position centered on ring
+    left = center_x - crop_width // 2
+    top = center_y - crop_height // 2
+    
+    # Adjust if crop goes out of bounds
+    if left < 0:
+        left = 0
+    elif left + crop_width > original_width:
+        left = original_width - crop_width
         
-        # Use refined center if it's within the bounding box
-        if x <= refined_cx <= x + w and y <= refined_cy <= y + h:
-            center_x = refined_cx
-            center_y = refined_cy
+    if top < 0:
+        top = 0
+    elif top + crop_height > original_height:
+        top = original_height - crop_height
     
-    logger.info(f"Ring center detected at ({center_x}, {center_y})")
+    right = left + crop_width
+    bottom = top + crop_height
     
-    # Verify center is reasonable
-    img_w, img_h = image.size
-    if not (0.2 * img_w < center_x < 0.8 * img_w and 0.2 * img_h < center_y < 0.8 * img_h):
-        logger.warning("Detected center seems off, using image center")
-        return img_w // 2, img_h // 2
+    logger.info(f"Crop box: ({left}, {top}, {right}, {bottom})")
     
-    return center_x, center_y
+    # Crop and resize
+    cropped = image.crop((left, top, right, bottom))
+    thumbnail = cropped.resize((target_width, target_height), Image.Resampling.LANCZOS)
+    
+    return thumbnail
 
 def composite_with_natural_blend(image, background_color="#C8C8C8"):
     """Natural composite with perfect edge blending - V11.0"""
@@ -708,63 +751,6 @@ def apply_pattern_enhancement_fast(image, pattern_type):
     
     return image
 
-def create_thumbnail_with_center_detection(image, target_width=1000, target_height=1300):
-    """Create thumbnail using detected ring center - V11.0"""
-    original_width, original_height = image.size
-    
-    # Calculate the aspect ratios
-    target_ratio = target_width / target_height
-    
-    logger.info(f"Thumbnail input size: {original_width}x{original_height}")
-    
-    # Detect ring center
-    center_x, center_y = detect_ring_center(image)
-    logger.info(f"Using ring center: ({center_x}, {center_y})")
-    
-    # Calculate crop dimensions to achieve 80% ring coverage
-    # For a ring to fill 80% of the frame, we need to crop tighter
-    crop_factor = 0.75  # This makes the ring fill ~80-85% of the frame
-    
-    # Calculate crop box dimensions
-    crop_width = int(original_width * crop_factor)
-    crop_height = int(original_height * crop_factor)
-    
-    # Adjust crop dimensions to match target aspect ratio
-    current_ratio = crop_width / crop_height
-    
-    if current_ratio > target_ratio:
-        # Crop is too wide, adjust width
-        crop_width = int(crop_height * target_ratio)
-    else:
-        # Crop is too tall, adjust height
-        crop_height = int(crop_width / target_ratio)
-    
-    # Calculate crop box centered on the ring
-    left = max(0, center_x - crop_width // 2)
-    top = max(0, center_y - crop_height // 2)
-    right = min(original_width, left + crop_width)
-    bottom = min(original_height, top + crop_height)
-    
-    # Adjust if crop extends beyond image boundaries
-    if right > original_width:
-        left = original_width - crop_width
-        right = original_width
-    if bottom > original_height:
-        top = original_height - crop_height
-        bottom = original_height
-    
-    # Ensure we don't have negative coordinates
-    left = max(0, left)
-    top = max(0, top)
-    
-    logger.info(f"Crop box: ({left}, {top}, {right}, {bottom})")
-    
-    # Crop and resize
-    cropped = image.crop((left, top, right, bottom))
-    thumbnail = cropped.resize((target_width, target_height), Image.Resampling.LANCZOS)
-    
-    return thumbnail
-
 def image_to_base64(image):
     """Convert to base64 without padding"""
     buffered = BytesIO()
@@ -780,9 +766,12 @@ def image_to_base64(image):
     return base64.b64encode(buffered.getvalue()).decode().rstrip('=')
 
 def handler(event):
-    """Optimized thumbnail handler - V11.0 with center detection"""
+    """Optimized thumbnail handler - V11.1 with consistent ring sizing"""
     try:
-        logger.info(f"=== Thumbnail {VERSION} Started ===")
+        logger.info(f"=== Thumbnail {VERSION} Started - Consistent Ring Sizing ===")
+        
+        # Enable debug logging temporarily
+        logger.setLevel(logging.INFO)
         
         # Get image index
         image_index = event.get('image_index', 1)
@@ -857,8 +846,8 @@ def handler(event):
         # Detect pattern
         pattern_type = detect_pattern_type(filename)
         
-        # Create thumbnail with center detection
-        thumbnail = create_thumbnail_with_center_detection(image, 1000, 1300)
+        # Create thumbnail with consistent sizing
+        thumbnail = create_thumbnail_with_consistent_sizing(image, 1000, 1300)
         
         # Apply SwinIR AFTER resize
         swinir_applied = False
@@ -885,8 +874,8 @@ def handler(event):
         if has_transparency and 'original_transparent' in locals():
             logger.info(f"🖼️ STEP 3: Natural background compositing: {background_color}")
             
-            # Apply same thumbnail crop to transparent version with center detection
-            enhanced_transparent = create_thumbnail_with_center_detection(original_transparent, 1000, 1300)
+            # Apply same thumbnail crop to transparent version with consistent sizing
+            enhanced_transparent = create_thumbnail_with_consistent_sizing(original_transparent, 1000, 1300)
             
             if enhanced_transparent.mode == 'RGBA':
                 # Multi-threshold hole detection
@@ -975,21 +964,22 @@ def handler(event):
                 ],
                 "hole_detection": "Multi-threshold (10-90 step 10)",
                 "hole_shape_check": "Aspect ratio 0.5-2.0",
-                "center_detection_method": "Object contour + moment calculation",
-                "center_detection_features": [
-                    "Largest contour detection",
-                    "Bounding box calculation",
-                    "Moment-based center refinement",
-                    "Center validation (20%-80% bounds)",
-                    "Fallback to image center if needed"
+                "consistent_sizing_features": [
+                    "Alpha channel based bounds detection",
+                    "Diagonal size normalization",
+                    "75% of thumbnail diagonal target",
+                    "Automatic scale calculation",
+                    "Center-aligned cropping"
                 ],
-                "thumbnail_crop_method": "Center-based precision cropping",
-                "crop_factor": "0.75 for 80%+ ring coverage",
+                "thumbnail_crop_method": "Consistent sizing based on ring bounds",
+                "crop_factor": "75% of thumbnail diagonal",
+                "size_normalization": "All rings scaled to same diagonal size",
+                "bounds_detection": "Alpha channel + bounding rectangle",
                 "crop_adjustment": "Aspect ratio aware with boundary checks",
                 "processing_order": "1.Multi-threshold BG Removal → 2.Enhancement → 3.Natural Composite",
                 "expected_input": "2000x2600 (flexible)",
                 "output_size": "1000x1300",
-                "ring_coverage": "80%+ of frame",
+                "ring_coverage": "75% of diagonal (consistent across all thumbnails)",
                 "cubic_enhancement": "Gentle (120% unsharp)",
                 "white_overlay": "12% for ac_ (1차), 15% (2차)",
                 "brightness_increased": "8%",
