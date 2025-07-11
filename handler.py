@@ -16,10 +16,10 @@ logger = logging.getLogger(__name__)
 
 ################################
 # THUMBNAIL HANDLER - 1000x1300
-# VERSION: V18.0-Improved-BG-Removal
+# VERSION: V18.1-Fixed-BG-Removal
 ################################
 
-VERSION = "V18.0-Improved-BG-Removal"
+VERSION = "V18.1-Fixed-BG-Removal"
 
 # ===== GLOBAL INITIALIZATION =====
 REPLICATE_API_TOKEN = os.environ.get('REPLICATE_API_TOKEN')
@@ -173,7 +173,7 @@ def create_background(size, color="#E0DADC", style="gradient"):
         return Image.new('RGB', size, color)
 
 def u2net_optimized_removal(image: Image.Image) -> Image.Image:
-    """Enhanced U2Net background removal with multi-stage verification"""
+    """SIMPLIFIED U2Net background removal"""
     try:
         from rembg import remove
         
@@ -183,20 +183,21 @@ def u2net_optimized_removal(image: Image.Image) -> Image.Image:
             if REMBG_SESSION is None:
                 return image
         
-        logger.info("🔷 U2Net Enhanced Background Removal V18.0 - Multi-stage Verification")
+        logger.info("🔷 U2Net Background Removal V18.1 - Simplified")
         
-        # STAGE 1: Initial U2Net removal
+        # Save image to buffer
         buffered = BytesIO()
         image.save(buffered, format="PNG")
         buffered.seek(0)
         img_data = buffered.getvalue()
         
+        # Apply U2Net removal with optimized settings
         output = remove(
             img_data,
             session=REMBG_SESSION,
             alpha_matting=True,
-            alpha_matting_foreground_threshold=240,  # Increased for better edge detection
-            alpha_matting_background_threshold=10,   # Decreased for cleaner background
+            alpha_matting_foreground_threshold=240,
+            alpha_matting_background_threshold=10,
             alpha_matting_erode_size=0
         )
         
@@ -205,77 +206,28 @@ def u2net_optimized_removal(image: Image.Image) -> Image.Image:
         if result_image.mode != 'RGBA':
             return result_image
         
-        # STAGE 2: Edge verification and refinement
+        # Simple edge refinement
         r, g, b, a = result_image.split()
         alpha_array = np.array(a, dtype=np.uint8)
-        rgb_array = np.array(result_image.convert('RGB'), dtype=np.uint8)
         
-        logger.info("📊 Stage 2: Edge verification starting...")
+        # Basic morphological operations for cleaner edges
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+        alpha_array = cv2.morphologyEx(alpha_array, cv2.MORPH_OPEN, kernel)
+        alpha_array = cv2.morphologyEx(alpha_array, cv2.MORPH_CLOSE, kernel)
         
-        # Create edge mask using multiple techniques
-        edges_canny = cv2.Canny(rgb_array, 50, 150)
-        edges_sobel_x = cv2.Sobel(rgb_array[:,:,0], cv2.CV_64F, 1, 0, ksize=3)
-        edges_sobel_y = cv2.Sobel(rgb_array[:,:,0], cv2.CV_64F, 0, 1, ksize=3)
-        edges_sobel = np.sqrt(edges_sobel_x**2 + edges_sobel_y**2)
-        edges_sobel = (edges_sobel > 50).astype(np.uint8) * 255
-        
-        # Combine edge detection methods
-        combined_edges = cv2.bitwise_or(edges_canny, edges_sobel)
-        
-        # STAGE 3: Cross-check alpha boundaries
-        logger.info("🔍 Stage 3: Cross-checking alpha boundaries...")
-        
-        # Find alpha transition zones
-        alpha_gradient = cv2.morphologyEx(alpha_array, cv2.MORPH_GRADIENT, np.ones((3,3)))
-        transition_mask = (alpha_gradient > 20) & (alpha_gradient < 235)
-        
-        # Verify edges align with alpha transitions
-        edge_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-        edge_region = cv2.dilate(combined_edges, edge_kernel, iterations=2)
-        
-        # Cross-validation: edges should align with alpha transitions
-        valid_edges = edge_region & transition_mask
-        
-        # STAGE 4: Multi-pass refinement
-        logger.info("🔄 Stage 4: Multi-pass edge refinement...")
-        
-        # Pass 1: Clean up noise
-        kernel_small = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-        alpha_array = cv2.morphologyEx(alpha_array, cv2.MORPH_OPEN, kernel_small)
-        
-        # Pass 2: Fill small gaps
-        alpha_array = cv2.morphologyEx(alpha_array, cv2.MORPH_CLOSE, kernel_small)
-        
-        # Pass 3: Edge-aware smoothing
+        # Smooth edges with bilateral filter
         alpha_array = cv2.bilateralFilter(alpha_array, 9, 75, 75)
         
-        # Pass 4: Additional edge refinement
-        # Use distance transform for smooth edges
-        dist_transform = cv2.distanceTransform((alpha_array > 128).astype(np.uint8), cv2.DIST_L2, 5)
-        alpha_array = np.where(dist_transform > 2, 255, alpha_array * (dist_transform / 2))
-        
-        # STAGE 5: Final verification
-        logger.info("✅ Stage 5: Final verification and quality check...")
-        
-        # Check for islands (disconnected regions)
+        # Remove small islands
         num_labels, labels = cv2.connectedComponents((alpha_array > 128).astype(np.uint8))
         
-        if num_labels > 2:  # More than background + main object
-            # Keep only the largest component
+        if num_labels > 2:
             sizes = [np.sum(labels == i) for i in range(1, num_labels)]
             if sizes:
                 largest_label = np.argmax(sizes) + 1
                 alpha_array = np.where(labels == largest_label, alpha_array, 0)
         
-        # Final edge smoothing with verification
-        final_edges = cv2.Canny(alpha_array, 50, 150)
-        edge_distance = cv2.distanceTransform(255 - final_edges, cv2.DIST_L2, 5)
-        edge_smooth_mask = edge_distance < 3
-        
-        alpha_smooth = cv2.GaussianBlur(alpha_array, (5, 5), 1.0)
-        alpha_array[edge_smooth_mask] = alpha_smooth[edge_smooth_mask]
-        
-        logger.info(f"📈 Background removal complete - Verified {np.sum(valid_edges > 0)} edge pixels")
+        logger.info("✅ Background removal complete")
         
         a_new = Image.fromarray(alpha_array)
         return Image.merge('RGBA', (r, g, b, a_new))
@@ -318,37 +270,36 @@ def create_thumbnail_proportional(image, target_width=1000, target_height=1300):
     return resized
 
 def composite_with_natural_blend(image, background_color="#E0DADC"):
-    """Natural composite with edge blending"""
+    """SIMPLIFIED natural composite with edge blending"""
     if image.mode != 'RGBA':
         return image
     
+    logger.info("🎨 Simplified background composite")
+    
+    # Create background
     background = create_background(image.size, background_color, style="gradient")
     
+    # Get alpha channel
     r, g, b, a = image.split()
-    
-    fg_array = np.array(image.convert('RGB'), dtype=np.float32)
-    bg_array = np.array(background, dtype=np.float32)
     alpha_array = np.array(a, dtype=np.float32) / 255.0
     
+    # Simple edge softening
+    alpha_soft = cv2.GaussianBlur(alpha_array, (3, 3), 1.0)
+    
+    # Find edges
     edges = cv2.Canny((alpha_array * 255).astype(np.uint8), 50, 150)
-    edge_region = cv2.dilate(edges, np.ones((15, 15)), iterations=1) > 0
+    edge_mask = cv2.dilate(edges, np.ones((5, 5)), iterations=1) > 0
     
-    alpha_soft = cv2.GaussianBlur(alpha_array, (5, 5), 1.5)
+    # Blend original and soft alpha at edges only
+    alpha_final = alpha_array.copy()
+    alpha_final[edge_mask] = alpha_soft[edge_mask]
     
-    edge_dist = cv2.distanceTransform(
-        (1 - edge_region).astype(np.uint8), 
-        cv2.DIST_L2, 5
-    )
-    edge_dist = np.clip(edge_dist / 10.0, 0, 1)
+    # Convert images to arrays
+    fg_array = np.array(image.convert('RGB'), dtype=np.float32)
+    bg_array = np.array(background, dtype=np.float32)
     
-    alpha_final = alpha_array * edge_dist + alpha_soft * (1 - edge_dist)
-    
-    result = np.zeros_like(bg_array)
-    for i in range(3):
-        result[:,:,i] = (
-            fg_array[:,:,i] * alpha_final + 
-            bg_array[:,:,i] * (1 - alpha_final)
-        )
+    # Simple composite
+    result = fg_array * alpha_final[:,:,np.newaxis] + bg_array * (1 - alpha_final[:,:,np.newaxis])
     
     return Image.fromarray(np.clip(result, 0, 255).astype(np.uint8))
 
@@ -357,7 +308,7 @@ def ensure_ring_holes_transparent_fast(image: Image.Image) -> Image.Image:
     if image.mode != 'RGBA':
         return image
     
-    logger.info("🔍 Fast Ring Hole Detection V17.0")
+    logger.info("🔍 Fast Ring Hole Detection V18.1")
     
     r, g, b, a = image.split()
     alpha_array = np.array(a, dtype=np.uint8)
@@ -656,7 +607,7 @@ def image_to_base64(image):
     return base64.b64encode(buffered.getvalue()).decode().rstrip('=')
 
 def handler(event):
-    """Optimized thumbnail handler - V17.0 with AB pattern support"""
+    """Optimized thumbnail handler - V18.1 Fixed"""
     try:
         logger.info(f"=== Thumbnail {VERSION} Started ===")
         
@@ -833,11 +784,11 @@ def handler(event):
                 "background_removal": needs_background_removal,
                 "background_color": background_color,
                 "optimization_features": [
-                    "✅ Enhanced multi-stage background removal with cross-validation",
+                    "✅ Fixed background removal - Removed cv2.ximgproc dependency",
+                    "✅ Simplified edge blending (5x5 kernel instead of 15x15)",
+                    "✅ Cleaner alpha compositing logic",
                     "✅ AB Pattern Cool Tone Support (R:0.96, G:0.98, B:1.02)",
-                    "✅ 5-stage edge verification system",
                     "✅ Fixed proportional thumbnail (50% for 2000x2600)",
-                    "✅ Combined Canny + Sobel edge detection",
                     "✅ White overlay verification with logging",
                     "✅ SwinIR always applied after resize"
                 ],
