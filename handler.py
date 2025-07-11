@@ -151,7 +151,7 @@ def detect_pattern_type(filename: str) -> str:
     else:
         return "other"
 
-def create_background(size, color="#C8C8C8", style="gradient"):
+def create_background(size, color="#E0DADC", style="gradient"):
     """Create natural gray background for jewelry"""
     width, height = size
     
@@ -171,6 +171,38 @@ def create_background(size, color="#C8C8C8", style="gradient"):
         return Image.fromarray(bg_array.astype(np.uint8))
     else:
         return Image.new('RGB', size, color)
+
+def clean_edge_pixels(alpha_array):
+    """Clean up edge pixels for cleaner boundaries"""
+    logger.info("🧹 Cleaning edge pixels")
+    
+    # Create binary mask
+    _, binary = cv2.threshold(alpha_array, 128, 255, cv2.THRESH_BINARY)
+    
+    # Remove small isolated pixels (noise)
+    kernel_small = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    cleaned = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel_small, iterations=1)
+    
+    # Fill small holes
+    cleaned = cv2.morphologyEx(cleaned, cv2.MORPH_CLOSE, kernel_small, iterations=1)
+    
+    # Smooth edges with morphological gradient
+    gradient = cv2.morphologyEx(cleaned, cv2.MORPH_GRADIENT, kernel_small)
+    
+    # Apply gradient to alpha for smooth transition
+    edge_region = gradient > 0
+    smooth_alpha = alpha_array.copy()
+    
+    # Create smooth transition on edges
+    if np.any(edge_region):
+        # Distance transform for smooth fade
+        dist = cv2.distanceTransform((255 - gradient).astype(np.uint8), cv2.DIST_L2, 3)
+        dist = np.clip(dist / 3.0, 0, 1)  # 3 pixel fade
+        
+        # Apply smooth transition
+        smooth_alpha = cleaned * (1 - edge_region) + alpha_array * edge_region * dist
+    
+    return smooth_alpha.astype(np.uint8)
 
 def multi_threshold_background_removal_precision(image: Image.Image) -> Image.Image:
     """PRECISION: Remove background with MORE PRECISE thresholds - V13.1"""
@@ -238,6 +270,13 @@ def multi_threshold_background_removal_precision(image: Image.Image) -> Image.Im
                 continue
         
         if best_result:
+            # Apply pixel cleanup before final edge processing
+            if best_result.mode == 'RGBA':
+                r, g, b, a = best_result.split()
+                alpha_cleaned = clean_edge_pixels(np.array(a))
+                a_cleaned = Image.fromarray(alpha_cleaned)
+                best_result = Image.merge('RGBA', (r, g, b, a_cleaned))
+            
             best_result = apply_natural_edge_processing_precision(best_result)
             return best_result
         else:
@@ -268,14 +307,17 @@ def calculate_edge_precision(alpha_channel):
     return min(detail_preservation * 10, 1.0)  # Scale up but cap at 1.0
 
 def apply_natural_edge_processing_precision(image: Image.Image) -> Image.Image:
-    """PRECISION: Natural edge processing with finer control - V13.1"""
+    """PRECISION: Natural edge processing with pixel-level refinement - V13.1"""
     if image.mode != 'RGBA':
         return image
     
-    logger.info("🎨 Applying precision edge processing")
+    logger.info("🎨 Applying precision edge processing with pixel cleanup")
     
     r, g, b, a = image.split()
     alpha_array = np.array(a, dtype=np.float32)
+    
+    # First, clean up edge pixels
+    alpha_array = clean_edge_pixels(alpha_array)
     
     edges = cv2.Canny(alpha_array.astype(np.uint8), 50, 150)
     edge_mask = edges > 0
@@ -309,6 +351,9 @@ def apply_natural_edge_processing_precision(image: Image.Image) -> Image.Image:
     feathered_alpha = cv2.bilateralFilter(
         feathered_alpha.astype(np.uint8), 11, 85, 85
     ).astype(np.float32)
+    
+    # Final pixel-level cleanup
+    feathered_alpha = clean_edge_pixels(feathered_alpha)
     
     feathered_alpha = cv2.GaussianBlur(feathered_alpha, (3, 3), 0.5)
     
@@ -388,7 +433,7 @@ def create_thumbnail_with_consistent_sizing(image, target_width=1000, target_hei
     
     return thumbnail
 
-def composite_with_natural_blend(image, background_color="#C8C8C8"):
+def composite_with_natural_blend(image, background_color="#E0DADC"):
     """Natural composite with perfect edge blending - V13.1 (UNCHANGED - CRITICAL)"""
     if image.mode != 'RGBA':
         return image
@@ -993,7 +1038,7 @@ def handler(event):
         if isinstance(event.get('input'), dict):
             image_index = event.get('input', {}).get('image_index', image_index)
         
-        background_color = '#C8C8C8'
+        background_color = '#E0DADC'  # Soft grayish pink from reference
         
         filename = find_filename_fast(event)
         input_data = find_input_data_fast(event)
@@ -1145,7 +1190,7 @@ def handler(event):
                 "background_composite": has_transparency,
                 "background_removal": needs_background_removal,
                 "background_color": background_color,
-                "background_style": "Natural gray (#C8C8C8)",
+                "background_style": "Natural gray-pink (#E0DADC)",
                 "gradient_edge_darkening": "5%",
                 "edge_processing": "Precision multi-stage edge blending V13.1",
                 "composite_method": "Advanced natural blending with edge color correction",
@@ -1158,7 +1203,8 @@ def handler(event):
                     "✅ Enhanced bilateral filtering (11, 85, 85)",
                     "✅ 5 kernel sizes for smoother transitions",
                     "✅ Consistent pattern enhancement",
-                    "✅ Same processing for thumbnail & enhancement"
+                    "✅ Same processing for thumbnail & enhancement",
+                    "✅ Pixel-level edge cleanup (morphological operations)"
                 ],
                 "natural_edge_features": [
                     "Multi-kernel feathering (3,5,7,9,11)",
@@ -1166,7 +1212,8 @@ def handler(event):
                     "Progressive alpha blending",
                     "Edge color spill correction",
                     "Anti-aliasing with sub-pixel accuracy",
-                    "Enhanced bilateral filtering"
+                    "Enhanced bilateral filtering",
+                    "Pixel-level cleanup with morphological operations"
                 ],
                 "ring_hole_detection": [
                     "✅ 8-Stage Advanced Detection Algorithm V13.1",
