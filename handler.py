@@ -16,10 +16,10 @@ logger = logging.getLogger(__name__)
 
 ################################
 # THUMBNAIL HANDLER - 1000x1300
-# VERSION: V15.0-U2Net-Pixel-Precision
+# VERSION: V16.0-Fixed-Proportional
 ################################
 
-VERSION = "V15.0-U2Net-Pixel-Precision"
+VERSION = "V16.0-Fixed-Proportional"
 
 # ===== GLOBAL INITIALIZATION =====
 REPLICATE_API_TOKEN = os.environ.get('REPLICATE_API_TOKEN')
@@ -170,8 +170,8 @@ def create_background(size, color="#E0DADC", style="gradient"):
     else:
         return Image.new('RGB', size, color)
 
-def u2net_pixel_precision_removal(image: Image.Image) -> Image.Image:
-    """U2Net with pixel-level precision background removal"""
+def u2net_optimized_removal(image: Image.Image) -> Image.Image:
+    """Optimized U2Net background removal"""
     try:
         from rembg import remove
         
@@ -181,21 +181,19 @@ def u2net_pixel_precision_removal(image: Image.Image) -> Image.Image:
             if REMBG_SESSION is None:
                 return image
         
-        logger.info("🔷 U2Net Pixel Precision Background Removal V15.0")
+        logger.info("🔷 U2Net Optimized Background Removal V16.0")
         
-        # STEP 1: Initial U2Net removal with lower threshold for better edge detection
         buffered = BytesIO()
         image.save(buffered, format="PNG")
         buffered.seek(0)
         img_data = buffered.getvalue()
         
-        # Use lower thresholds for more sensitive edge detection
         output = remove(
             img_data,
             session=REMBG_SESSION,
             alpha_matting=True,
-            alpha_matting_foreground_threshold=220,  # Lower threshold
-            alpha_matting_background_threshold=30,   # Lower threshold
+            alpha_matting_foreground_threshold=220,
+            alpha_matting_background_threshold=30,
             alpha_matting_erode_size=0
         )
         
@@ -204,204 +202,54 @@ def u2net_pixel_precision_removal(image: Image.Image) -> Image.Image:
         if result_image.mode != 'RGBA':
             return result_image
         
-        # STEP 2: Multi-level pixel precision refinement
+        # Simple edge refinement without pixel-by-pixel processing
         r, g, b, a = result_image.split()
         alpha_array = np.array(a, dtype=np.uint8)
-        rgb_array = np.array(result_image.convert('RGB'), dtype=np.uint8)
         
-        # Create multiple edge detection levels (1-5 pixel ranges)
-        gray = cv2.cvtColor(rgb_array, cv2.COLOR_RGB2GRAY)
+        # Use morphological operations for edge refinement
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+        alpha_array = cv2.morphologyEx(alpha_array, cv2.MORPH_CLOSE, kernel)
+        alpha_array = cv2.GaussianBlur(alpha_array, (3, 3), 0.5)
         
-        # Level 1: Fine edges (1 pixel)
-        edges_fine = cv2.Canny(gray, 20, 60)
-        
-        # Level 2: Medium edges (2-3 pixels)
-        edges_medium = cv2.Canny(gray, 40, 100)
-        kernel_medium = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-        edges_medium = cv2.dilate(edges_medium, kernel_medium, iterations=1)
-        
-        # Level 3: Coarse edges (4-5 pixels)
-        edges_coarse = cv2.Canny(gray, 80, 150)
-        kernel_coarse = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-        edges_coarse = cv2.dilate(edges_coarse, kernel_coarse, iterations=1)
-        
-        # STEP 3: Progressive pixel-by-pixel refinement
-        refined_mask = np.zeros_like(alpha_array, dtype=np.float32)
-        
-        # Find main object contours
-        contours, _ = cv2.findContours(alpha_array, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        
-        if contours:
-            # Fill main object area
-            cv2.drawContours(refined_mask, contours, -1, 255, -1)
-            
-            # Create edge zones for different processing levels
-            h, w = alpha_array.shape
-            
-            # Process each pixel level by level
-            for y in range(h):
-                for x in range(w):
-                    # Skip if clearly inside or outside
-                    if refined_mask[y, x] == 255 and alpha_array[y, x] > 200:
-                        continue
-                    if refined_mask[y, x] == 0 and alpha_array[y, x] < 50:
-                        continue
-                    
-                    # Level 1: Check immediate neighbors (1 pixel)
-                    neighbors_1 = []
-                    for dy in [-1, 0, 1]:
-                        for dx in [-1, 0, 1]:
-                            ny, nx = y + dy, x + dx
-                            if 0 <= ny < h and 0 <= nx < w:
-                                neighbors_1.append((alpha_array[ny, nx], rgb_array[ny, nx]))
-                    
-                    # Level 2: Check 2-pixel radius
-                    neighbors_2 = []
-                    for dy in range(-2, 3):
-                        for dx in range(-2, 3):
-                            ny, nx = y + dy, x + dx
-                            if 0 <= ny < h and 0 <= nx < w and (dy*dy + dx*dx <= 4):
-                                neighbors_2.append((alpha_array[ny, nx], rgb_array[ny, nx]))
-                    
-                    # Level 3: Check 3-pixel radius
-                    neighbors_3 = []
-                    for dy in range(-3, 4):
-                        for dx in range(-3, 4):
-                            ny, nx = y + dy, x + dx
-                            if 0 <= ny < h and 0 <= nx < w and (dy*dy + dx*dx <= 9):
-                                neighbors_3.append((alpha_array[ny, nx], rgb_array[ny, nx]))
-                    
-                    # Decision logic based on multi-level analysis
-                    if neighbors_1:
-                        alpha_mean_1 = np.mean([n[0] for n in neighbors_1])
-                        color_var_1 = np.std([n[1] for n in neighbors_1], axis=0).mean()
-                        
-                        if alpha_mean_1 > 180 and color_var_1 < 20:
-                            refined_mask[y, x] = 255
-                        elif alpha_mean_1 < 80 and color_var_1 > 40:
-                            refined_mask[y, x] = 0
-                        else:
-                            # Check level 2
-                            if neighbors_2:
-                                alpha_mean_2 = np.mean([n[0] for n in neighbors_2])
-                                color_var_2 = np.std([n[1] for n in neighbors_2], axis=0).mean()
-                                
-                                if alpha_mean_2 > 150 and color_var_2 < 30:
-                                    refined_mask[y, x] = 200
-                                elif alpha_mean_2 < 100:
-                                    refined_mask[y, x] = 50
-                                else:
-                                    # Check level 3
-                                    if neighbors_3:
-                                        alpha_mean_3 = np.mean([n[0] for n in neighbors_3])
-                                        refined_mask[y, x] = alpha_mean_3
-            
-            # STEP 4: Progressive smoothing based on edge distance
-            # Apply different smoothing for different edge levels
-            mask_fine = (edges_fine > 0).astype(np.uint8)
-            mask_medium = (edges_medium > 0).astype(np.uint8)
-            mask_coarse = (edges_coarse > 0).astype(np.uint8)
-            
-            # Fine edges: minimal smoothing
-            refined_fine = cv2.GaussianBlur(refined_mask, (3, 3), 0.5)
-            
-            # Medium edges: moderate smoothing
-            refined_medium = cv2.GaussianBlur(refined_mask, (5, 5), 1.0)
-            
-            # Coarse edges: more smoothing
-            refined_coarse = cv2.GaussianBlur(refined_mask, (7, 7), 1.5)
-            
-            # Combine based on edge type
-            final_mask = np.zeros_like(refined_mask)
-            final_mask[mask_fine > 0] = refined_fine[mask_fine > 0]
-            final_mask[mask_medium > 0] = refined_medium[mask_medium > 0]
-            final_mask[mask_coarse > 0] = refined_coarse[mask_coarse > 0]
-            final_mask[mask_fine == 0] = refined_mask[mask_fine == 0]
-            
-            # Final bilateral filter for edge-preserving smoothing
-            final_mask = cv2.bilateralFilter(final_mask.astype(np.uint8), 5, 75, 75)
-            
-            alpha_array = final_mask
-        
-        a_new = Image.fromarray(alpha_array.astype(np.uint8))
+        a_new = Image.fromarray(alpha_array)
         return Image.merge('RGBA', (r, g, b, a_new))
         
     except Exception as e:
-        logger.error(f"U2Net pixel precision removal failed: {e}")
+        logger.error(f"U2Net removal failed: {e}")
         return image
 
-def detect_ring_bounds_from_alpha(image: Image.Image) -> tuple:
-    """Detect actual ring bounds from alpha channel"""
-    if image.mode != 'RGBA':
-        gray = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2GRAY)
-        _, binary = cv2.threshold(gray, 50, 255, cv2.THRESH_BINARY)
-    else:
-        alpha = np.array(image.split()[3])
-        _, binary = cv2.threshold(alpha, 30, 255, cv2.THRESH_BINARY)
-    
-    coords = cv2.findNonZero(binary)
-    
-    if coords is None:
-        logger.warning("No object found in image, using full image")
-        return 0, 0, image.size[0], image.size[1], image.size[0]//2, image.size[1]//2, min(image.size)
-    
-    x, y, w, h = cv2.boundingRect(coords)
-    
-    center_x = x + w // 2
-    center_y = y + h // 2
-    
-    diagonal = np.sqrt(w**2 + h**2)
-    
-    logger.info(f"Ring bounds: x={x}, y={y}, w={w}, h={h}, center=({center_x}, {center_y}), diagonal={diagonal:.1f}")
-    
-    return x, y, w, h, center_x, center_y, diagonal
-
-def create_thumbnail_with_consistent_sizing(image, target_width=1000, target_height=1300):
-    """Create thumbnail with consistent ring sizing"""
+def create_thumbnail_proportional(image, target_width=1000, target_height=1300):
+    """Create thumbnail with proper proportional sizing - Fixed version"""
     original_width, original_height = image.size
     
-    logger.info(f"Creating consistent thumbnail from {original_width}x{original_height}")
+    logger.info(f"Creating proportional thumbnail from {original_width}x{original_height} to {target_width}x{target_height}")
     
-    x, y, w, h, center_x, center_y, diagonal = detect_ring_bounds_from_alpha(image)
+    # For 2000x2600 -> 1000x1300, it's exactly 50% resize
+    # Just resize directly without complex cropping
+    if original_width == 2000 and original_height == 2600:
+        logger.info("Direct 50% resize for standard input size")
+        return image.resize((target_width, target_height), Image.Resampling.LANCZOS)
     
-    target_diagonal = np.sqrt(target_width**2 + target_height**2) * 0.75
+    # For other sizes, maintain aspect ratio
+    scale_x = target_width / original_width
+    scale_y = target_height / original_height
+    scale = min(scale_x, scale_y)
     
-    scale_factor = target_diagonal / diagonal if diagonal > 0 else 1.0
+    new_width = int(original_width * scale)
+    new_height = int(original_height * scale)
     
-    crop_width = int(target_width / scale_factor)
-    crop_height = int(target_height / scale_factor)
+    # Resize first
+    resized = image.resize((new_width, new_height), Image.Resampling.LANCZOS)
     
-    crop_width = min(crop_width, original_width)
-    crop_height = min(crop_height, original_height)
+    # Center crop if needed
+    if new_width != target_width or new_height != target_height:
+        left = (new_width - target_width) // 2
+        top = (new_height - target_height) // 2
+        right = left + target_width
+        bottom = top + target_height
+        resized = resized.crop((left, top, right, bottom))
     
-    crop_ratio = crop_width / crop_height
-    target_ratio = target_width / target_height
-    
-    if crop_ratio > target_ratio:
-        crop_width = int(crop_height * target_ratio)
-    else:
-        crop_height = int(crop_width / target_ratio)
-    
-    left = center_x - crop_width // 2
-    top = center_y - crop_height // 2
-    
-    if left < 0:
-        left = 0
-    elif left + crop_width > original_width:
-        left = original_width - crop_width
-        
-    if top < 0:
-        top = 0
-    elif top + crop_height > original_height:
-        top = original_height - crop_height
-    
-    right = left + crop_width
-    bottom = top + crop_height
-    
-    cropped = image.crop((left, top, right, bottom))
-    thumbnail = cropped.resize((target_width, target_height), Image.Resampling.LANCZOS)
-    
-    return thumbnail
+    return resized
 
 def composite_with_natural_blend(image, background_color="#E0DADC"):
     """Natural composite with edge blending"""
@@ -443,7 +291,7 @@ def ensure_ring_holes_transparent_fast(image: Image.Image) -> Image.Image:
     if image.mode != 'RGBA':
         return image
     
-    logger.info("🔍 Fast Ring Hole Detection V15.0")
+    logger.info("🔍 Fast Ring Hole Detection V16.0")
     
     r, g, b, a = image.split()
     alpha_array = np.array(a, dtype=np.uint8)
@@ -451,15 +299,15 @@ def ensure_ring_holes_transparent_fast(image: Image.Image) -> Image.Image:
     
     h, w = alpha_array.shape
     
-    # STEP 1: Quick threshold detection with lower threshold
-    potential_holes = alpha_array < 20  # Lower threshold for better detection
+    # Quick threshold detection
+    potential_holes = alpha_array < 20
     
     # Clean up noise
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
     potential_holes = cv2.morphologyEx(potential_holes.astype(np.uint8), cv2.MORPH_OPEN, kernel)
     potential_holes = cv2.morphologyEx(potential_holes, cv2.MORPH_CLOSE, kernel)
     
-    # STEP 2: Find hole candidates
+    # Find hole candidates
     num_labels, labels = cv2.connectedComponents(potential_holes)
     
     holes_mask = np.zeros_like(alpha_array)
@@ -468,9 +316,7 @@ def ensure_ring_holes_transparent_fast(image: Image.Image) -> Image.Image:
         component = (labels == label)
         component_size = np.sum(component)
         
-        # Quick size check
         if h * w * 0.0001 < component_size < h * w * 0.1:
-            # Quick geometry check
             coords = np.where(component)
             min_y, max_y = coords[0].min(), coords[0].max()
             min_x, max_x = coords[1].min(), coords[1].max()
@@ -479,24 +325,16 @@ def ensure_ring_holes_transparent_fast(image: Image.Image) -> Image.Image:
             height = max_y - min_y
             aspect_ratio = width / height if height > 0 else 0
             
-            # Check if reasonably circular
             if 0.5 < aspect_ratio < 2.0:
-                # Check if bright (holes are usually bright)
                 hole_pixels = rgb_array[component]
                 if len(hole_pixels) > 0:
                     brightness = np.mean(hole_pixels)
-                    if brightness > 200:  # Bright enough to be a hole
+                    if brightness > 200:
                         holes_mask[component] = 255
     
-    # STEP 3: Apply holes with smooth transition
     if np.any(holes_mask > 0):
-        # Smooth the holes
         holes_mask = cv2.GaussianBlur(holes_mask.astype(np.float32), (5, 5), 1.0)
-        
-        # Apply to alpha
         alpha_array = alpha_array * (1 - holes_mask / 255)
-        
-        # Ensure complete transparency in hole centers
         strong_holes = holes_mask > 128
         alpha_array[strong_holes] = 0
     
@@ -627,15 +465,23 @@ def calculate_quality_metrics_fast(image: Image.Image) -> dict:
     }
 
 def apply_pattern_enhancement_consistent(image, pattern_type):
-    """Consistent pattern enhancement"""
+    """Consistent pattern enhancement with white overlay verification"""
     
     if pattern_type == "ac_pattern":
+        # Calculate brightness before overlay
+        metrics_before = calculate_quality_metrics_fast(image)
+        logger.info(f"🔍 AC Pattern - Brightness before overlay: {metrics_before['brightness']:.2f}")
+        
         # Apply 12% white overlay
         white_overlay = 0.12
         img_array = np.array(image, dtype=np.float32)
         img_array = img_array * (1 - white_overlay) + 255 * white_overlay
         img_array = np.clip(img_array, 0, 255)
         image = Image.fromarray(img_array.astype(np.uint8))
+        
+        # Verify overlay was applied
+        metrics_after = calculate_quality_metrics_fast(image)
+        logger.info(f"✅ AC Pattern - Brightness after 12% overlay: {metrics_after['brightness']:.2f} (increased by {metrics_after['brightness'] - metrics_before['brightness']:.2f})")
         
         brightness = ImageEnhance.Brightness(image)
         image = brightness.enhance(1.005)
@@ -659,12 +505,18 @@ def apply_pattern_enhancement_consistent(image, pattern_type):
     # Quality check for ac_pattern
     if pattern_type == "ac_pattern":
         metrics = calculate_quality_metrics_fast(image)
+        logger.info(f"🔍 AC Pattern - Final brightness check: {metrics['brightness']:.2f}")
+        
         if metrics["brightness"] < 235:
+            logger.info("⚠️ AC Pattern - Brightness too low, applying 15% overlay")
             white_overlay = 0.15
             img_array = np.array(image, dtype=np.float32)
             img_array = img_array * (1 - white_overlay) + 255 * white_overlay
             img_array = np.clip(img_array, 0, 255)
             image = Image.fromarray(img_array.astype(np.uint8))
+            
+            metrics_final = calculate_quality_metrics_fast(image)
+            logger.info(f"✅ AC Pattern - Final brightness after 15% overlay: {metrics_final['brightness']:.2f}")
     
     return image
 
@@ -683,7 +535,7 @@ def image_to_base64(image):
     return base64.b64encode(buffered.getvalue()).decode().rstrip('=')
 
 def handler(event):
-    """Optimized thumbnail handler - V15.0 with U2Net pixel precision"""
+    """Optimized thumbnail handler - V16.0 with fixed proportions"""
     try:
         logger.info(f"=== Thumbnail {VERSION} Started ===")
         
@@ -713,14 +565,14 @@ def handler(event):
         if not image:
             raise ValueError("Failed to load image")
         
-        # STEP 1: U2NET PIXEL PRECISION BACKGROUND REMOVAL (PNG files)
+        # STEP 1: OPTIMIZED BACKGROUND REMOVAL (PNG files)
         original_mode = image.mode
         has_transparency = image.mode == 'RGBA'
         needs_background_removal = False
         
         if filename and filename.lower().endswith('.png'):
-            logger.info("📸 STEP 1: PNG detected - U2Net pixel precision background removal")
-            image = u2net_pixel_precision_removal(image)
+            logger.info("📸 STEP 1: PNG detected - optimized background removal")
+            image = u2net_optimized_removal(image)
             has_transparency = image.mode == 'RGBA'
             needs_background_removal = True
         
@@ -752,8 +604,8 @@ def handler(event):
         
         pattern_type = detect_pattern_type(filename)
         
-        # Create thumbnail with consistent sizing
-        thumbnail = create_thumbnail_with_consistent_sizing(image, 1000, 1300)
+        # Create thumbnail with proportional sizing - FIXED
+        thumbnail = create_thumbnail_proportional(image, 1000, 1300)
         
         # STEP 3: SWINIR ENHANCEMENT (ALWAYS APPLIED)
         logger.info("🚀 STEP 3: Applying SwinIR enhancement")
@@ -766,15 +618,15 @@ def handler(event):
             "other": "기타색상(no_overlay)"
         }.get(pattern_type, "기타색상")
         
-        # Use consistent enhancement
+        # Use consistent enhancement with logging
         thumbnail = apply_pattern_enhancement_consistent(thumbnail, pattern_type)
         
         # STEP 4: BACKGROUND COMPOSITE (if transparent)
         if has_transparency and 'original_transparent' in locals():
             logger.info(f"🖼️ STEP 4: Natural background compositing: {background_color}")
             
-            # Apply same thumbnail crop to transparent version
-            enhanced_transparent = create_thumbnail_with_consistent_sizing(original_transparent, 1000, 1300)
+            # Apply same proportional resize to transparent version
+            enhanced_transparent = create_thumbnail_proportional(original_transparent, 1000, 1300)
             
             if enhanced_transparent.mode == 'RGBA':
                 # Fast ring hole detection
@@ -793,6 +645,7 @@ def handler(event):
                 rgb_image = sharpness.enhance(1.6)
                 
                 if pattern_type == "ac_pattern":
+                    logger.info("🔍 Applying white overlay to transparent version")
                     white_overlay = 0.12
                     img_array = np.array(rgb_image, dtype=np.float32)
                     img_array = img_array * (1 - white_overlay) + 255 * white_overlay
@@ -838,38 +691,17 @@ def handler(event):
                 "background_removal": needs_background_removal,
                 "background_color": background_color,
                 "optimization_features": [
-                    "✅ U2Net for faster processing",
-                    "✅ Multi-level pixel precision (1-5 pixels)",
-                    "✅ Progressive edge refinement",
-                    "✅ Lower thresholds for better edge detection",
-                    "✅ Level-based smoothing",
-                    "✅ Fast ring hole detection",
+                    "✅ Fixed proportional thumbnail (50% for 2000x2600)",
+                    "✅ Optimized U2Net without pixel iteration",
+                    "✅ White overlay verification with logging",
+                    "✅ Fast morphological edge refinement",
                     "✅ SwinIR always applied after resize"
                 ],
-                "edge_detection_method": "U2Net + multi-level pixel precision",
-                "background_removal_steps": [
-                    "1. Initial U2Net removal (lower threshold)",
-                    "2. 3-level edge detection (fine/medium/coarse)",
-                    "3. Pixel-by-pixel analysis (1-3 pixel radius)",
-                    "4. Progressive smoothing by edge type"
-                ],
-                "pixel_levels": {
-                    "level_1": "1 pixel immediate neighbors",
-                    "level_2": "2 pixel radius check",
-                    "level_3": "3 pixel radius analysis"
-                },
-                "u2net_advantages": [
-                    "70% faster than BiRefNet",
-                    "Better edge detection",
-                    "Lower memory usage",
-                    "More consistent results"
-                ],
+                "thumbnail_method": "Proportional resize (no aggressive cropping)",
                 "processing_order": "1.U2Net → 2.Enhancement → 3.SwinIR → 4.Composite",
-                "thumbnail_crop_method": "Consistent sizing based on ring bounds",
-                "crop_factor": "75% of thumbnail diagonal",
                 "expected_input": "2000x2600 PNG",
                 "output_size": "1000x1300",
-                "white_overlay": "12% for ac_ (1차), 15% (2차)",
+                "white_overlay": "12% for ac_ (1차), 15% (2차) - WITH VERIFICATION",
                 "brightness_increased": "8%",
                 "contrast_increased": "5%", 
                 "sharpness_increased": "1.5-1.6",
