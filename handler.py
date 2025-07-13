@@ -16,10 +16,10 @@ logger = logging.getLogger(__name__)
 
 ################################
 # THUMBNAIL HANDLER - 1000x1300
-# VERSION: V21-Ultra-Precise-Korean
+# VERSION: V22-Ultra-Precise-Transparent
 ################################
 
-VERSION = "V21-Ultra-Precise-Korean"
+VERSION = "V22-Ultra-Precise-Transparent"
 
 # ===== GLOBAL INITIALIZATION =====
 REPLICATE_API_TOKEN = os.environ.get('REPLICATE_API_TOKEN')
@@ -346,7 +346,7 @@ def u2net_ultra_precise_removal(image: Image.Image) -> Image.Image:
             if REMBG_SESSION is None:
                 return image
         
-        logger.info("🔷 U2Net ULTRA PRECISE Background Removal V21")
+        logger.info("🔷 U2Net ULTRA PRECISE Background Removal V22")
         
         # Pre-process image for better edge detection
         # Apply slight contrast enhancement before removal
@@ -503,7 +503,7 @@ def ensure_ring_holes_transparent_ultra(image: Image.Image) -> Image.Image:
     if image.mode != 'RGBA':
         return image
     
-    logger.info("🔍 ULTRA PRECISE Ring Hole Detection V21")
+    logger.info("🔍 ULTRA PRECISE Ring Hole Detection V22")
     
     r, g, b, a = image.split()
     alpha_array = np.array(a, dtype=np.uint8)
@@ -920,16 +920,25 @@ def composite_with_natural_blend(image, background_color="#E0DADC"):
     return Image.fromarray(np.clip(result, 0, 255).astype(np.uint8))
 
 def apply_swinir_thumbnail(image: Image.Image) -> Image.Image:
-    """Apply SwinIR enhancement for thumbnails"""
+    """Apply SwinIR enhancement for thumbnails while preserving transparency"""
     if not REPLICATE_CLIENT:
         logger.warning("SwinIR skipped - no Replicate client")
         return image
     
     try:
-        logger.info("🎨 Applying SwinIR enhancement")
+        logger.info("🎨 Applying SwinIR enhancement with transparency support")
+        
+        # Check if image has transparency
+        if image.mode == 'RGBA':
+            r, g, b, a = image.split()
+            rgb_image = Image.merge('RGB', (r, g, b))
+            has_alpha = True
+        else:
+            rgb_image = image
+            has_alpha = False
         
         buffered = BytesIO()
-        image.save(buffered, format="PNG", optimize=False)
+        rgb_image.save(buffered, format="PNG", optimize=False)
         buffered.seek(0)
         img_base64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
         img_data_url = f"data:image/png;base64,{img_base64}"
@@ -952,6 +961,12 @@ def apply_swinir_thumbnail(image: Image.Image) -> Image.Image:
             else:
                 enhanced_image = Image.open(BytesIO(base64.b64decode(output)))
             
+            # Recombine with alpha if needed
+            if has_alpha:
+                r2, g2, b2 = enhanced_image.split()
+                enhanced_image = Image.merge('RGBA', (r2, g2, b2, a))
+            
+            logger.info("✅ SwinIR enhancement successful with transparency")
             return enhanced_image
             
     except Exception as e:
@@ -1153,29 +1168,41 @@ def apply_pattern_enhancement_consistent(image, pattern_type):
     
     return image
 
-def image_to_base64(image):
-    """Convert to base64 without padding"""
+def image_to_base64(image, keep_transparency=True):
+    """Convert to base64 without padding - FIXED to preserve transparency"""
     buffered = BytesIO()
     
-    if image.mode == 'RGBA':
-        background = Image.new('RGB', image.size, (255, 255, 255))
-        background.paste(image, mask=image.split()[3])
-        image = background
+    # Check if user wants transparent output
+    if keep_transparency and image.mode == 'RGBA':
+        # Keep RGBA format for transparent images
+        logger.info("💎 Preserving transparency in output")
+        image.save(buffered, format='PNG', optimize=False)
+    else:
+        # Convert to RGB with white background if not keeping transparency
+        if image.mode == 'RGBA':
+            background = Image.new('RGB', image.size, (255, 255, 255))
+            background.paste(image, mask=image.split()[3])
+            image = background
+        
+        image.save(buffered, format='PNG', optimize=False, quality=95)
     
-    image.save(buffered, format='PNG', optimize=False, quality=95)
     buffered.seek(0)
     
     return base64.b64encode(buffered.getvalue()).decode().rstrip('=')
 
 def handler(event):
-    """Optimized thumbnail handler - V21 with ULTRA Precise Edge Detection"""
+    """Optimized thumbnail handler - V22 with ULTRA Precise Edge Detection and Transparent Output"""
     try:
         logger.info(f"=== Thumbnail {VERSION} Started ===")
         logger.info("🎯 ULTRA PRECISE MODE: Maximum edge detection enabled")
+        logger.info("💎 TRANSPARENT OUTPUT: Preserving transparency in final image")
         
         # Check for special mode first
         if event.get('special_mode') == 'color_section':
             return process_color_section(event)
+        
+        # Check if user wants transparent output (default: True for PNG inputs)
+        keep_transparency = event.get('keep_transparency', True)
         
         # Normal thumbnail processing continues here...
         image_index = event.get('image_index', 1)
@@ -1215,39 +1242,54 @@ def handler(event):
             has_transparency = image.mode == 'RGBA'
             needs_background_removal = True
         
-        if has_transparency:
-            original_transparent = image.copy()
+        # Ensure RGBA mode if keeping transparency
+        if keep_transparency and has_transparency:
+            if image.mode != 'RGBA':
+                image = image.convert('RGBA')
         
-        # Convert to RGB for processing
-        if image.mode != 'RGB':
-            if image.mode == 'RGBA':
-                temp_bg = Image.new('RGB', image.size, (255, 255, 255))
-                temp_bg.paste(image, mask=image.split()[3])
-                image = temp_bg
-            else:
-                image = image.convert('RGB')
-        
-        # STEP 2: ENHANCEMENT
-        logger.info("🎨 STEP 2: Applying enhancements")
-        
-        image = auto_white_balance_fast(image)
-        
-        brightness = ImageEnhance.Brightness(image)
-        image = brightness.enhance(1.08)
-        
-        contrast = ImageEnhance.Contrast(image)
-        image = contrast.enhance(1.05)
-        
-        color = ImageEnhance.Color(image)
-        image = color.enhance(1.005)
+        # STEP 2: ENHANCEMENT (preserving transparency)
+        logger.info("🎨 STEP 2: Applying enhancements with transparency preservation")
         
         pattern_type = detect_pattern_type(filename)
         
-        # Create thumbnail with proportional sizing - FIXED
+        if image.mode == 'RGBA':
+            # Process RGB channels separately
+            r, g, b, a = image.split()
+            rgb_image = Image.merge('RGB', (r, g, b))
+            
+            # Apply enhancements to RGB only
+            rgb_image = auto_white_balance_fast(rgb_image)
+            
+            brightness = ImageEnhance.Brightness(rgb_image)
+            rgb_image = brightness.enhance(1.08)
+            
+            contrast = ImageEnhance.Contrast(rgb_image)
+            rgb_image = contrast.enhance(1.05)
+            
+            color = ImageEnhance.Color(rgb_image)
+            rgb_image = color.enhance(1.005)
+            
+            # Recombine with alpha
+            r2, g2, b2 = rgb_image.split()
+            image = Image.merge('RGBA', (r2, g2, b2, a))
+        else:
+            # Normal processing for non-transparent images
+            image = auto_white_balance_fast(image)
+            
+            brightness = ImageEnhance.Brightness(image)
+            image = brightness.enhance(1.08)
+            
+            contrast = ImageEnhance.Contrast(image)
+            image = contrast.enhance(1.05)
+            
+            color = ImageEnhance.Color(image)
+            image = color.enhance(1.005)
+        
+        # Create thumbnail with proportional sizing
         thumbnail = create_thumbnail_proportional(image, 1000, 1300)
         
-        # STEP 3: SWINIR ENHANCEMENT (ALWAYS APPLIED)
-        logger.info("🚀 STEP 3: Applying SwinIR enhancement")
+        # STEP 3: SWINIR ENHANCEMENT (preserving transparency)
+        logger.info("🚀 STEP 3: Applying SwinIR enhancement with transparency")
         thumbnail = apply_swinir_thumbnail(thumbnail)
         
         thumbnail = enhance_cubic_details_thumbnail_simple(thumbnail)
@@ -1258,76 +1300,44 @@ def handler(event):
             "other": "기타색상(no_overlay)"
         }.get(pattern_type, "기타색상")
         
-        # Use consistent enhancement with logging
-        thumbnail = apply_pattern_enhancement_consistent(thumbnail, pattern_type)
+        # Apply pattern enhancement
+        if thumbnail.mode == 'RGBA':
+            # Apply to RGB channels only
+            r, g, b, a = thumbnail.split()
+            rgb_thumbnail = Image.merge('RGB', (r, g, b))
+            rgb_thumbnail = apply_pattern_enhancement_consistent(rgb_thumbnail, pattern_type)
+            r2, g2, b2 = rgb_thumbnail.split()
+            thumbnail = Image.merge('RGBA', (r2, g2, b2, a))
+        else:
+            thumbnail = apply_pattern_enhancement_consistent(thumbnail, pattern_type)
         
-        # STEP 4: BACKGROUND COMPOSITE (if transparent)
-        if has_transparency and 'original_transparent' in locals():
-            logger.info(f"🖼️ STEP 4: Natural background compositing: {background_color}")
+        # STEP 4: Ultra precise ring hole detection
+        if thumbnail.mode == 'RGBA':
             logger.info("🔍 Applying ULTRA PRECISE ring hole detection")
-            
-            # Apply same proportional resize to transparent version
-            enhanced_transparent = create_thumbnail_proportional(original_transparent, 1000, 1300)
-            
-            if enhanced_transparent.mode == 'RGBA':
-                # Ultra precise ring hole detection
-                enhanced_transparent = ensure_ring_holes_transparent_ultra(enhanced_transparent)
-                
-                r, g, b, a = enhanced_transparent.split()
-                rgb_image = Image.merge('RGB', (r, g, b))
-                
-                rgb_image = auto_white_balance_fast(rgb_image)
-                rgb_image = enhance_cubic_details_thumbnail_simple(rgb_image)
-                brightness = ImageEnhance.Brightness(rgb_image)
-                rgb_image = brightness.enhance(1.08)
-                contrast = ImageEnhance.Contrast(rgb_image)
-                rgb_image = contrast.enhance(1.05)
-                sharpness = ImageEnhance.Sharpness(rgb_image)
-                rgb_image = sharpness.enhance(1.6)
-                
-                if pattern_type == "ac_pattern":
-                    logger.info("🔍 Applying 12% white overlay to transparent version")
-                    white_overlay = 0.12
-                    img_array = np.array(rgb_image, dtype=np.float32)
-                    img_array = img_array * (1 - white_overlay) + 255 * white_overlay
-                    rgb_image = Image.fromarray(np.clip(img_array, 0, 255).astype(np.uint8))
-                elif pattern_type == "ab_pattern":
-                    logger.info("🔍 Applying 5% white overlay and cool tone to transparent version")
-                    white_overlay = 0.05
-                    img_array = np.array(rgb_image, dtype=np.float32)
-                    img_array = img_array * (1 - white_overlay) + 255 * white_overlay
-                    
-                    # Cool tone adjustment
-                    img_array[:,:,0] *= 0.96  # Reduce red
-                    img_array[:,:,1] *= 0.98  # Reduce green
-                    img_array[:,:,2] *= 1.02  # Increase blue
-                    
-                    # Cool color grading
-                    cool_overlay = np.array([240, 248, 255], dtype=np.float32)
-                    img_array = img_array * 0.95 + cool_overlay * 0.05
-                    
-                    rgb_image = Image.fromarray(np.clip(img_array, 0, 255).astype(np.uint8))
-                    
-                    # Reduce saturation
-                    color = ImageEnhance.Color(rgb_image)
-                    rgb_image = color.enhance(0.88)
-                
-                r2, g2, b2 = rgb_image.split()
-                enhanced_transparent = Image.merge('RGBA', (r2, g2, b2, a))
-            
-            thumbnail = composite_with_natural_blend(enhanced_transparent, background_color)
-            
-            sharpness = ImageEnhance.Sharpness(thumbnail)
-            thumbnail = sharpness.enhance(1.10)
+            thumbnail = ensure_ring_holes_transparent_ultra(thumbnail)
         
         # Final adjustments
-        sharpness = ImageEnhance.Sharpness(thumbnail)
-        thumbnail = sharpness.enhance(1.5)
+        if thumbnail.mode == 'RGBA':
+            r, g, b, a = thumbnail.split()
+            rgb_thumbnail = Image.merge('RGB', (r, g, b))
+            
+            sharpness = ImageEnhance.Sharpness(rgb_thumbnail)
+            rgb_thumbnail = sharpness.enhance(1.5)
+            
+            brightness = ImageEnhance.Brightness(rgb_thumbnail)
+            rgb_thumbnail = brightness.enhance(1.02)
+            
+            r2, g2, b2 = rgb_thumbnail.split()
+            thumbnail = Image.merge('RGBA', (r2, g2, b2, a))
+        else:
+            sharpness = ImageEnhance.Sharpness(thumbnail)
+            thumbnail = sharpness.enhance(1.5)
+            
+            brightness = ImageEnhance.Brightness(thumbnail)
+            thumbnail = brightness.enhance(1.02)
         
-        brightness = ImageEnhance.Brightness(thumbnail)
-        thumbnail = brightness.enhance(1.02)
-        
-        thumbnail_base64 = image_to_base64(thumbnail)
+        # Convert to base64 - FIXED to preserve transparency
+        thumbnail_base64 = image_to_base64(thumbnail, keep_transparency=keep_transparency)
         
         output_filename = generate_thumbnail_filename(filename, image_index)
         
@@ -1347,10 +1357,10 @@ def handler(event):
                 "swinir_applied": True,
                 "swinir_timing": "AFTER resize",
                 "png_support": True,
-                "has_transparency": has_transparency,
-                "background_composite": has_transparency,
+                "has_transparency": thumbnail.mode == 'RGBA',
+                "transparency_preserved": keep_transparency and thumbnail.mode == 'RGBA',
                 "background_removal": needs_background_removal,
-                "background_color": background_color,
+                "background_color": background_color if not keep_transparency else "none",
                 "special_modes_available": ["color_section"],
                 "file_number_info": {
                     "007": "Thumbnail 1",
@@ -1359,6 +1369,7 @@ def handler(event):
                     "011": "COLOR section"
                 },
                 "optimization_features": [
+                    "✅ TRANSPARENT OUTPUT: PNG with preserved alpha channel",
                     "✅ ULTRA PRECISE Transparent PNG edge detection",
                     "✅ Enhanced Korean font support with proper encoding",
                     "✅ Advanced multi-stage edge refinement",
@@ -1370,14 +1381,15 @@ def handler(event):
                     "✅ Enhanced metal color algorithms",
                     "✅ Fixed proportional thumbnail (50% for 2000x2600)",
                     "✅ White overlay verification with logging",
-                    "✅ SwinIR always applied after resize"
+                    "✅ SwinIR with transparency support"
                 ],
                 "thumbnail_method": "Proportional resize (no aggressive cropping)",
-                "processing_order": "1.U2Net-Ultra → 2.Enhancement → 3.SwinIR → 4.Composite",
+                "processing_order": "1.U2Net-Ultra → 2.Enhancement → 3.SwinIR → 4.Ring Holes",
                 "edge_detection": "ULTRA PRECISE (Sobel + Guided Filter)",
                 "korean_support": "ENHANCED (UTF-8 encoding)",
                 "expected_input": "2000x2600 PNG",
                 "output_size": "1000x1300",
+                "output_format": "PNG with transparency" if keep_transparency and thumbnail.mode == 'RGBA' else "PNG",
                 "white_overlay": "AC: 12% (1차), 15% (2차) | AB: 5% (1차), 8% (2차) + Cool Tone - WITH VERIFICATION",
                 "brightness_increased": "8%",
                 "contrast_increased": "5%", 
