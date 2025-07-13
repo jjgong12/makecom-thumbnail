@@ -16,10 +16,10 @@ logger = logging.getLogger(__name__)
 
 ################################
 # THUMBNAIL HANDLER - 1000x1300
-# VERSION: V20-Precise-Edge-Detection
+# VERSION: V21-Ultra-Precise-Korean
 ################################
 
-VERSION = "V20-Precise-Edge-Detection"
+VERSION = "V21-Ultra-Precise-Korean"
 
 # ===== GLOBAL INITIALIZATION =====
 REPLICATE_API_TOKEN = os.environ.get('REPLICATE_API_TOKEN')
@@ -53,53 +53,81 @@ def init_rembg_session():
 init_rembg_session()
 
 def download_korean_font():
-    """Download Korean font for text rendering"""
+    """Download Korean font for text rendering - IMPROVED"""
     try:
         font_path = '/tmp/NanumGothic.ttf'
         
+        # If font exists, verify it works with Korean text
         if os.path.exists(font_path):
             try:
-                test_font = ImageFont.truetype(font_path, 20)
+                test_font = ImageFont.truetype(font_path, 20, encoding='utf-8')
+                img_test = Image.new('RGB', (100, 100), 'white')
+                draw_test = ImageDraw.Draw(img_test)
+                draw_test.text((10, 10), "테스트", font=test_font, fill='black')
+                logger.info("✅ Korean font verified and working")
                 return font_path
-            except:
+            except Exception as e:
+                logger.error(f"Font verification failed: {e}")
                 os.remove(font_path)
         
+        # Download URLs with backup options
         font_urls = [
             'https://github.com/naver/nanumfont/raw/master/fonts/NanumFontSetup_TTF_GOTHIC/NanumGothic.ttf',
-            'https://cdn.jsdelivr.net/gh/naver/nanumfont@master/fonts/NanumFontSetup_TTF_GOTHIC/NanumGothic.ttf'
+            'https://cdn.jsdelivr.net/gh/naver/nanumfont@master/fonts/NanumFontSetup_TTF_GOTHIC/NanumGothic.ttf',
+            'https://github.com/naver/nanumfont/raw/master/fonts/NanumFontSetup_TTF_GOTHIC/NanumGothicBold.ttf'
         ]
         
         for url in font_urls:
             try:
+                logger.info(f"Downloading font from: {url}")
                 response = requests.get(url, timeout=30)
-                if response.status_code == 200:
+                if response.status_code == 200 and len(response.content) > 100000:
                     with open(font_path, 'wb') as f:
                         f.write(response.content)
+                    
+                    # Verify the font works
+                    test_font = ImageFont.truetype(font_path, 20, encoding='utf-8')
+                    logger.info("✅ Korean font downloaded successfully")
                     return font_path
-            except:
+            except Exception as e:
+                logger.error(f"Failed to download from {url}: {e}")
                 continue
         
+        logger.error("❌ Failed to download Korean font from all sources")
         return None
-    except:
+    except Exception as e:
+        logger.error(f"Font download error: {e}")
         return None
 
 def get_font(size, korean_font_path=None):
-    """Get font with fallback"""
+    """Get font with proper encoding"""
     if korean_font_path and os.path.exists(korean_font_path):
         try:
-            return ImageFont.truetype(korean_font_path, size)
-        except:
-            pass
+            return ImageFont.truetype(korean_font_path, size, encoding='utf-8')
+        except Exception as e:
+            logger.error(f"Font loading error: {e}")
     
-    return ImageFont.load_default()
+    # Fallback to default
+    try:
+        return ImageFont.load_default()
+    except:
+        return None
 
 def safe_draw_text(draw, position, text, font, fill):
-    """Safely draw text"""
+    """Safely draw text with proper encoding"""
     try:
-        if text:
+        if text and font:
+            # Ensure text is properly encoded
+            if isinstance(text, bytes):
+                text = text.decode('utf-8')
             draw.text(position, str(text), font=font, fill=fill)
-    except:
-        draw.text(position, "[Error]", font=font, fill=fill)
+    except Exception as e:
+        logger.error(f"Text drawing error: {e}")
+        # Fallback to simple text
+        try:
+            draw.text(position, "[Text Error]", font=font, fill=fill)
+        except:
+            pass
 
 def get_text_size(draw, text, font):
     """Get text size compatible with different PIL versions"""
@@ -228,26 +256,26 @@ def create_color_section(ring_image, width=1200):
     title_font = get_font(56, korean_font_path)
     label_font = get_font(24, korean_font_path)
     
-    # 제목
+    # Title
     title = "COLOR"
     title_width, _ = get_text_size(draw, title, title_font)
     safe_draw_text(draw, (width//2 - title_width//2, 60), title, title_font, (40, 40, 40))
     
-    # 링 이미지 배경 제거
+    # Remove background from ring image with ULTRA PRECISE removal
     ring_no_bg = None
     if ring_image:
         try:
-            logger.info("Removing background from ring image")
-            ring_no_bg = u2net_optimized_removal(ring_image)
+            logger.info("Removing background from ring image with ULTRA PRECISE method")
+            ring_no_bg = u2net_ultra_precise_removal(ring_image)
             if ring_no_bg.mode != 'RGBA':
                 ring_no_bg = ring_no_bg.convert('RGBA')
             ring_no_bg = auto_crop_transparent(ring_no_bg)
-            logger.info("Background removed successfully")
+            logger.info("Background removed successfully with ultra precision")
         except Exception as e:
             logger.error(f"Failed to remove background: {e}")
             ring_no_bg = ring_image.convert('RGBA') if ring_image else None
     
-    # 색상 정의
+    # Color definitions
     colors = [
         ("yellow", "YELLOW", (255, 200, 50), 0.3),
         ("rose", "ROSE", (255, 160, 120), 0.35),
@@ -255,7 +283,7 @@ def create_color_section(ring_image, width=1200):
         ("antique", "ANTIQUE", (245, 235, 225), 0.1)
     ]
     
-    # 그리드 레이아웃
+    # Grid layout
     grid_size = 260
     padding = 60
     start_x = (width - (grid_size * 2 + padding)) // 2
@@ -268,25 +296,25 @@ def create_color_section(ring_image, width=1200):
         x = start_x + col * (grid_size + padding)
         y = start_y + row * (grid_size + 100)
         
-        # 컨테이너 생성
+        # Create container
         container = Image.new('RGBA', (grid_size, grid_size), (252, 252, 252, 255))
         container_draw = ImageDraw.Draw(container)
         
-        # 테두리
+        # Border
         container_draw.rectangle([0, 0, grid_size-1, grid_size-1], 
                                 fill=None, outline=(240, 240, 240), width=1)
         
         if ring_no_bg:
             try:
-                # 링 복사 및 색상 적용
+                # Copy ring and apply color
                 ring_copy = ring_no_bg.copy()
                 max_size = int(grid_size * 0.7)
                 ring_copy.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
                 
-                # 색상 적용
+                # Apply color
                 ring_tinted = apply_enhanced_metal_color(ring_copy, color_rgb, strength, color_id)
                 
-                # 중앙 배치
+                # Center placement
                 paste_x = (grid_size - ring_tinted.width) // 2
                 paste_y = (grid_size - ring_tinted.height) // 2
                 container.paste(ring_tinted, (paste_x, paste_y), ring_tinted)
@@ -296,16 +324,320 @@ def create_color_section(ring_image, width=1200):
             except Exception as e:
                 logger.error(f"Error applying color {color_id}: {e}")
         
-        # 컨테이너를 섹션 이미지에 붙이기
+        # Paste container to section image
         section_img.paste(container, (x, y))
         
-        # 라벨 추가
+        # Add label
         label_width, _ = get_text_size(draw, label, label_font)
         safe_draw_text(draw, (x + grid_size//2 - label_width//2, y + grid_size + 20), 
                      label, label_font, (80, 80, 80))
     
     logger.info(f"COLOR section created: {width}x{height}")
     return section_img
+
+def u2net_ultra_precise_removal(image: Image.Image) -> Image.Image:
+    """ULTRA PRECISE U2Net background removal with advanced edge detection"""
+    try:
+        from rembg import remove
+        
+        global REMBG_SESSION
+        if REMBG_SESSION is None:
+            REMBG_SESSION = init_rembg_session()
+            if REMBG_SESSION is None:
+                return image
+        
+        logger.info("🔷 U2Net ULTRA PRECISE Background Removal V21")
+        
+        # Pre-process image for better edge detection
+        # Apply slight contrast enhancement before removal
+        contrast = ImageEnhance.Contrast(image)
+        image_enhanced = contrast.enhance(1.1)
+        
+        # Save image to buffer
+        buffered = BytesIO()
+        image_enhanced.save(buffered, format="PNG")
+        buffered.seek(0)
+        img_data = buffered.getvalue()
+        
+        # Apply U2Net removal with ULTRA PRECISE settings
+        output = remove(
+            img_data,
+            session=REMBG_SESSION,
+            alpha_matting=True,
+            alpha_matting_foreground_threshold=280,  # Even higher for better edges
+            alpha_matting_background_threshold=0,
+            alpha_matting_erode_size=0,
+            only_mask=False,
+            post_process_mask=True  # Enable post-processing
+        )
+        
+        result_image = Image.open(BytesIO(output))
+        
+        if result_image.mode != 'RGBA':
+            return result_image
+        
+        # ULTRA PRECISE edge refinement
+        r, g, b, a = result_image.split()
+        alpha_array = np.array(a, dtype=np.uint8)
+        original_alpha = alpha_array.copy()
+        
+        # Convert to float for processing
+        alpha_float = alpha_array.astype(np.float32) / 255.0
+        
+        # Stage 1: Advanced edge detection using Sobel
+        rgb_array = np.array(result_image.convert('RGB'), dtype=np.uint8)
+        gray = cv2.cvtColor(rgb_array, cv2.COLOR_RGB2GRAY)
+        
+        # Sobel edge detection for more precise edges
+        sobelx = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)
+        sobely = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3)
+        edge_magnitude = np.sqrt(sobelx**2 + sobely**2)
+        edge_magnitude = (edge_magnitude / edge_magnitude.max() * 255).astype(np.uint8)
+        
+        # Stage 2: Create edge mask
+        edge_mask = edge_magnitude > 30
+        edge_dilated = cv2.dilate(edge_mask.astype(np.uint8), np.ones((3,3)), iterations=2)
+        
+        # Stage 3: Apply guided filter for ultra-smooth edges
+        try:
+            # Normalize gray for guided filter
+            gray_float = gray.astype(np.float32) / 255.0
+            
+            # Multiple passes of guided filter with different parameters
+            alpha_guided1 = cv2.ximgproc.guidedFilter(
+                guide=gray_float,
+                src=alpha_float,
+                radius=1,
+                eps=0.0001  # Very small epsilon for maximum edge preservation
+            )
+            
+            alpha_guided2 = cv2.ximgproc.guidedFilter(
+                guide=gray_float,
+                src=alpha_guided1,
+                radius=3,
+                eps=0.001
+            )
+            
+            # Blend the two guided results
+            alpha_float = alpha_guided1 * 0.7 + alpha_guided2 * 0.3
+            
+        except AttributeError:
+            # Fallback to bilateral filter
+            alpha_uint8 = (alpha_float * 255).astype(np.uint8)
+            alpha_bilateral = cv2.bilateralFilter(alpha_uint8, 5, 75, 75)
+            alpha_float = alpha_bilateral.astype(np.float32) / 255.0
+        
+        # Stage 4: Ultra-precise threshold with smooth gradients
+        # Create smooth transition using sigmoid function
+        k = 50  # Steepness of transition
+        threshold = 0.5
+        alpha_sigmoid = 1 / (1 + np.exp(-k * (alpha_float - threshold)))
+        
+        # Stage 5: Edge-aware smoothing
+        # Only smooth non-edge areas
+        alpha_smooth = alpha_sigmoid.copy()
+        non_edge_mask = ~edge_dilated.astype(bool)
+        if np.any(non_edge_mask):
+            # Apply gentle smoothing to non-edge areas
+            alpha_smooth_temp = cv2.GaussianBlur(alpha_sigmoid, (5, 5), 1.0)
+            alpha_smooth[non_edge_mask] = alpha_smooth_temp[non_edge_mask]
+        
+        # Stage 6: Hair and fine detail preservation
+        # Detect fine details using high-pass filter
+        alpha_highpass = alpha_float - cv2.GaussianBlur(alpha_float, (7, 7), 2.0)
+        fine_details = np.abs(alpha_highpass) > 0.05
+        
+        # Preserve fine details
+        alpha_smooth[fine_details] = alpha_float[fine_details]
+        
+        # Stage 7: Remove small artifacts while preserving tiny details
+        alpha_binary = (alpha_smooth > 0.5).astype(np.uint8)
+        num_labels, labels = cv2.connectedComponents(alpha_binary)
+        
+        if num_labels > 2:
+            sizes = [np.sum(labels == i) for i in range(1, num_labels)]
+            if sizes:
+                # More aggressive artifact removal
+                min_size = int(alpha_array.size * 0.0002)  # 0.02% of image
+                valid_labels = [i+1 for i, size in enumerate(sizes) if size > min_size]
+                
+                # Create valid mask
+                valid_mask = np.zeros_like(alpha_binary, dtype=bool)
+                for label in valid_labels:
+                    valid_mask |= (labels == label)
+                
+                # Apply mask but preserve edges
+                alpha_smooth[~valid_mask & ~edge_dilated.astype(bool)] = 0
+        
+        # Stage 8: Final polish with edge enhancement
+        # Enhance edges slightly
+        edge_enhancement = 1.2
+        alpha_smooth[edge_dilated.astype(bool)] *= edge_enhancement
+        
+        # Convert back to uint8
+        alpha_array = np.clip(alpha_smooth * 255, 0, 255).astype(np.uint8)
+        
+        # Stage 9: Feather edges for natural look
+        # Create feathered edge
+        kernel_feather = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+        alpha_eroded = cv2.erode(alpha_array, kernel_feather, iterations=1)
+        alpha_dilated = cv2.dilate(alpha_array, kernel_feather, iterations=1)
+        
+        # Blend for feathering
+        feather_mask = (alpha_dilated > 0) & (alpha_eroded < 255)
+        if np.any(feather_mask):
+            alpha_array[feather_mask] = ((alpha_array[feather_mask].astype(np.float32) + 
+                                         alpha_eroded[feather_mask].astype(np.float32)) / 2).astype(np.uint8)
+        
+        logger.info("✅ ULTRA PRECISE background removal complete")
+        
+        a_new = Image.fromarray(alpha_array)
+        return Image.merge('RGBA', (r, g, b, a_new))
+        
+    except Exception as e:
+        logger.error(f"U2Net removal failed: {e}")
+        return image
+
+def ensure_ring_holes_transparent_ultra(image: Image.Image) -> Image.Image:
+    """ULTRA PRECISE ring hole detection with maximum accuracy"""
+    if image.mode != 'RGBA':
+        return image
+    
+    logger.info("🔍 ULTRA PRECISE Ring Hole Detection V21")
+    
+    r, g, b, a = image.split()
+    alpha_array = np.array(a, dtype=np.uint8)
+    rgb_array = np.array(image.convert('RGB'), dtype=np.uint8)
+    
+    h, w = alpha_array.shape
+    
+    # Convert to HSV for better color analysis
+    hsv = cv2.cvtColor(rgb_array, cv2.COLOR_RGB2HSV)
+    h_channel, s_channel, v_channel = cv2.split(hsv)
+    
+    # Multi-criteria hole detection
+    # 1. Very bright areas (potential holes)
+    very_bright = v_channel > 240
+    
+    # 2. Low saturation (grayish/white areas)
+    low_saturation = s_channel < 30
+    
+    # 3. Current alpha holes
+    alpha_holes = alpha_array < 50
+    
+    # 4. Combine all criteria
+    potential_holes = (very_bright & low_saturation) | alpha_holes
+    
+    # Clean up noise
+    kernel_clean = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    potential_holes = cv2.morphologyEx(potential_holes.astype(np.uint8), cv2.MORPH_OPEN, kernel_clean)
+    potential_holes = cv2.morphologyEx(potential_holes, cv2.MORPH_CLOSE, kernel_clean)
+    
+    # Find connected components
+    num_labels, labels = cv2.connectedComponents(potential_holes)
+    
+    holes_mask = np.zeros_like(alpha_array, dtype=np.float32)
+    
+    # Analyze each component
+    for label in range(1, num_labels):
+        component = (labels == label)
+        component_size = np.sum(component)
+        
+        # Size filtering - adjust for ring holes
+        if h * w * 0.0001 < component_size < h * w * 0.2:
+            # Get component properties
+            coords = np.where(component)
+            if len(coords[0]) == 0:
+                continue
+                
+            min_y, max_y = coords[0].min(), coords[0].max()
+            min_x, max_x = coords[1].min(), coords[1].max()
+            
+            comp_width = max_x - min_x
+            comp_height = max_y - min_y
+            
+            if comp_height == 0:
+                continue
+            
+            # Multiple validation criteria
+            aspect_ratio = comp_width / comp_height
+            
+            # 1. Shape validation (ring holes can be various shapes)
+            shape_valid = 0.2 < aspect_ratio < 5.0
+            
+            # 2. Position validation (usually in center area)
+            center_y, center_x = (min_y + max_y) / 2, (min_x + max_x) / 2
+            center_distance = np.sqrt((center_x - w/2)**2 + (center_y - h/2)**2)
+            position_valid = center_distance < max(w, h) * 0.45
+            
+            # 3. Color consistency check
+            component_pixels = rgb_array[component]
+            if len(component_pixels) > 0:
+                # Check brightness
+                brightness = np.mean(component_pixels)
+                brightness_std = np.std(component_pixels)
+                
+                brightness_valid = brightness > 230
+                consistency_valid = brightness_std < 25
+                
+                # 4. Circularity check
+                component_uint8 = component.astype(np.uint8) * 255
+                contours, _ = cv2.findContours(component_uint8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                
+                circularity_valid = False
+                if contours:
+                    contour = contours[0]
+                    area = cv2.contourArea(contour)
+                    perimeter = cv2.arcLength(contour, True)
+                    if perimeter > 0:
+                        circularity = 4 * np.pi * area / (perimeter * perimeter)
+                        circularity_valid = circularity > 0.3
+                
+                # 5. Edge smoothness check
+                edges = cv2.Canny(component_uint8, 50, 150)
+                edge_ratio = np.sum(edges > 0) / max(1, perimeter)
+                smoothness_valid = edge_ratio < 2.0
+                
+                # Calculate confidence score
+                confidence = 0.0
+                if brightness_valid: confidence += 0.35
+                if consistency_valid: confidence += 0.25
+                if position_valid: confidence += 0.15
+                if circularity_valid: confidence += 0.15
+                if smoothness_valid: confidence += 0.10
+                
+                # Apply hole mask if confident
+                if confidence > 0.45 and shape_valid:
+                    holes_mask[component] = 255
+                    logger.info(f"Hole detected with confidence: {confidence:.2f}")
+    
+    # Apply holes if any detected
+    if np.any(holes_mask > 0):
+        # Smooth hole edges
+        holes_mask_smooth = cv2.GaussianBlur(holes_mask, (5, 5), 1.0)
+        
+        # Create transition zone
+        kernel_dilate = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+        holes_dilated = cv2.dilate(holes_mask, kernel_dilate, iterations=1)
+        transition_zone = (holes_dilated > 0) & (holes_mask < 255)
+        
+        # Apply graduated transparency
+        alpha_float = alpha_array.astype(np.float32)
+        
+        # Full transparency in hole centers
+        alpha_float[holes_mask_smooth > 200] = 0
+        
+        # Graduated transparency in transition
+        if np.any(transition_zone):
+            transition_alpha = 1 - (holes_mask_smooth[transition_zone] / 255)
+            alpha_float[transition_zone] *= transition_alpha
+        
+        alpha_array = np.clip(alpha_float, 0, 255).astype(np.uint8)
+        
+        logger.info("✅ Ring holes made transparent")
+    
+    a_new = Image.fromarray(alpha_array)
+    return Image.merge('RGBA', (r, g, b, a_new))
 
 def process_color_section(job):
     """Process COLOR section special mode"""
@@ -351,7 +683,8 @@ def process_color_section(job):
                 "version": VERSION,
                 "status": "success",
                 "format": "base64_no_padding",
-                "colors_generated": ["YELLOW", "ROSE", "WHITE", "ANTIQUE"]
+                "colors_generated": ["YELLOW", "ROSE", "WHITE", "ANTIQUE"],
+                "background_removal": "ULTRA_PRECISE"
             }
         }
         
@@ -368,8 +701,7 @@ def process_color_section(job):
             }
         }
 
-# ... (기존 함수들은 그대로 유지)
-
+# Add all other helper functions from the original code...
 def find_input_data_fast(data):
     """Fast input data extraction"""
     if isinstance(data, str) and len(data) > 50:
@@ -520,156 +852,6 @@ def create_background(size, color="#E0DADC", style="gradient"):
     else:
         return Image.new('RGB', size, color)
 
-def u2net_optimized_removal(image: Image.Image) -> Image.Image:
-    """ENHANCED U2Net background removal with precise edge detection for thumbnails"""
-    try:
-        from rembg import remove
-        
-        global REMBG_SESSION
-        if REMBG_SESSION is None:
-            REMBG_SESSION = init_rembg_session()
-            if REMBG_SESSION is None:
-                return image
-        
-        logger.info("🔷 U2Net Enhanced Background Removal V20-Precise")
-        
-        # Save image to buffer
-        buffered = BytesIO()
-        image.save(buffered, format="PNG")
-        buffered.seek(0)
-        img_data = buffered.getvalue()
-        
-        # Apply U2Net removal with MORE PRECISE settings
-        output = remove(
-            img_data,
-            session=REMBG_SESSION,
-            alpha_matting=True,
-            alpha_matting_foreground_threshold=270,  # Higher threshold for better edge detection
-            alpha_matting_background_threshold=0,     # Lower for cleaner removal
-            alpha_matting_erode_size=0,              # No erosion to preserve details
-            only_mask=False
-        )
-        
-        result_image = Image.open(BytesIO(output))
-        
-        if result_image.mode != 'RGBA':
-            return result_image
-        
-        # ENHANCED edge refinement with multi-stage processing
-        r, g, b, a = result_image.split()
-        alpha_array = np.array(a, dtype=np.uint8)
-        original_alpha = alpha_array.copy()
-        
-        # Stage 1: Fine-tuned edge detection
-        # Use smaller kernel for initial cleanup
-        kernel_tiny = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2, 2))
-        alpha_array = cv2.morphologyEx(alpha_array, cv2.MORPH_CLOSE, kernel_tiny)
-        
-        # Stage 2: Precision edge refinement
-        # Apply guided filter for edge-preserving smoothing
-        rgb_array = np.array(result_image.convert('RGB'), dtype=np.float32) / 255.0
-        gray_guide = cv2.cvtColor(rgb_array, cv2.COLOR_RGB2GRAY)
-        
-        # Use guided filter for edge-preserving smoothing
-        alpha_float = alpha_array.astype(np.float32) / 255.0
-        try:
-            alpha_guided = cv2.ximgproc.guidedFilter(
-                guide=gray_guide,
-                src=alpha_float,
-                radius=2,         # Small radius for detail preservation
-                eps=0.001         # Small epsilon for edge preservation
-            )
-            alpha_array = (alpha_guided * 255).astype(np.uint8)
-        except AttributeError:
-            # Fallback if ximgproc not available
-            alpha_array = cv2.bilateralFilter(alpha_array, 3, 30, 30)
-        
-        # Stage 3: Sub-pixel edge refinement
-        # Detect edges for special treatment
-        edges = cv2.Canny(alpha_array, 100, 200)
-        edge_mask = cv2.dilate(edges, kernel_tiny, iterations=1)
-        
-        # Apply bilateral filter ONLY to edge regions
-        alpha_edges = cv2.bilateralFilter(alpha_array, 5, 50, 50)
-        alpha_array = np.where(edge_mask > 0, alpha_edges, alpha_array)
-        
-        # Stage 4: Precision threshold with gradient
-        # Create smooth transition at edges
-        gradient_alpha = alpha_array.astype(np.float32) / 255.0
-        
-        # Multi-level thresholding for smooth transitions
-        gradient_alpha = np.where(gradient_alpha > 0.95, 1.0, gradient_alpha)
-        gradient_alpha = np.where(gradient_alpha < 0.05, 0.0, gradient_alpha)
-        
-        # Smooth transition zone (0.05 - 0.95)
-        transition_mask = (gradient_alpha > 0.05) & (gradient_alpha < 0.95)
-        if np.any(transition_mask):
-            # Apply sigmoid curve for natural transition
-            gradient_alpha[transition_mask] = 1 / (1 + np.exp(-10 * (gradient_alpha[transition_mask] - 0.5)))
-        
-        alpha_array = (gradient_alpha * 255).astype(np.uint8)
-        
-        # Stage 5: Remove tiny artifacts while preserving details
-        # Use connected components with size threshold
-        num_labels, labels = cv2.connectedComponents((alpha_array > 128).astype(np.uint8))
-        
-        if num_labels > 2:
-            sizes = [np.sum(labels == i) for i in range(1, num_labels)]
-            if sizes:
-                # Keep all components larger than 0.01% of image
-                min_size = int(alpha_array.size * 0.0001)
-                valid_labels = [i+1 for i, size in enumerate(sizes) if size > min_size]
-                
-                # Create mask for valid components
-                valid_mask = np.zeros_like(alpha_array, dtype=bool)
-                for label in valid_labels:
-                    valid_mask |= (labels == label)
-                
-                alpha_array = np.where(valid_mask, alpha_array, 0)
-        
-        # Stage 6: Final edge polish
-        # Very light Gaussian blur ONLY on edges
-        edge_blur = cv2.GaussianBlur(alpha_array.astype(np.float32), (3, 3), 0.5)
-        alpha_final = np.where(edge_mask > 0, edge_blur, alpha_array.astype(np.float32))
-        alpha_array = alpha_final.astype(np.uint8)
-        
-        # Stage 7: Preserve original strong edges
-        # Restore very strong edges from original
-        strong_edges = original_alpha > 250
-        alpha_array = np.where(strong_edges, original_alpha, alpha_array)
-        
-        logger.info("✅ Enhanced background removal complete with precise edges")
-        
-        a_new = Image.fromarray(alpha_array)
-        return Image.merge('RGBA', (r, g, b, a_new))
-        
-    except Exception as e:
-        logger.error(f"U2Net removal failed: {e}")
-        # Fallback to simpler method if advanced features not available
-        try:
-            logger.info("Falling back to standard U2Net removal")
-            from rembg import remove
-            
-            buffered = BytesIO()
-            image.save(buffered, format="PNG")
-            buffered.seek(0)
-            img_data = buffered.getvalue()
-            
-            output = remove(
-                img_data,
-                session=REMBG_SESSION,
-                alpha_matting=True,
-                alpha_matting_foreground_threshold=250,
-                alpha_matting_background_threshold=5,
-                alpha_matting_erode_size=0
-            )
-            
-            return Image.open(BytesIO(output))
-        except:
-            return image
-
-# ... (나머지 thumbnail 관련 함수들은 그대로 유지)
-
 def create_thumbnail_proportional(image, target_width=1000, target_height=1300):
     """Create thumbnail with proper proportional sizing - Fixed version"""
     original_width, original_height = image.size
@@ -736,137 +918,6 @@ def composite_with_natural_blend(image, background_color="#E0DADC"):
     result = fg_array * alpha_final[:,:,np.newaxis] + bg_array * (1 - alpha_final[:,:,np.newaxis])
     
     return Image.fromarray(np.clip(result, 0, 255).astype(np.uint8))
-
-def ensure_ring_holes_transparent_fast(image: Image.Image) -> Image.Image:
-    """PRECISE ring hole detection with enhanced accuracy for thumbnails"""
-    if image.mode != 'RGBA':
-        return image
-    
-    logger.info("🔍 Precise Ring Hole Detection V20")
-    
-    r, g, b, a = image.split()
-    alpha_array = np.array(a, dtype=np.uint8)
-    rgb_array = np.array(image.convert('RGB'), dtype=np.float32)
-    
-    h, w = alpha_array.shape
-    
-    # More precise threshold detection with multiple criteria
-    # 1. Low alpha areas
-    low_alpha = alpha_array < 30
-    
-    # 2. Bright interior regions (potential holes)
-    gray = cv2.cvtColor(rgb_array.astype(np.uint8), cv2.COLOR_RGB2GRAY)
-    bright_areas = gray > 230
-    
-    # 3. Combine conditions
-    potential_holes = low_alpha | (bright_areas & (alpha_array < 100))
-    
-    # Refined noise removal with smaller kernel
-    kernel_small = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-    potential_holes = cv2.morphologyEx(potential_holes.astype(np.uint8), cv2.MORPH_OPEN, kernel_small)
-    potential_holes = cv2.morphologyEx(potential_holes, cv2.MORPH_CLOSE, kernel_small)
-    
-    # Find hole candidates with refined analysis
-    num_labels, labels = cv2.connectedComponents(potential_holes)
-    
-    holes_mask = np.zeros_like(alpha_array, dtype=np.float32)
-    
-    for label in range(1, num_labels):
-        component = (labels == label)
-        component_size = np.sum(component)
-        
-        # More precise size filtering
-        if h * w * 0.00005 < component_size < h * w * 0.15:
-            coords = np.where(component)
-            min_y, max_y = coords[0].min(), coords[0].max()
-            min_x, max_x = coords[1].min(), coords[1].max()
-            
-            width = max_x - min_x
-            height = max_y - min_y
-            
-            # Check multiple criteria for hole detection
-            aspect_ratio = width / height if height > 0 else 0
-            
-            # 1. Shape check - more flexible aspect ratio
-            shape_valid = 0.3 < aspect_ratio < 3.0
-            
-            # 2. Position check - holes usually in center area
-            center_y, center_x = (min_y + max_y) / 2, (min_x + max_x) / 2
-            center_distance = np.sqrt((center_x - w/2)**2 + (center_y - h/2)**2)
-            position_valid = center_distance < max(w, h) * 0.4
-            
-            # 3. Brightness and color consistency check
-            hole_pixels = rgb_array[component]
-            if len(hole_pixels) > 0:
-                brightness = np.mean(hole_pixels)
-                color_std = np.std(hole_pixels, axis=0).mean()
-                
-                # Holes are usually bright and color-consistent
-                brightness_valid = brightness > 220
-                consistency_valid = color_std < 30
-                
-                # 4. Edge smoothness check
-                component_uint8 = component.astype(np.uint8) * 255
-                contours, _ = cv2.findContours(component_uint8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                
-                if contours:
-                    perimeter = cv2.arcLength(contours[0], True)
-                    area = cv2.contourArea(contours[0])
-                    if area > 0:
-                        circularity = 4 * np.pi * area / (perimeter * perimeter)
-                        smoothness_valid = circularity > 0.4
-                    else:
-                        smoothness_valid = False
-                else:
-                    smoothness_valid = False
-                
-                # Combine all criteria with weights
-                if shape_valid and (brightness_valid or (position_valid and consistency_valid)):
-                    # Calculate confidence score
-                    confidence = 0.0
-                    if brightness_valid: confidence += 0.4
-                    if consistency_valid: confidence += 0.3
-                    if position_valid: confidence += 0.2
-                    if smoothness_valid: confidence += 0.1
-                    
-                    if confidence > 0.5:
-                        # Apply graduated transparency based on confidence
-                        holes_mask[component] = 255 * min(1.0, confidence)
-    
-    if np.any(holes_mask > 0):
-        # More precise edge blending
-        # Use guided filter for smooth transitions
-        try:
-            holes_mask_guided = cv2.ximgproc.guidedFilter(
-                guide=gray.astype(np.float32),
-                src=holes_mask,
-                radius=3,
-                eps=0.01
-            )
-        except AttributeError:
-            # Fallback if ximgproc not available
-            holes_mask_guided = cv2.GaussianBlur(holes_mask, (7, 7), 1.5)
-        
-        # Apply mask with smooth transitions
-        alpha_float = alpha_array.astype(np.float32)
-        
-        # Gradual transition at hole edges
-        hole_edges = cv2.Canny(holes_mask.astype(np.uint8), 50, 150)
-        transition_zone = cv2.dilate(hole_edges, kernel_small, iterations=2)
-        
-        # Apply different blending in transition zone
-        alpha_float[holes_mask_guided > 200] = 0  # Full transparency in hole center
-        transition_mask = (transition_zone > 0) & (holes_mask_guided <= 200) & (holes_mask_guided > 50)
-        if np.any(transition_mask):
-            # Smooth gradient in transition
-            alpha_float[transition_mask] *= (1 - holes_mask_guided[transition_mask] / 255)
-        
-        alpha_array = np.clip(alpha_float, 0, 255).astype(np.uint8)
-    
-    logger.info("✅ Precise ring hole detection complete")
-    
-    a_new = Image.fromarray(alpha_array.astype(np.uint8))
-    return Image.merge('RGBA', (r, g, b, a_new))
 
 def apply_swinir_thumbnail(image: Image.Image) -> Image.Image:
     """Apply SwinIR enhancement for thumbnails"""
@@ -1117,18 +1168,10 @@ def image_to_base64(image):
     return base64.b64encode(buffered.getvalue()).decode().rstrip('=')
 
 def handler(event):
-    """Optimized thumbnail handler - V20 with Precise Edge Detection
-    
-    Features:
-    - 7-stage edge refinement process for precise background removal
-    - Sub-pixel accuracy for edges
-    - Guided filter for edge preservation
-    - Multi-criteria hole detection
-    - Gradient-based smooth transitions
-    """
+    """Optimized thumbnail handler - V21 with ULTRA Precise Edge Detection"""
     try:
         logger.info(f"=== Thumbnail {VERSION} Started ===")
-        logger.info("🎯 PRECISE MODE: Enhanced edge detection enabled")
+        logger.info("🎯 ULTRA PRECISE MODE: Maximum edge detection enabled")
         
         # Check for special mode first
         if event.get('special_mode') == 'color_section':
@@ -1161,14 +1204,14 @@ def handler(event):
         if not image:
             raise ValueError("Failed to load image")
         
-        # STEP 1: OPTIMIZED BACKGROUND REMOVAL (PNG files)
+        # STEP 1: ULTRA PRECISE BACKGROUND REMOVAL (PNG files)
         original_mode = image.mode
         has_transparency = image.mode == 'RGBA'
         needs_background_removal = False
         
         if filename and filename.lower().endswith('.png'):
-            logger.info("📸 STEP 1: PNG detected - PRECISE background removal with edge refinement")
-            image = u2net_optimized_removal(image)
+            logger.info("📸 STEP 1: PNG detected - ULTRA PRECISE background removal")
+            image = u2net_ultra_precise_removal(image)
             has_transparency = image.mode == 'RGBA'
             needs_background_removal = True
         
@@ -1221,14 +1264,14 @@ def handler(event):
         # STEP 4: BACKGROUND COMPOSITE (if transparent)
         if has_transparency and 'original_transparent' in locals():
             logger.info(f"🖼️ STEP 4: Natural background compositing: {background_color}")
-            logger.info("🔍 Applying precise ring hole detection")
+            logger.info("🔍 Applying ULTRA PRECISE ring hole detection")
             
             # Apply same proportional resize to transparent version
             enhanced_transparent = create_thumbnail_proportional(original_transparent, 1000, 1300)
             
             if enhanced_transparent.mode == 'RGBA':
-                # Precise ring hole detection
-                enhanced_transparent = ensure_ring_holes_transparent_fast(enhanced_transparent)
+                # Ultra precise ring hole detection
+                enhanced_transparent = ensure_ring_holes_transparent_ultra(enhanced_transparent)
                 
                 r, g, b, a = enhanced_transparent.split()
                 rgb_image = Image.merge('RGB', (r, g, b))
@@ -1316,24 +1359,23 @@ def handler(event):
                     "011": "COLOR section"
                 },
                 "optimization_features": [
-                    "✅ ENHANCED Transparent PNG with PRECISE edge detection",
-                    "✅ Multi-stage edge refinement (7 stages)",
-                    "✅ Guided filter for edge-preserving smoothing",
-                    "✅ Sub-pixel edge accuracy",
-                    "✅ Gradient-based smooth transitions",
-                    "✅ Precise ring hole detection with multi-criteria",
-                    "✅ Fixed file numbers: 007, 009, 010 for thumbnails",
-                    "✅ COLOR section: 011",
-                    "✅ 4 metal color variations (Yellow, Rose, White, Antique)",
-                    "✅ Automatic background removal for ring",
+                    "✅ ULTRA PRECISE Transparent PNG edge detection",
+                    "✅ Enhanced Korean font support with proper encoding",
+                    "✅ Advanced multi-stage edge refinement",
+                    "✅ Sobel edge detection for precision",
+                    "✅ Multiple guided filter passes",
+                    "✅ Hair and fine detail preservation",
+                    "✅ Feathered edges for natural look",
+                    "✅ Ultra precise ring hole detection",
                     "✅ Enhanced metal color algorithms",
                     "✅ Fixed proportional thumbnail (50% for 2000x2600)",
                     "✅ White overlay verification with logging",
                     "✅ SwinIR always applied after resize"
                 ],
                 "thumbnail_method": "Proportional resize (no aggressive cropping)",
-                "processing_order": "1.U2Net-Precise → 2.Enhancement → 3.SwinIR → 4.Composite",
-                "edge_detection": "PRECISE (7-stage refinement)",
+                "processing_order": "1.U2Net-Ultra → 2.Enhancement → 3.SwinIR → 4.Composite",
+                "edge_detection": "ULTRA PRECISE (Sobel + Guided Filter)",
+                "korean_support": "ENHANCED (UTF-8 encoding)",
                 "expected_input": "2000x2600 PNG",
                 "output_size": "1000x1300",
                 "white_overlay": "AC: 12% (1차), 15% (2차) | AB: 5% (1차), 8% (2차) + Cool Tone - WITH VERIFICATION",
