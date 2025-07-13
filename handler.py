@@ -16,10 +16,10 @@ logger = logging.getLogger(__name__)
 
 ################################
 # THUMBNAIL HANDLER - 1000x1300
-# VERSION: V19-With-Color-Section
+# VERSION: V20-Fixed-File-Numbers
 ################################
 
-VERSION = "V19-With-Color-Section"
+VERSION = "V20-Fixed-File-Numbers"
 
 # ===== GLOBAL INITIALIZATION =====
 REPLICATE_API_TOKEN = os.environ.get('REPLICATE_API_TOKEN')
@@ -346,6 +346,8 @@ def process_color_section(job):
                 "size": list(color_section.size),
                 "section_type": "color",
                 "special_mode": "color_section",
+                "filename": "ac_wedding_011.png",
+                "file_number": "011",
                 "version": VERSION,
                 "status": "success",
                 "format": "base64_no_padding",
@@ -407,11 +409,12 @@ def find_filename_fast(data):
     return None
 
 def generate_thumbnail_filename(original_filename, image_index):
-    """Generate thumbnail filename"""
+    """Generate thumbnail filename with fixed numbers"""
     if not original_filename:
         return f"thumbnail_{image_index:03d}.jpg"
     
-    thumbnail_numbers = {1: "007", 3: "008", 5: "009"}
+    # Fixed thumbnail numbers: 007, 009, 010
+    thumbnail_numbers = {1: "007", 2: "009", 3: "010"}
     
     new_filename = original_filename
     pattern = r'(_\d{3})'
@@ -954,7 +957,7 @@ def image_to_base64(image):
     return base64.b64encode(buffered.getvalue()).decode().rstrip('=')
 
 def handler(event):
-    """Optimized thumbnail handler - V19 with COLOR section"""
+    """Optimized thumbnail handler - V20 with Fixed File Numbers"""
     try:
         logger.info(f"=== Thumbnail {VERSION} Started ===")
         
@@ -1136,8 +1139,15 @@ def handler(event):
                 "background_removal": needs_background_removal,
                 "background_color": background_color,
                 "special_modes_available": ["color_section"],
+                "file_number_info": {
+                    "007": "Thumbnail 1",
+                    "009": "Thumbnail 2", 
+                    "010": "Thumbnail 3",
+                    "011": "COLOR section"
+                },
                 "optimization_features": [
-                    "✅ COLOR section support added",
+                    "✅ Fixed file numbers: 007, 009, 010 for thumbnails",
+                    "✅ COLOR section: 011",
                     "✅ 4 metal color variations (Yellow, Rose, White, Antique)",
                     "✅ Automatic background removal for ring",
                     "✅ Enhanced metal color algorithms",
