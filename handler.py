@@ -3,7 +3,7 @@ import os
 import base64
 import numpy as np
 from io import BytesIO
-from PIL import Image, ImageEnhance, ImageFilter
+from PIL import Image, ImageEnhance, ImageFilter, ImageDraw, ImageFont
 import requests
 import logging
 import re
@@ -16,10 +16,10 @@ logger = logging.getLogger(__name__)
 
 ################################
 # THUMBNAIL HANDLER - 1000x1300
-# VERSION: V18.1-Fixed-BG-Removal
+# VERSION: V19-With-Color-Section
 ################################
 
-VERSION = "V18.1-Fixed-BG-Removal"
+VERSION = "V19-With-Color-Section"
 
 # ===== GLOBAL INITIALIZATION =====
 REPLICATE_API_TOKEN = os.environ.get('REPLICATE_API_TOKEN')
@@ -51,6 +51,322 @@ def init_rembg_session():
 
 # Initialize on module load
 init_rembg_session()
+
+def download_korean_font():
+    """Download Korean font for text rendering"""
+    try:
+        font_path = '/tmp/NanumGothic.ttf'
+        
+        if os.path.exists(font_path):
+            try:
+                test_font = ImageFont.truetype(font_path, 20)
+                return font_path
+            except:
+                os.remove(font_path)
+        
+        font_urls = [
+            'https://github.com/naver/nanumfont/raw/master/fonts/NanumFontSetup_TTF_GOTHIC/NanumGothic.ttf',
+            'https://cdn.jsdelivr.net/gh/naver/nanumfont@master/fonts/NanumFontSetup_TTF_GOTHIC/NanumGothic.ttf'
+        ]
+        
+        for url in font_urls:
+            try:
+                response = requests.get(url, timeout=30)
+                if response.status_code == 200:
+                    with open(font_path, 'wb') as f:
+                        f.write(response.content)
+                    return font_path
+            except:
+                continue
+        
+        return None
+    except:
+        return None
+
+def get_font(size, korean_font_path=None):
+    """Get font with fallback"""
+    if korean_font_path and os.path.exists(korean_font_path):
+        try:
+            return ImageFont.truetype(korean_font_path, size)
+        except:
+            pass
+    
+    return ImageFont.load_default()
+
+def safe_draw_text(draw, position, text, font, fill):
+    """Safely draw text"""
+    try:
+        if text:
+            draw.text(position, str(text), font=font, fill=fill)
+    except:
+        draw.text(position, "[Error]", font=font, fill=fill)
+
+def get_text_size(draw, text, font):
+    """Get text size compatible with different PIL versions"""
+    try:
+        bbox = draw.textbbox((0, 0), text, font=font)
+        return bbox[2] - bbox[0], bbox[3] - bbox[1]
+    except AttributeError:
+        return draw.textsize(text, font=font)
+
+def auto_crop_transparent(image):
+    """Auto-crop transparent borders from image with padding"""
+    if image.mode != 'RGBA':
+        image = image.convert('RGBA')
+    
+    data = np.array(image)
+    alpha = data[:,:,3]
+    
+    non_transparent = np.where(alpha > 10)
+    
+    if len(non_transparent[0]) == 0:
+        return image
+    
+    min_y = non_transparent[0].min()
+    max_y = non_transparent[0].max()
+    min_x = non_transparent[1].min()
+    max_x = non_transparent[1].max()
+    
+    padding = 10
+    min_y = max(0, min_y - padding)
+    max_y = min(data.shape[0] - 1, max_y + padding)
+    min_x = max(0, min_x - padding)
+    max_x = min(data.shape[1] - 1, max_x + padding)
+    
+    cropped = image.crop((min_x, min_y, max_x + 1, max_y + 1))
+    return cropped
+
+def apply_enhanced_metal_color(image, metal_color, strength=0.3, color_id=""):
+    """Apply enhanced metal color effect with special handling for white and rose"""
+    if image.mode != 'RGBA':
+        image = image.convert('RGBA')
+    
+    r, g, b, a = image.split()
+    
+    r_array = np.array(r, dtype=np.float32)
+    g_array = np.array(g, dtype=np.float32)
+    b_array = np.array(b, dtype=np.float32)
+    a_array = np.array(a)
+    
+    mask = a_array > 0
+    
+    if mask.any():
+        luminance = (0.299 * r_array + 0.587 * g_array + 0.114 * b_array) / 255.0
+        
+        metal_r, metal_g, metal_b = [c/255.0 for c in metal_color]
+        
+        if color_id == "white":
+            brightness_boost = 1.05
+            r_array[mask] = np.clip(r_array[mask] * brightness_boost, 0, 255)
+            g_array[mask] = np.clip(g_array[mask] * brightness_boost, 0, 255)
+            b_array[mask] = np.clip(b_array[mask] * brightness_boost, 0, 255)
+        
+        elif color_id == "rose":
+            highlight_mask = luminance > 0.85
+            shadow_mask = luminance < 0.15
+            midtone_mask = ~highlight_mask & ~shadow_mask & mask
+            
+            if midtone_mask.any():
+                blend_factor = 0.5
+                r_array[midtone_mask] = r_array[midtone_mask] * (1 - blend_factor) + (255 * luminance[midtone_mask]) * blend_factor
+                g_array[midtone_mask] = g_array[midtone_mask] * (1 - blend_factor) + (160 * luminance[midtone_mask]) * blend_factor
+                b_array[midtone_mask] = b_array[midtone_mask] * (1 - blend_factor) + (120 * luminance[midtone_mask]) * blend_factor
+            
+            if highlight_mask.any():
+                r_array[highlight_mask] = np.clip(r_array[highlight_mask] * 0.5 + 255 * 0.5, 0, 255)
+                g_array[highlight_mask] = np.clip(g_array[highlight_mask] * 0.5 + 160 * 0.5, 0, 255)
+                b_array[highlight_mask] = np.clip(b_array[highlight_mask] * 0.5 + 120 * 0.5, 0, 255)
+            
+            if shadow_mask.any():
+                r_array[shadow_mask] = r_array[shadow_mask] * 0.8 + 50 * 0.2
+                g_array[shadow_mask] = g_array[shadow_mask] * 0.8 + 30 * 0.2
+                b_array[shadow_mask] = b_array[shadow_mask] * 0.8 + 20 * 0.2
+        
+        else:
+            highlight_mask = luminance > 0.85
+            shadow_mask = luminance < 0.15
+            midtone_mask = ~highlight_mask & ~shadow_mask & mask
+            
+            if midtone_mask.any():
+                blend_factor = strength * 2.0
+                r_array[midtone_mask] = r_array[midtone_mask] * (1 - blend_factor) + (metal_r * 255 * luminance[midtone_mask]) * blend_factor
+                g_array[midtone_mask] = g_array[midtone_mask] * (1 - blend_factor) + (metal_g * 255 * luminance[midtone_mask]) * blend_factor
+                b_array[midtone_mask] = b_array[midtone_mask] * (1 - blend_factor) + (metal_b * 255 * luminance[midtone_mask]) * blend_factor
+            
+            if highlight_mask.any():
+                tint_factor = strength * 0.5
+                r_array[highlight_mask] = r_array[highlight_mask] * (1 - tint_factor) + (metal_r * 255) * tint_factor
+                g_array[highlight_mask] = g_array[highlight_mask] * (1 - tint_factor) + (metal_g * 255) * tint_factor
+                b_array[highlight_mask] = b_array[highlight_mask] * (1 - tint_factor) + (metal_b * 255) * tint_factor
+            
+            if shadow_mask.any():
+                shadow_tint = strength * 0.2
+                r_array[shadow_mask] = r_array[shadow_mask] * (1 - shadow_tint) + (metal_r * r_array[shadow_mask]) * shadow_tint
+                g_array[shadow_mask] = g_array[shadow_mask] * (1 - shadow_tint) + (metal_g * g_array[shadow_mask]) * shadow_tint
+                b_array[shadow_mask] = b_array[shadow_mask] * (1 - shadow_tint) + (metal_b * b_array[shadow_mask]) * shadow_tint
+    
+    r_array = np.clip(r_array, 0, 255)
+    g_array = np.clip(g_array, 0, 255)
+    b_array = np.clip(b_array, 0, 255)
+    
+    r_new = Image.fromarray(r_array.astype(np.uint8))
+    g_new = Image.fromarray(g_array.astype(np.uint8))
+    b_new = Image.fromarray(b_array.astype(np.uint8))
+    
+    return Image.merge('RGBA', (r_new, g_new, b_new, a))
+
+def create_color_section(ring_image, width=1200):
+    """Create COLOR section with 4 metal variations"""
+    logger.info("Creating COLOR section")
+    
+    height = 850
+    
+    section_img = Image.new('RGB', (width, height), '#FFFFFF')
+    draw = ImageDraw.Draw(section_img)
+    
+    korean_font_path = download_korean_font()
+    title_font = get_font(56, korean_font_path)
+    label_font = get_font(24, korean_font_path)
+    
+    # 제목
+    title = "COLOR"
+    title_width, _ = get_text_size(draw, title, title_font)
+    safe_draw_text(draw, (width//2 - title_width//2, 60), title, title_font, (40, 40, 40))
+    
+    # 링 이미지 배경 제거
+    ring_no_bg = None
+    if ring_image:
+        try:
+            logger.info("Removing background from ring image")
+            ring_no_bg = u2net_optimized_removal(ring_image)
+            if ring_no_bg.mode != 'RGBA':
+                ring_no_bg = ring_no_bg.convert('RGBA')
+            ring_no_bg = auto_crop_transparent(ring_no_bg)
+            logger.info("Background removed successfully")
+        except Exception as e:
+            logger.error(f"Failed to remove background: {e}")
+            ring_no_bg = ring_image.convert('RGBA') if ring_image else None
+    
+    # 색상 정의
+    colors = [
+        ("yellow", "YELLOW", (255, 200, 50), 0.3),
+        ("rose", "ROSE", (255, 160, 120), 0.35),
+        ("white", "WHITE", (255, 255, 255), 0.0),
+        ("antique", "ANTIQUE", (245, 235, 225), 0.1)
+    ]
+    
+    # 그리드 레이아웃
+    grid_size = 260
+    padding = 60
+    start_x = (width - (grid_size * 2 + padding)) // 2
+    start_y = 160
+    
+    for i, (color_id, label, color_rgb, strength) in enumerate(colors):
+        row = i // 2
+        col = i % 2
+        
+        x = start_x + col * (grid_size + padding)
+        y = start_y + row * (grid_size + 100)
+        
+        # 컨테이너 생성
+        container = Image.new('RGBA', (grid_size, grid_size), (252, 252, 252, 255))
+        container_draw = ImageDraw.Draw(container)
+        
+        # 테두리
+        container_draw.rectangle([0, 0, grid_size-1, grid_size-1], 
+                                fill=None, outline=(240, 240, 240), width=1)
+        
+        if ring_no_bg:
+            try:
+                # 링 복사 및 색상 적용
+                ring_copy = ring_no_bg.copy()
+                max_size = int(grid_size * 0.7)
+                ring_copy.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
+                
+                # 색상 적용
+                ring_tinted = apply_enhanced_metal_color(ring_copy, color_rgb, strength, color_id)
+                
+                # 중앙 배치
+                paste_x = (grid_size - ring_tinted.width) // 2
+                paste_y = (grid_size - ring_tinted.height) // 2
+                container.paste(ring_tinted, (paste_x, paste_y), ring_tinted)
+                
+                logger.info(f"Applied {color_id} color")
+                
+            except Exception as e:
+                logger.error(f"Error applying color {color_id}: {e}")
+        
+        # 컨테이너를 섹션 이미지에 붙이기
+        section_img.paste(container, (x, y))
+        
+        # 라벨 추가
+        label_width, _ = get_text_size(draw, label, label_font)
+        safe_draw_text(draw, (x + grid_size//2 - label_width//2, y + grid_size + 20), 
+                     label, label_font, (80, 80, 80))
+    
+    logger.info(f"COLOR section created: {width}x{height}")
+    return section_img
+
+def process_color_section(job):
+    """Process COLOR section special mode"""
+    logger.info("Processing COLOR section special mode")
+    
+    try:
+        # Find image data
+        image_data = find_input_data_fast(job)
+        
+        if not image_data:
+            return {
+                "output": {
+                    "error": "No image data found for COLOR section",
+                    "status": "error",
+                    "version": VERSION
+                }
+            }
+        
+        # Decode and open image
+        image_bytes = decode_base64_fast(image_data)
+        ring_image = Image.open(BytesIO(image_bytes))
+        
+        # Create COLOR section
+        color_section = create_color_section(ring_image, width=1200)
+        
+        # Convert to base64
+        buffered = BytesIO()
+        color_section.save(buffered, format="PNG", optimize=False)
+        buffered.seek(0)
+        section_base64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
+        section_base64_no_padding = section_base64.rstrip('=')
+        
+        logger.info("COLOR section created successfully")
+        
+        return {
+            "output": {
+                "thumbnail": section_base64_no_padding,
+                "size": list(color_section.size),
+                "section_type": "color",
+                "special_mode": "color_section",
+                "version": VERSION,
+                "status": "success",
+                "format": "base64_no_padding",
+                "colors_generated": ["YELLOW", "ROSE", "WHITE", "ANTIQUE"]
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"Error creating COLOR section: {str(e)}")
+        import traceback
+        
+        return {
+            "output": {
+                "error": str(e),
+                "status": "error",
+                "version": VERSION,
+                "traceback": traceback.format_exc()
+            }
+        }
+
+# ... (기존 함수들은 그대로 유지)
 
 def find_input_data_fast(data):
     """Fast input data extraction"""
@@ -137,6 +453,35 @@ def base64_to_image_fast(base64_string):
         logger.error(f"Base64 decode error: {str(e)}")
         raise ValueError(f"Invalid base64: {str(e)}")
 
+def decode_base64_fast(base64_str: str) -> bytes:
+    """FAST base64 decode"""
+    try:
+        if not base64_str or len(base64_str) < 50:
+            raise ValueError("Invalid base64 string")
+        
+        if 'base64,' in base64_str:
+            base64_str = base64_str.split('base64,')[-1]
+        
+        base64_str = ''.join(base64_str.split())
+        
+        valid_chars = set(string.ascii_letters + string.digits + '+/=')
+        base64_str = ''.join(c for c in base64_str if c in valid_chars)
+        
+        no_pad = base64_str.rstrip('=')
+        
+        try:
+            decoded = base64.b64decode(no_pad, validate=False)
+            return decoded
+        except:
+            padding_needed = (4 - len(no_pad) % 4) % 4
+            padded = no_pad + ('=' * padding_needed)
+            decoded = base64.b64decode(padded, validate=False)
+            return decoded
+            
+    except Exception as e:
+        logger.error(f"Base64 decode error: {str(e)}")
+        raise ValueError(f"Invalid base64 data: {str(e)}")
+
 def detect_pattern_type(filename: str) -> str:
     """Detect pattern type - Updated with AB pattern"""
     if not filename:
@@ -183,7 +528,7 @@ def u2net_optimized_removal(image: Image.Image) -> Image.Image:
             if REMBG_SESSION is None:
                 return image
         
-        logger.info("🔷 U2Net Background Removal V18.1 - Simplified")
+        logger.info("🔷 U2Net Background Removal")
         
         # Save image to buffer
         buffered = BytesIO()
@@ -235,6 +580,8 @@ def u2net_optimized_removal(image: Image.Image) -> Image.Image:
     except Exception as e:
         logger.error(f"U2Net removal failed: {e}")
         return image
+
+# ... (나머지 thumbnail 관련 함수들은 그대로 유지)
 
 def create_thumbnail_proportional(image, target_width=1000, target_height=1300):
     """Create thumbnail with proper proportional sizing - Fixed version"""
@@ -308,7 +655,7 @@ def ensure_ring_holes_transparent_fast(image: Image.Image) -> Image.Image:
     if image.mode != 'RGBA':
         return image
     
-    logger.info("🔍 Fast Ring Hole Detection V18.1")
+    logger.info("🔍 Fast Ring Hole Detection")
     
     r, g, b, a = image.split()
     alpha_array = np.array(a, dtype=np.uint8)
@@ -607,10 +954,15 @@ def image_to_base64(image):
     return base64.b64encode(buffered.getvalue()).decode().rstrip('=')
 
 def handler(event):
-    """Optimized thumbnail handler - V18.1 Fixed"""
+    """Optimized thumbnail handler - V19 with COLOR section"""
     try:
         logger.info(f"=== Thumbnail {VERSION} Started ===")
         
+        # Check for special mode first
+        if event.get('special_mode') == 'color_section':
+            return process_color_section(event)
+        
+        # Normal thumbnail processing continues here...
         image_index = event.get('image_index', 1)
         if isinstance(event.get('input'), dict):
             image_index = event.get('input', {}).get('image_index', image_index)
@@ -783,11 +1135,12 @@ def handler(event):
                 "background_composite": has_transparency,
                 "background_removal": needs_background_removal,
                 "background_color": background_color,
+                "special_modes_available": ["color_section"],
                 "optimization_features": [
-                    "✅ Fixed background removal - Removed cv2.ximgproc dependency",
-                    "✅ Simplified edge blending (5x5 kernel instead of 15x15)",
-                    "✅ Cleaner alpha compositing logic",
-                    "✅ AB Pattern Cool Tone Support (R:0.96, G:0.98, B:1.02)",
+                    "✅ COLOR section support added",
+                    "✅ 4 metal color variations (Yellow, Rose, White, Antique)",
+                    "✅ Automatic background removal for ring",
+                    "✅ Enhanced metal color algorithms",
                     "✅ Fixed proportional thumbnail (50% for 2000x2600)",
                     "✅ White overlay verification with logging",
                     "✅ SwinIR always applied after resize"
