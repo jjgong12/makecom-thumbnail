@@ -16,10 +16,10 @@ logger = logging.getLogger(__name__)
 
 ################################
 # THUMBNAIL HANDLER - 1000x1300
-# VERSION: V28-Fixed-Stable-Transparent
+# VERSION: V29-Balanced-Enhancement
 ################################
 
-VERSION = "V28-Fixed-Stable-Transparent"
+VERSION = "V29-Balanced-Enhancement"
 
 # ===== GLOBAL INITIALIZATION =====
 REPLICATE_API_TOKEN = os.environ.get('REPLICATE_API_TOKEN')
@@ -403,7 +403,7 @@ def u2net_ultra_precise_removal(image: Image.Image) -> Image.Image:
             if REMBG_SESSION is None:
                 return image
         
-        logger.info("🔷 U2Net ULTRA PRECISE Background Removal V28")
+        logger.info("🔷 U2Net ULTRA PRECISE Background Removal V29")
         
         # CRITICAL: Ensure RGBA mode before processing
         if image.mode != 'RGBA':
@@ -565,7 +565,7 @@ def ensure_ring_holes_transparent_ultra(image: Image.Image) -> Image.Image:
     if image.mode != 'RGBA':
         image = image.convert('RGBA')
     
-    logger.info("🔍 ULTRA PRECISE Ring Hole Detection V28 - Preserving RGBA")
+    logger.info("🔍 ULTRA PRECISE Ring Hole Detection V29 - Preserving RGBA")
     
     r, g, b, a = image.split()
     alpha_array = np.array(a, dtype=np.uint8)
@@ -976,7 +976,7 @@ def apply_swinir_thumbnail(image: Image.Image) -> Image.Image:
     return image
 
 def enhance_cubic_details_thumbnail_simple(image: Image.Image) -> Image.Image:
-    """Enhanced cubic details for thumbnails - preserving transparency"""
+    """BALANCED cubic details for thumbnails - REDUCED values to prevent over-enhancement"""
     # CRITICAL: Ensure RGBA mode
     if image.mode != 'RGBA':
         logger.warning(f"⚠️ Converting {image.mode} to RGBA for enhancement")
@@ -985,17 +985,19 @@ def enhance_cubic_details_thumbnail_simple(image: Image.Image) -> Image.Image:
     r, g, b, a = image.split()
     rgb_image = Image.merge('RGB', (r, g, b))
     
+    # BALANCED enhancement - much reduced from original
     contrast = ImageEnhance.Contrast(rgb_image)
-    rgb_image = contrast.enhance(1.08)
+    rgb_image = contrast.enhance(1.02)  # Reduced from 1.08 to 1.02
     
     rgb_image = rgb_image.filter(ImageFilter.UnsharpMask(radius=0.3, percent=120, threshold=3))
     
-    contrast2 = ImageEnhance.Contrast(rgb_image)
-    rgb_image = contrast2.enhance(1.03)
+    # REMOVED second contrast enhancement to prevent over-processing
     
-    # SINGLE sharpness application with highest value
+    # BALANCED sharpness - reduced from 1.6 to 1.3
     sharpness = ImageEnhance.Sharpness(rgb_image)
-    rgb_image = sharpness.enhance(1.6)
+    rgb_image = sharpness.enhance(1.3)  # Reduced from 1.6 to 1.3
+    
+    logger.info("✅ Applied BALANCED cubic details: contrast 1.02, sharpness 1.3")
     
     r2, g2, b2 = rgb_image.split()
     result = Image.merge('RGBA', (r2, g2, b2, a))
@@ -1080,7 +1082,7 @@ def apply_center_spotlight_fast(image: Image.Image, intensity: float = 0.025) ->
     return result
 
 def apply_wedding_ring_focus_fast(image: Image.Image) -> Image.Image:
-    """Enhanced wedding ring focus for thumbnails - preserving transparency"""
+    """BALANCED wedding ring focus for thumbnails - REDUCED sharpness"""
     image = apply_center_spotlight_fast(image, 0.020)
     
     # CRITICAL: Ensure RGBA mode
@@ -1091,9 +1093,9 @@ def apply_wedding_ring_focus_fast(image: Image.Image) -> Image.Image:
     r, g, b, a = image.split()
     rgb_image = Image.merge('RGB', (r, g, b))
     
-    # SINGLE sharpness application with highest value
+    # BALANCED sharpness - reduced from 1.6 to 1.3
     sharpness = ImageEnhance.Sharpness(rgb_image)
-    rgb_image = sharpness.enhance(1.6)
+    rgb_image = sharpness.enhance(1.3)  # Reduced from 1.6 to 1.3
     
     contrast = ImageEnhance.Contrast(rgb_image)
     rgb_image = contrast.enhance(1.04)
@@ -1128,7 +1130,7 @@ def calculate_quality_metrics_fast(image: Image.Image) -> dict:
     }
 
 def apply_pattern_enhancement_consistent(image, pattern_type):
-    """Consistent pattern enhancement MATCHED WITH ENHANCEMENT HANDLER"""
+    """BALANCED pattern enhancement - REDUCED values to prevent over-enhancement"""
     # CRITICAL: Ensure RGBA mode
     if image.mode != 'RGBA':
         logger.warning(f"⚠️ Converting {image.mode} to RGBA for pattern enhancement")
@@ -1203,17 +1205,17 @@ def apply_pattern_enhancement_consistent(image, pattern_type):
         color = ImageEnhance.Color(rgb_image)
         rgb_image = color.enhance(0.99)
         
-        # SINGLE sharpness application
+        # BALANCED sharpness - reduced from 1.6 to 1.3
         sharpness = ImageEnhance.Sharpness(rgb_image)
-        rgb_image = sharpness.enhance(1.6)
+        rgb_image = sharpness.enhance(1.3)  # Reduced from 1.6 to 1.3
     
-    # Apply common enhancements
+    # BALANCED common enhancements - reduced contrast
     contrast = ImageEnhance.Contrast(rgb_image)
-    rgb_image = contrast.enhance(1.05)
+    rgb_image = contrast.enhance(1.03)  # Reduced from 1.05 to 1.03
     
-    # Apply sharpening - SINGLE APPLICATION
+    # BALANCED sharpening - reduced from 1.6 to 1.3
     sharpness = ImageEnhance.Sharpness(rgb_image)
-    rgb_image = sharpness.enhance(1.6)
+    rgb_image = sharpness.enhance(1.3)  # Reduced from 1.6 to 1.3
     
     # Apply center spotlight and wedding ring focus
     rgb_image = apply_center_spotlight_fast(Image.merge('RGBA', (rgb_image.split()[0], rgb_image.split()[1], rgb_image.split()[2], a)), 0.025)
@@ -1223,7 +1225,7 @@ def apply_pattern_enhancement_consistent(image, pattern_type):
     r2, g2, b2, _ = rgb_image.split()
     rgb_image = Image.merge('RGB', (r2, g2, b2))
     
-    # NO SECONDARY QUALITY CHECK - matching enhancement handler
+    logger.info("✅ Applied BALANCED pattern enhancement with reduced values")
     
     # Recombine with alpha
     r_final, g_final, b_final = rgb_image.split()
@@ -1259,10 +1261,10 @@ def image_to_base64(image, keep_transparency=True):
     return base64_str.rstrip('=')
 
 def handler(event):
-    """Optimized thumbnail handler - V28 FIXED STABLE TRANSPARENT"""
+    """Optimized thumbnail handler - V29 BALANCED ENHANCEMENT"""
     try:
         logger.info(f"=== Thumbnail {VERSION} Started ===")
-        logger.info("🎯 FIXED: Input data handling and base64 decoding")
+        logger.info("🎯 BALANCED: Reduced enhancement values to prevent over-processing")
         logger.info("💎 TRANSPARENT OUTPUT: Preserving alpha channel throughout")
         logger.info("🎨 COLORS: Yellow/Rose/White/Antique Gold only")
         
@@ -1299,7 +1301,7 @@ def handler(event):
             image = image.convert('RGBA')
         
         # STEP 2: ENHANCEMENT (preserving transparency)
-        logger.info("🎨 STEP 2: Applying enhancements with transparency preservation")
+        logger.info("🎨 STEP 2: Applying BALANCED enhancements with transparency preservation")
         
         pattern_type = detect_pattern_type(filename)
         
@@ -1330,6 +1332,8 @@ def handler(event):
         logger.info("🚀 STEP 3: Applying SwinIR enhancement with transparency")
         thumbnail = apply_swinir_thumbnail(thumbnail)
         
+        # STEP 4: BALANCED cubic details enhancement
+        logger.info("⚖️ STEP 4: Applying BALANCED cubic details enhancement")
         thumbnail = enhance_cubic_details_thumbnail_simple(thumbnail)
         
         detected_type = {
@@ -1338,11 +1342,12 @@ def handler(event):
             "other": "기타색상(no_overlay)"
         }.get(pattern_type, "기타색상")
         
-        # Apply pattern enhancement (preserving transparency)
+        # STEP 5: BALANCED pattern enhancement
+        logger.info("⚖️ STEP 5: Applying BALANCED pattern enhancement")
         thumbnail = apply_pattern_enhancement_consistent(thumbnail, pattern_type)
         
-        # STEP 4: Ultra precise ring hole detection
-        logger.info("🔍 Applying ULTRA PRECISE ring hole detection")
+        # STEP 6: Ultra precise ring hole detection
+        logger.info("🔍 STEP 6: Applying ULTRA PRECISE ring hole detection")
         thumbnail = ensure_ring_holes_transparent_ultra(thumbnail)
         
         # Final adjustments with alpha preservation
@@ -1403,16 +1408,17 @@ def handler(event):
                     "011": "COLOR section"
                 },
                 "optimization_features": [
-                    "✅ V28 FIXED: Input data handling and base64 decoding",
-                    "✅ FIXED: find_input_data_fast returns consistent string",
-                    "✅ ENHANCED: decode_base64_fast with proper padding",
+                    "✅ V29 BALANCED: Reduced enhancement values to prevent over-processing",
+                    "✅ CUBIC DETAILS: contrast 1.02 (was 1.08*1.03), sharpness 1.3 (was 1.6)",
+                    "✅ PATTERN ENHANCEMENT: contrast 1.03 (was 1.05), sharpness 1.3 (was 1.6)",
+                    "✅ WEDDING RING FOCUS: sharpness 1.3 (was 1.6)",
+                    "✅ FINAL EXPECTED: contrast ~1.09, sharpness ~1.8",
                     "✅ COLORS: Yellow/Rose/White/Antique Gold only",
                     "✅ MATCHED ENHANCEMENT: Same overlay values",
                     "✅ AC Pattern: 12% white overlay only",
                     "✅ AB Pattern: 5% white overlay + cool tone only",
                     "✅ STABLE TRANSPARENT PNG: Verified at every step",
                     "✅ ENHANCED: Font caching for performance",
-                    "✅ OPTIMIZED: Single sharpening pass (1.6)",
                     "✅ CRITICAL: RGBA mode enforced throughout",
                     "✅ ULTRA PRECISE edge detection maintained",
                     "✅ Ring hole detection with transparency",
@@ -1425,7 +1431,7 @@ def handler(event):
                     "✅ Make.com compatible base64 (no padding)"
                 ],
                 "thumbnail_method": "Proportional resize (no aggressive cropping)",
-                "processing_order": "1.U2Net-Ultra → 2.Enhancement → 3.SwinIR → 4.Ring Holes",
+                "processing_order": "1.U2Net-Ultra → 2.Enhancement → 3.SwinIR → 4.Cubic Details → 5.Pattern → 6.Ring Holes",
                 "edge_detection": "ULTRA PRECISE (Sobel + Guided Filter)",
                 "korean_support": "ENHANCED with font caching",
                 "expected_input": "2000x2600 (any format)",
@@ -1434,8 +1440,8 @@ def handler(event):
                 "transparency_info": "Full RGBA transparency preserved - NO background",
                 "white_overlay": "AC: 12% | AB: 5% + Cool Tone | Other: None - MATCHED WITH ENHANCEMENT",
                 "brightness_increased": "8%",
-                "contrast_increased": "5%", 
-                "sharpness": "1.6 (single application)",
+                "contrast_final": "~9% (balanced from 22%)",
+                "sharpness_final": "~80% (balanced from 156%)",
                 "quality": "95",
                 "make_com_compatibility": "Base64 without padding",
                 "metal_colors": "Yellow Gold, Rose Gold, White Gold, Antique Gold"
