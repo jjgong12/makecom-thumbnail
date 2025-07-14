@@ -16,10 +16,10 @@ logger = logging.getLogger(__name__)
 
 ################################
 # THUMBNAIL HANDLER - 1000x1300
-# VERSION: V24-True-Transparent-PNG
+# VERSION: V25-Fixed-Always-Transparent
 ################################
 
-VERSION = "V24-True-Transparent-PNG"
+VERSION = "V25-Fixed-Always-Transparent"
 
 # ===== GLOBAL INITIALIZATION =====
 REPLICATE_API_TOKEN = os.environ.get('REPLICATE_API_TOKEN')
@@ -376,7 +376,7 @@ def u2net_ultra_precise_removal(image: Image.Image) -> Image.Image:
             if REMBG_SESSION is None:
                 return image
         
-        logger.info("🔷 U2Net ULTRA PRECISE Background Removal V24")
+        logger.info("🔷 U2Net ULTRA PRECISE Background Removal V25")
         
         # Pre-process image for better edge detection
         # Apply slight contrast enhancement before removal
@@ -533,7 +533,7 @@ def ensure_ring_holes_transparent_ultra(image: Image.Image) -> Image.Image:
     if image.mode != 'RGBA':
         return image
     
-    logger.info("🔍 ULTRA PRECISE Ring Hole Detection V24")
+    logger.info("🔍 ULTRA PRECISE Ring Hole Detection V25")
     
     r, g, b, a = image.split()
     alpha_array = np.array(a, dtype=np.uint8)
@@ -1255,14 +1255,14 @@ def image_to_base64(image, keep_transparency=True):
     
     buffered.seek(0)
     base64_str = base64.b64encode(buffered.getvalue()).decode('utf-8')
-    # Remove padding
+    # Remove padding for Make.com compatibility
     return base64_str.rstrip('=')
 
 def handler(event):
-    """Optimized thumbnail handler - V24 TRUE Transparent PNG"""
+    """Optimized thumbnail handler - V25 FIXED Always Transparent"""
     try:
         logger.info(f"=== Thumbnail {VERSION} Started ===")
-        logger.info("🎯 TRUE TRANSPARENT PNG: No background composite")
+        logger.info("🎯 FIXED: Always apply background removal for transparency")
         logger.info("💎 TRANSPARENT OUTPUT: Preserving alpha channel throughout")
         
         # Check for special mode first
@@ -1294,16 +1294,10 @@ def handler(event):
         if not image:
             raise ValueError("Failed to load image")
         
-        # STEP 1: ULTRA PRECISE BACKGROUND REMOVAL (PNG files)
-        original_mode = image.mode
-        has_transparency = image.mode == 'RGBA'
-        needs_background_removal = False
-        
-        if filename and filename.lower().endswith('.png'):
-            logger.info("📸 STEP 1: PNG detected - ULTRA PRECISE background removal")
-            image = u2net_ultra_precise_removal(image)
-            has_transparency = image.mode == 'RGBA'
-            needs_background_removal = True
+        # CRITICAL FIX: ALWAYS apply background removal
+        logger.info("📸 STEP 1: ALWAYS applying ULTRA PRECISE background removal")
+        logger.info("🔥 FIXED: Removing filename check - applying to ALL images")
+        image = u2net_ultra_precise_removal(image)
         
         # Ensure RGBA mode for transparency
         if image.mode != 'RGBA':
@@ -1409,7 +1403,7 @@ def handler(event):
                 "png_support": True,
                 "has_transparency": True,
                 "transparency_preserved": True,
-                "background_removal": needs_background_removal,
+                "background_removed": True,
                 "background_applied": False,
                 "output_mode": "RGBA",
                 "special_modes_available": ["color_section"],
@@ -1420,6 +1414,7 @@ def handler(event):
                     "011": "COLOR section"
                 },
                 "optimization_features": [
+                    "✅ FIXED V25: Always apply background removal",
                     "✅ TRUE TRANSPARENT PNG: No background composite",
                     "✅ FIXED: Alpha channel preserved throughout",
                     "✅ ENHANCED: Korean font with UTF-8 encoding verification", 
@@ -1435,13 +1430,14 @@ def handler(event):
                     "✅ White overlay verification with logging",
                     "✅ SwinIR with transparency support",
                     "✅ Ready for Figma transparent overlay",
-                    "✅ Pure PNG with full alpha channel"
+                    "✅ Pure PNG with full alpha channel",
+                    "✅ Make.com compatible base64 (no padding)"
                 ],
                 "thumbnail_method": "Proportional resize (no aggressive cropping)",
                 "processing_order": "1.U2Net-Ultra → 2.Enhancement → 3.SwinIR → 4.Ring Holes",
                 "edge_detection": "ULTRA PRECISE (Sobel + Guided Filter)",
                 "korean_support": "ENHANCED (UTF-8 encoding with verification)",
-                "expected_input": "2000x2600 PNG",
+                "expected_input": "2000x2600 (any format)",
                 "output_size": "1000x1300",
                 "output_format": "PNG with full transparency",
                 "transparency_info": "Full RGBA transparency preserved - NO background",
@@ -1449,7 +1445,8 @@ def handler(event):
                 "brightness_increased": "8%",
                 "contrast_increased": "5%", 
                 "sharpness_increased": "1.5-1.6",
-                "quality": "95"
+                "quality": "95",
+                "make_com_compatibility": "Base64 without padding"
             }
         }
         
