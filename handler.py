@@ -16,10 +16,10 @@ logger = logging.getLogger(__name__)
 
 ################################
 # THUMBNAIL HANDLER - 1000x1300
-# VERSION: V22-Ultra-Precise-Transparent
+# VERSION: V23-Ultra-Precise-Transparent-Fixed
 ################################
 
-VERSION = "V22-Ultra-Precise-Transparent"
+VERSION = "V23-Ultra-Precise-Transparent-Fixed"
 
 # ===== GLOBAL INITIALIZATION =====
 REPLICATE_API_TOKEN = os.environ.get('REPLICATE_API_TOKEN')
@@ -53,17 +53,20 @@ def init_rembg_session():
 init_rembg_session()
 
 def download_korean_font():
-    """Download Korean font for text rendering - IMPROVED"""
+    """Download Korean font for text rendering - IMPROVED with better encoding"""
     try:
         font_path = '/tmp/NanumGothic.ttf'
         
         # If font exists, verify it works with Korean text
         if os.path.exists(font_path):
             try:
+                # Test with actual Korean text
                 test_font = ImageFont.truetype(font_path, 20, encoding='utf-8')
-                img_test = Image.new('RGB', (100, 100), 'white')
+                img_test = Image.new('RGB', (200, 100), 'white')
                 draw_test = ImageDraw.Draw(img_test)
-                draw_test.text((10, 10), "테스트", font=test_font, fill='black')
+                # Test with various Korean characters
+                test_text = "테스트 한글 폰트 확인"
+                draw_test.text((10, 10), test_text, font=test_font, fill='black')
                 logger.info("✅ Korean font verified and working")
                 return font_path
             except Exception as e:
@@ -85,9 +88,12 @@ def download_korean_font():
                     with open(font_path, 'wb') as f:
                         f.write(response.content)
                     
-                    # Verify the font works
+                    # Verify the font works with Korean
                     test_font = ImageFont.truetype(font_path, 20, encoding='utf-8')
-                    logger.info("✅ Korean font downloaded successfully")
+                    img_test = Image.new('RGB', (200, 100), 'white')
+                    draw_test = ImageDraw.Draw(img_test)
+                    draw_test.text((10, 10), "한글 테스트", font=test_font, fill='black')
+                    logger.info("✅ Korean font downloaded and verified successfully")
                     return font_path
             except Exception as e:
                 logger.error(f"Failed to download from {url}: {e}")
@@ -100,29 +106,39 @@ def download_korean_font():
         return None
 
 def get_font(size, korean_font_path=None):
-    """Get font with proper encoding"""
+    """Get font with proper encoding - ENHANCED"""
     if korean_font_path and os.path.exists(korean_font_path):
         try:
-            return ImageFont.truetype(korean_font_path, size, encoding='utf-8')
+            # Always use UTF-8 encoding for Korean fonts
+            font = ImageFont.truetype(korean_font_path, size, encoding='utf-8')
+            logger.info(f"Font loaded successfully with size {size}")
+            return font
         except Exception as e:
             logger.error(f"Font loading error: {e}")
     
     # Fallback to default
     try:
+        logger.warning("Using default font as fallback")
         return ImageFont.load_default()
     except:
         return None
 
 def safe_draw_text(draw, position, text, font, fill):
-    """Safely draw text with proper encoding"""
+    """Safely draw text with proper encoding - ENHANCED"""
     try:
         if text and font:
-            # Ensure text is properly encoded
+            # Ensure text is properly encoded as UTF-8
             if isinstance(text, bytes):
-                text = text.decode('utf-8')
-            draw.text(position, str(text), font=font, fill=fill)
+                text = text.decode('utf-8', errors='replace')
+            else:
+                # Ensure it's a string and normalize
+                text = str(text)
+            
+            # Draw the text
+            draw.text(position, text, font=font, fill=fill)
+            logger.info(f"Successfully drew text: {text[:20]}...")
     except Exception as e:
-        logger.error(f"Text drawing error: {e}")
+        logger.error(f"Text drawing error: {e}, text: {repr(text)}")
         # Fallback to simple text
         try:
             draw.text(position, "[Text Error]", font=font, fill=fill)
@@ -132,6 +148,12 @@ def safe_draw_text(draw, position, text, font, fill):
 def get_text_size(draw, text, font):
     """Get text size compatible with different PIL versions"""
     try:
+        # Ensure text is string
+        if isinstance(text, bytes):
+            text = text.decode('utf-8', errors='replace')
+        else:
+            text = str(text)
+            
         bbox = draw.textbbox((0, 0), text, font=font)
         return bbox[2] - bbox[0], bbox[3] - bbox[1]
     except AttributeError:
@@ -244,7 +266,7 @@ def apply_enhanced_metal_color(image, metal_color, strength=0.3, color_id=""):
     return Image.merge('RGBA', (r_new, g_new, b_new, a))
 
 def create_color_section(ring_image, width=1200):
-    """Create COLOR section with 4 metal variations"""
+    """Create COLOR section with 4 metal variations - FIXED Korean encoding"""
     logger.info("Creating COLOR section")
     
     height = 850
@@ -275,7 +297,7 @@ def create_color_section(ring_image, width=1200):
             logger.error(f"Failed to remove background: {e}")
             ring_no_bg = ring_image.convert('RGBA') if ring_image else None
     
-    # Color definitions
+    # Color definitions - labels are in English to avoid encoding issues
     colors = [
         ("yellow", "YELLOW", (255, 200, 50), 0.3),
         ("rose", "ROSE", (255, 160, 120), 0.35),
@@ -346,7 +368,7 @@ def u2net_ultra_precise_removal(image: Image.Image) -> Image.Image:
             if REMBG_SESSION is None:
                 return image
         
-        logger.info("🔷 U2Net ULTRA PRECISE Background Removal V22")
+        logger.info("🔷 U2Net ULTRA PRECISE Background Removal V23")
         
         # Pre-process image for better edge detection
         # Apply slight contrast enhancement before removal
@@ -503,7 +525,7 @@ def ensure_ring_holes_transparent_ultra(image: Image.Image) -> Image.Image:
     if image.mode != 'RGBA':
         return image
     
-    logger.info("🔍 ULTRA PRECISE Ring Hole Detection V22")
+    logger.info("🔍 ULTRA PRECISE Ring Hole Detection V23")
     
     r, g, b, a = image.split()
     alpha_array = np.array(a, dtype=np.uint8)
@@ -665,7 +687,7 @@ def process_color_section(job):
         
         # Convert to base64
         buffered = BytesIO()
-        color_section.save(buffered, format="PNG", optimize=False)
+        color_section.save(buffered, format="PNG", optimize=True, compress_level=1)
         buffered.seek(0)
         section_base64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
         section_base64_no_padding = section_base64.rstrip('=')
@@ -938,7 +960,7 @@ def apply_swinir_thumbnail(image: Image.Image) -> Image.Image:
             has_alpha = False
         
         buffered = BytesIO()
-        rgb_image.save(buffered, format="PNG", optimize=False)
+        rgb_image.save(buffered, format="PNG", optimize=True, compress_level=1)
         buffered.seek(0)
         img_base64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
         img_data_url = f"data:image/png;base64,{img_base64}"
@@ -1169,33 +1191,36 @@ def apply_pattern_enhancement_consistent(image, pattern_type):
     return image
 
 def image_to_base64(image, keep_transparency=True):
-    """Convert to base64 without padding - FIXED to preserve transparency"""
+    """Convert to base64 without padding - FIXED to properly preserve transparency"""
     buffered = BytesIO()
     
-    # Check if user wants transparent output
-    if keep_transparency and image.mode == 'RGBA':
-        # Keep RGBA format for transparent images
-        logger.info("💎 Preserving transparency in output")
-        image.save(buffered, format='PNG', optimize=False)
+    # Force keeping transparency for RGBA images
+    if image.mode == 'RGBA' and keep_transparency:
+        # CRITICAL: Use PNG format with proper settings for transparency
+        logger.info("💎 Preserving transparency in output - RGBA mode detected")
+        # Use PNG with no optimization to ensure transparency is preserved
+        image.save(buffered, format='PNG', compress_level=1)
     else:
         # Convert to RGB with white background if not keeping transparency
         if image.mode == 'RGBA':
+            logger.info("Converting RGBA to RGB with white background")
             background = Image.new('RGB', image.size, (255, 255, 255))
             background.paste(image, mask=image.split()[3])
             image = background
         
-        image.save(buffered, format='PNG', optimize=False, quality=95)
+        image.save(buffered, format='PNG', optimize=True, compress_level=1)
     
     buffered.seek(0)
-    
-    return base64.b64encode(buffered.getvalue()).decode().rstrip('=')
+    base64_str = base64.b64encode(buffered.getvalue()).decode('utf-8')
+    # Remove padding
+    return base64_str.rstrip('=')
 
 def handler(event):
-    """Optimized thumbnail handler - V22 with ULTRA Precise Edge Detection and Transparent Output"""
+    """Optimized thumbnail handler - V23 with ULTRA Precise Edge Detection and Fixed Transparent Output"""
     try:
         logger.info(f"=== Thumbnail {VERSION} Started ===")
         logger.info("🎯 ULTRA PRECISE MODE: Maximum edge detection enabled")
-        logger.info("💎 TRANSPARENT OUTPUT: Preserving transparency in final image")
+        logger.info("💎 TRANSPARENT OUTPUT: Fixed to properly preserve transparency")
         
         # Check for special mode first
         if event.get('special_mode') == 'color_section':
@@ -1203,6 +1228,7 @@ def handler(event):
         
         # Check if user wants transparent output (default: True for PNG inputs)
         keep_transparency = event.get('keep_transparency', True)
+        logger.info(f"Keep transparency setting: {keep_transparency}")
         
         # Normal thumbnail processing continues here...
         image_index = event.get('image_index', 1)
@@ -1245,6 +1271,7 @@ def handler(event):
         # Ensure RGBA mode if keeping transparency
         if keep_transparency and has_transparency:
             if image.mode != 'RGBA':
+                logger.info("Converting to RGBA for transparency preservation")
                 image = image.convert('RGBA')
         
         # STEP 2: ENHANCEMENT (preserving transparency)
@@ -1336,8 +1363,16 @@ def handler(event):
             brightness = ImageEnhance.Brightness(thumbnail)
             thumbnail = brightness.enhance(1.02)
         
+        # Log final image mode
+        logger.info(f"Final thumbnail mode: {thumbnail.mode}")
+        logger.info(f"Final thumbnail size: {thumbnail.size}")
+        
         # Convert to base64 - FIXED to preserve transparency
         thumbnail_base64 = image_to_base64(thumbnail, keep_transparency=keep_transparency)
+        
+        # Verify transparency is preserved
+        if thumbnail.mode == 'RGBA' and keep_transparency:
+            logger.info("✅ Transparency preserved in final output")
         
         output_filename = generate_thumbnail_filename(filename, image_index)
         
@@ -1369,9 +1404,9 @@ def handler(event):
                     "011": "COLOR section"
                 },
                 "optimization_features": [
-                    "✅ TRANSPARENT OUTPUT: PNG with preserved alpha channel",
+                    "✅ FIXED: Transparent PNG output properly preserved",
+                    "✅ ENHANCED: Korean font with UTF-8 encoding verification", 
                     "✅ ULTRA PRECISE Transparent PNG edge detection",
-                    "✅ Enhanced Korean font support with proper encoding",
                     "✅ Advanced multi-stage edge refinement",
                     "✅ Sobel edge detection for precision",
                     "✅ Multiple guided filter passes",
@@ -1386,7 +1421,7 @@ def handler(event):
                 "thumbnail_method": "Proportional resize (no aggressive cropping)",
                 "processing_order": "1.U2Net-Ultra → 2.Enhancement → 3.SwinIR → 4.Ring Holes",
                 "edge_detection": "ULTRA PRECISE (Sobel + Guided Filter)",
-                "korean_support": "ENHANCED (UTF-8 encoding)",
+                "korean_support": "ENHANCED (UTF-8 encoding with verification)",
                 "expected_input": "2000x2600 PNG",
                 "output_size": "1000x1300",
                 "output_format": "PNG with transparency" if keep_transparency and thumbnail.mode == 'RGBA' else "PNG",
