@@ -16,10 +16,10 @@ logger = logging.getLogger(__name__)
 
 ################################
 # THUMBNAIL HANDLER - 1000x1300
-# VERSION: V27-Stable-Transparent
+# VERSION: V28-Fixed-Stable-Transparent
 ################################
 
-VERSION = "V27-Stable-Transparent"
+VERSION = "V28-Fixed-Stable-Transparent"
 
 # ===== GLOBAL INITIALIZATION =====
 REPLICATE_API_TOKEN = os.environ.get('REPLICATE_API_TOKEN')
@@ -206,7 +206,7 @@ def auto_crop_transparent(image):
     return cropped
 
 def apply_enhanced_metal_color(image, metal_color, strength=0.3, color_id=""):
-    """Apply enhanced metal color effect with special handling for white and rose"""
+    """Apply enhanced metal color effect - Yellow/Rose/White/Antique Gold only"""
     # CRITICAL: Ensure RGBA mode
     if image.mode != 'RGBA':
         image = image.convert('RGBA')
@@ -294,7 +294,7 @@ def apply_enhanced_metal_color(image, metal_color, strength=0.3, color_id=""):
     return result
 
 def create_color_section(ring_image, width=1200):
-    """Create COLOR section with 4 metal variations - ALL TRANSPARENT"""
+    """Create COLOR section with 4 metal variations - Yellow/Rose/White/Antique Gold only"""
     logger.info("Creating COLOR section with transparent PNGs")
     
     height = 850
@@ -326,12 +326,12 @@ def create_color_section(ring_image, width=1200):
             logger.error(f"Failed to remove background: {e}")
             ring_no_bg = ring_image.convert('RGBA') if ring_image else None
     
-    # Color definitions - labels are in English to avoid encoding issues
+    # Color definitions - ONLY 4 Gold types: Yellow/Rose/White/Antique
     colors = [
-        ("yellow", "YELLOW", (255, 200, 50), 0.3),
-        ("rose", "ROSE", (255, 160, 120), 0.35),
-        ("white", "WHITE", (255, 255, 255), 0.0),
-        ("antique", "ANTIQUE", (245, 235, 225), 0.1)
+        ("yellow", "YELLOW GOLD", (255, 200, 50), 0.3),
+        ("rose", "ROSE GOLD", (255, 160, 120), 0.35),
+        ("white", "WHITE GOLD", (255, 255, 255), 0.0),
+        ("antique", "ANTIQUE GOLD", (245, 235, 225), 0.1)
     ]
     
     # Grid layout
@@ -403,7 +403,7 @@ def u2net_ultra_precise_removal(image: Image.Image) -> Image.Image:
             if REMBG_SESSION is None:
                 return image
         
-        logger.info("🔷 U2Net ULTRA PRECISE Background Removal V27")
+        logger.info("🔷 U2Net ULTRA PRECISE Background Removal V28")
         
         # CRITICAL: Ensure RGBA mode before processing
         if image.mode != 'RGBA':
@@ -565,7 +565,7 @@ def ensure_ring_holes_transparent_ultra(image: Image.Image) -> Image.Image:
     if image.mode != 'RGBA':
         image = image.convert('RGBA')
     
-    logger.info("🔍 ULTRA PRECISE Ring Hole Detection V27 - Preserving RGBA")
+    logger.info("🔍 ULTRA PRECISE Ring Hole Detection V28 - Preserving RGBA")
     
     r, g, b, a = image.split()
     alpha_array = np.array(a, dtype=np.uint8)
@@ -689,10 +689,10 @@ def process_color_section(job):
     logger.info("Processing COLOR section special mode")
     
     try:
-        # Find image data
-        image_data = find_input_data_fast(job)
+        # Find image data - FIXED
+        image_data_str = find_input_data_fast(job)
         
-        if not image_data:
+        if not image_data_str:
             return {
                 "output": {
                     "error": "No image data found for COLOR section",
@@ -702,7 +702,7 @@ def process_color_section(job):
             }
         
         # Decode and open image
-        image_bytes = decode_base64_fast(image_data)
+        image_bytes = decode_base64_fast(image_data_str)
         ring_image = Image.open(BytesIO(image_bytes))
         
         # Create COLOR section
@@ -728,7 +728,7 @@ def process_color_section(job):
                 "version": VERSION,
                 "status": "success",
                 "format": "base64_no_padding",
-                "colors_generated": ["YELLOW", "ROSE", "WHITE", "ANTIQUE"],
+                "colors_generated": ["YELLOW GOLD", "ROSE GOLD", "WHITE GOLD", "ANTIQUE GOLD"],
                 "background_removal": "ULTRA_PRECISE",
                 "transparency_info": "Each ring variant has transparent background"
             }
@@ -747,30 +747,36 @@ def process_color_section(job):
             }
         }
 
-# Add all other helper functions from the original code...
 def find_input_data_fast(data):
-    """Fast input data extraction"""
+    """FIXED: Fast input data extraction - consistent string return"""
+    # Handle string input
     if isinstance(data, str) and len(data) > 50:
-        return {'image': data}
+        return data
     
+    # Handle dictionary input
     if isinstance(data, dict):
         priority_keys = ['image', 'image_base64', 'enhanced_image', 'base64', 'img']
         
+        # Check priority keys first
         for key in priority_keys:
             if key in data and isinstance(data[key], str) and len(data[key]) > 50:
-                return {key: data[key]}
+                return data[key]
         
+        # Check nested structures
         for key in ['input', 'data']:
             if key in data and isinstance(data[key], dict):
                 result = find_input_data_fast(data[key])
                 if result:
                     return result
+            elif key in data and isinstance(data[key], str) and len(data[key]) > 50:
+                return data[key]
         
-        for i in range(5):
+        # Check numbered keys as fallback
+        for i in range(10):
             if str(i) in data and isinstance(data[str(i)], str) and len(data[str(i)]) > 50:
-                return {'image': data[str(i)]}
+                return data[str(i)]
     
-    return data
+    return None
 
 def find_filename_fast(data):
     """Fast filename extraction"""
@@ -789,7 +795,7 @@ def find_filename_fast(data):
 def generate_thumbnail_filename(original_filename, image_index):
     """Generate thumbnail filename with fixed numbers"""
     if not original_filename:
-        return f"thumbnail_{image_index:03d}.jpg"
+        return f"thumbnail_{image_index:03d}.png"
     
     # Fixed thumbnail numbers: 007, 009, 010
     thumbnail_numbers = {1: "007", 2: "009", 3: "010"}
@@ -805,63 +811,48 @@ def generate_thumbnail_filename(original_filename, image_index):
     
     return new_filename
 
-def base64_to_image_fast(base64_string):
-    """Fast base64 to image conversion"""
-    try:
-        if not base64_string or len(base64_string) < 50:
-            raise ValueError("Invalid base64")
-        
-        if 'base64,' in base64_string:
-            base64_string = base64_string.split('base64,')[-1]
-        
-        base64_string = ''.join(base64_string.split())
-        
-        valid_chars = set(string.ascii_letters + string.digits + '+/=')
-        base64_string = ''.join(c for c in base64_string if c in valid_chars)
-        
-        no_pad = base64_string.rstrip('=')
-        
-        try:
-            img_data = base64.b64decode(no_pad, validate=False)
-            return Image.open(BytesIO(img_data))
-        except:
-            padding = (4 - len(no_pad) % 4) % 4
-            padded = no_pad + ('=' * padding)
-            img_data = base64.b64decode(padded, validate=False)
-            return Image.open(BytesIO(img_data))
-            
-    except Exception as e:
-        logger.error(f"Base64 decode error: {str(e)}")
-        raise ValueError(f"Invalid base64: {str(e)}")
-
 def decode_base64_fast(base64_str: str) -> bytes:
-    """FAST base64 decode"""
+    """ENHANCED: Fast base64 decode with consistent padding handling"""
     try:
         if not base64_str or len(base64_str) < 50:
             raise ValueError("Invalid base64 string")
         
+        # Remove data URL prefix if present
         if 'base64,' in base64_str:
             base64_str = base64_str.split('base64,')[-1]
         
+        # Clean whitespace
         base64_str = ''.join(base64_str.split())
         
+        # Keep only valid base64 characters
         valid_chars = set(string.ascii_letters + string.digits + '+/=')
         base64_str = ''.join(c for c in base64_str if c in valid_chars)
         
+        # Try without padding first (for Make.com compatibility)
         no_pad = base64_str.rstrip('=')
         
         try:
-            decoded = base64.b64decode(no_pad, validate=False)
+            decoded = base64.b64decode(no_pad + '==', validate=True)
             return decoded
-        except:
+        except Exception:
+            # Try with proper padding
             padding_needed = (4 - len(no_pad) % 4) % 4
             padded = no_pad + ('=' * padding_needed)
-            decoded = base64.b64decode(padded, validate=False)
+            decoded = base64.b64decode(padded, validate=True)
             return decoded
             
     except Exception as e:
         logger.error(f"Base64 decode error: {str(e)}")
         raise ValueError(f"Invalid base64 data: {str(e)}")
+
+def base64_to_image_fast(base64_string):
+    """ENHANCED: Fast base64 to image conversion with consistent handling"""
+    try:
+        image_bytes = decode_base64_fast(base64_string)
+        return Image.open(BytesIO(image_bytes))
+    except Exception as e:
+        logger.error(f"Base64 to image error: {str(e)}")
+        raise ValueError(f"Invalid image data: {str(e)}")
 
 def detect_pattern_type(filename: str) -> str:
     """Detect pattern type - Updated with AB pattern"""
@@ -1268,12 +1259,12 @@ def image_to_base64(image, keep_transparency=True):
     return base64_str.rstrip('=')
 
 def handler(event):
-    """Optimized thumbnail handler - V27 STABLE TRANSPARENT"""
+    """Optimized thumbnail handler - V28 FIXED STABLE TRANSPARENT"""
     try:
         logger.info(f"=== Thumbnail {VERSION} Started ===")
-        logger.info("🎯 STABLE: Always apply background removal for transparency")
+        logger.info("🎯 FIXED: Input data handling and base64 decoding")
         logger.info("💎 TRANSPARENT OUTPUT: Preserving alpha channel throughout")
-        logger.info("📊 ENHANCEMENT MATCHED: Using same overlay values as enhancement handler")
+        logger.info("🎨 COLORS: Yellow/Rose/White/Antique Gold only")
         
         # Check for special mode first
         if event.get('special_mode') == 'color_section':
@@ -1285,24 +1276,13 @@ def handler(event):
             image_index = event.get('input', {}).get('image_index', image_index)
         
         filename = find_filename_fast(event)
-        input_data = find_input_data_fast(event)
+        image_data_str = find_input_data_fast(event)
         
-        if not input_data:
+        if not image_data_str:
             raise ValueError("No input data found")
         
-        image = None
-        priority_keys = ['image', 'image_base64', 'enhanced_image', 'base64']
-        
-        for key in priority_keys:
-            if key in input_data and input_data[key]:
-                try:
-                    image = base64_to_image_fast(input_data[key])
-                    break
-                except:
-                    continue
-        
-        if not image:
-            raise ValueError("Failed to load image")
+        # Load image using fixed function
+        image = base64_to_image_fast(image_data_str)
         
         # CRITICAL: Convert to RGBA immediately
         if image.mode != 'RGBA':
@@ -1423,11 +1403,13 @@ def handler(event):
                     "011": "COLOR section"
                 },
                 "optimization_features": [
-                    "✅ V27 STABLE: Always apply background removal",
+                    "✅ V28 FIXED: Input data handling and base64 decoding",
+                    "✅ FIXED: find_input_data_fast returns consistent string",
+                    "✅ ENHANCED: decode_base64_fast with proper padding",
+                    "✅ COLORS: Yellow/Rose/White/Antique Gold only",
                     "✅ MATCHED ENHANCEMENT: Same overlay values",
                     "✅ AC Pattern: 12% white overlay only",
                     "✅ AB Pattern: 5% white overlay + cool tone only",
-                    "✅ REMOVED: Secondary brightness checks",
                     "✅ STABLE TRANSPARENT PNG: Verified at every step",
                     "✅ ENHANCED: Font caching for performance",
                     "✅ OPTIMIZED: Single sharpening pass (1.6)",
@@ -1455,7 +1437,8 @@ def handler(event):
                 "contrast_increased": "5%", 
                 "sharpness": "1.6 (single application)",
                 "quality": "95",
-                "make_com_compatibility": "Base64 without padding"
+                "make_com_compatibility": "Base64 without padding",
+                "metal_colors": "Yellow Gold, Rose Gold, White Gold, Antique Gold"
             }
         }
         
