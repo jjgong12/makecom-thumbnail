@@ -16,10 +16,10 @@ logger = logging.getLogger(__name__)
 
 ################################
 # THUMBNAIL HANDLER - 1000x1300
-# VERSION: V26-Stable-Transparent
+# VERSION: V27-Stable-Transparent
 ################################
 
-VERSION = "V26-Stable-Transparent"
+VERSION = "V27-Stable-Transparent"
 
 # ===== GLOBAL INITIALIZATION =====
 REPLICATE_API_TOKEN = os.environ.get('REPLICATE_API_TOKEN')
@@ -403,7 +403,7 @@ def u2net_ultra_precise_removal(image: Image.Image) -> Image.Image:
             if REMBG_SESSION is None:
                 return image
         
-        logger.info("🔷 U2Net ULTRA PRECISE Background Removal V26")
+        logger.info("🔷 U2Net ULTRA PRECISE Background Removal V27")
         
         # CRITICAL: Ensure RGBA mode before processing
         if image.mode != 'RGBA':
@@ -565,7 +565,7 @@ def ensure_ring_holes_transparent_ultra(image: Image.Image) -> Image.Image:
     if image.mode != 'RGBA':
         image = image.convert('RGBA')
     
-    logger.info("🔍 ULTRA PRECISE Ring Hole Detection V26 - Preserving RGBA")
+    logger.info("🔍 ULTRA PRECISE Ring Hole Detection V27 - Preserving RGBA")
     
     r, g, b, a = image.split()
     alpha_array = np.array(a, dtype=np.uint8)
@@ -1137,7 +1137,7 @@ def calculate_quality_metrics_fast(image: Image.Image) -> dict:
     }
 
 def apply_pattern_enhancement_consistent(image, pattern_type):
-    """Consistent pattern enhancement with white overlay verification - preserving transparency"""
+    """Consistent pattern enhancement MATCHED WITH ENHANCEMENT HANDLER"""
     # CRITICAL: Ensure RGBA mode
     if image.mode != 'RGBA':
         logger.warning(f"⚠️ Converting {image.mode} to RGBA for pattern enhancement")
@@ -1146,14 +1146,16 @@ def apply_pattern_enhancement_consistent(image, pattern_type):
     r, g, b, a = image.split()
     rgb_image = Image.merge('RGB', (r, g, b))
     
+    # Convert to array for processing
+    img_array = np.array(rgb_image, dtype=np.float32)
+    
     if pattern_type == "ac_pattern":
         # Calculate brightness before overlay
         metrics_before = calculate_quality_metrics_fast(rgb_image)
         logger.info(f"🔍 AC Pattern - Brightness before overlay: {metrics_before['brightness']:.2f}")
         
-        # Apply 12% white overlay
+        # Apply 12% white overlay ONLY (matching enhancement)
         white_overlay = 0.12
-        img_array = np.array(rgb_image, dtype=np.float32)
         img_array = img_array * (1 - white_overlay) + 255 * white_overlay
         img_array = np.clip(img_array, 0, 255)
         rgb_image = Image.fromarray(img_array.astype(np.uint8))
@@ -1173,20 +1175,12 @@ def apply_pattern_enhancement_consistent(image, pattern_type):
         metrics_before = calculate_quality_metrics_fast(rgb_image)
         logger.info(f"🔍 AB Pattern - Brightness before overlay: {metrics_before['brightness']:.2f}")
         
-        # Apply 5% white overlay
+        # Apply 5% white overlay ONLY (matching enhancement)
         white_overlay = 0.05
-        img_array = np.array(rgb_image, dtype=np.float32)
         img_array = img_array * (1 - white_overlay) + 255 * white_overlay
-        img_array = np.clip(img_array, 0, 255)
-        rgb_image = Image.fromarray(img_array.astype(np.uint8))
-        
-        # Verify overlay was applied
-        metrics_after = calculate_quality_metrics_fast(rgb_image)
-        logger.info(f"✅ AB Pattern - Brightness after 5% overlay: {metrics_after['brightness']:.2f} (increased by {metrics_after['brightness'] - metrics_before['brightness']:.2f})")
         
         # Cool tone adjustment for AB pattern
         logger.info("❄️ AB Pattern - Applying cool tone adjustment")
-        img_array = np.array(rgb_image, dtype=np.float32)
         
         # Shift to cool tone by adjusting RGB channels
         img_array[:,:,0] *= 0.96  # Reduce red slightly
@@ -1199,6 +1193,10 @@ def apply_pattern_enhancement_consistent(image, pattern_type):
         
         img_array = np.clip(img_array, 0, 255)
         rgb_image = Image.fromarray(img_array.astype(np.uint8))
+        
+        # Verify overlay was applied
+        metrics_after = calculate_quality_metrics_fast(rgb_image)
+        logger.info(f"✅ AB Pattern - Brightness after 5% overlay + cool tone: {metrics_after['brightness']:.2f} (increased by {metrics_after['brightness'] - metrics_before['brightness']:.2f})")
         
         # Reduce saturation for cooler look
         color = ImageEnhance.Color(rgb_image)
@@ -1218,6 +1216,15 @@ def apply_pattern_enhancement_consistent(image, pattern_type):
         sharpness = ImageEnhance.Sharpness(rgb_image)
         rgb_image = sharpness.enhance(1.6)
     
+    # Apply common enhancements
+    contrast = ImageEnhance.Contrast(rgb_image)
+    rgb_image = contrast.enhance(1.05)
+    
+    # Apply sharpening - SINGLE APPLICATION
+    sharpness = ImageEnhance.Sharpness(rgb_image)
+    rgb_image = sharpness.enhance(1.6)
+    
+    # Apply center spotlight and wedding ring focus
     rgb_image = apply_center_spotlight_fast(Image.merge('RGBA', (rgb_image.split()[0], rgb_image.split()[1], rgb_image.split()[2], a)), 0.025)
     rgb_image = apply_wedding_ring_focus_fast(rgb_image)
     
@@ -1225,37 +1232,7 @@ def apply_pattern_enhancement_consistent(image, pattern_type):
     r2, g2, b2, _ = rgb_image.split()
     rgb_image = Image.merge('RGB', (r2, g2, b2))
     
-    # Quality check for ac_pattern
-    if pattern_type == "ac_pattern":
-        metrics = calculate_quality_metrics_fast(rgb_image)
-        logger.info(f"🔍 AC Pattern - Final brightness check: {metrics['brightness']:.2f}")
-        
-        if metrics["brightness"] < 235:
-            logger.info("⚠️ AC Pattern - Brightness too low, applying 15% overlay")
-            white_overlay = 0.15
-            img_array = np.array(rgb_image, dtype=np.float32)
-            img_array = img_array * (1 - white_overlay) + 255 * white_overlay
-            img_array = np.clip(img_array, 0, 255)
-            rgb_image = Image.fromarray(img_array.astype(np.uint8))
-            
-            metrics_final = calculate_quality_metrics_fast(rgb_image)
-            logger.info(f"✅ AC Pattern - Final brightness after 15% overlay: {metrics_final['brightness']:.2f}")
-    
-    # Quality check for ab_pattern
-    elif pattern_type == "ab_pattern":
-        metrics = calculate_quality_metrics_fast(rgb_image)
-        logger.info(f"🔍 AB Pattern - Final brightness check: {metrics['brightness']:.2f}")
-        
-        if metrics["brightness"] < 235:
-            logger.info("⚠️ AB Pattern - Brightness too low, applying 8% overlay")
-            white_overlay = 0.08
-            img_array = np.array(rgb_image, dtype=np.float32)
-            img_array = img_array * (1 - white_overlay) + 255 * white_overlay
-            img_array = np.clip(img_array, 0, 255)
-            rgb_image = Image.fromarray(img_array.astype(np.uint8))
-            
-            metrics_final = calculate_quality_metrics_fast(rgb_image)
-            logger.info(f"✅ AB Pattern - Final brightness after 8% overlay: {metrics_final['brightness']:.2f}")
+    # NO SECONDARY QUALITY CHECK - matching enhancement handler
     
     # Recombine with alpha
     r_final, g_final, b_final = rgb_image.split()
@@ -1291,11 +1268,12 @@ def image_to_base64(image, keep_transparency=True):
     return base64_str.rstrip('=')
 
 def handler(event):
-    """Optimized thumbnail handler - V26 STABLE TRANSPARENT"""
+    """Optimized thumbnail handler - V27 STABLE TRANSPARENT"""
     try:
         logger.info(f"=== Thumbnail {VERSION} Started ===")
         logger.info("🎯 STABLE: Always apply background removal for transparency")
         logger.info("💎 TRANSPARENT OUTPUT: Preserving alpha channel throughout")
+        logger.info("📊 ENHANCEMENT MATCHED: Using same overlay values as enhancement handler")
         
         # Check for special mode first
         if event.get('special_mode') == 'color_section':
@@ -1375,8 +1353,8 @@ def handler(event):
         thumbnail = enhance_cubic_details_thumbnail_simple(thumbnail)
         
         detected_type = {
-            "ac_pattern": "무도금화이트(0.12/0.15)",
-            "ab_pattern": "무도금화이트-쿨톤(0.05/0.08)",
+            "ac_pattern": "무도금화이트(0.12)",
+            "ab_pattern": "무도금화이트-쿨톤(0.05)",
             "other": "기타색상(no_overlay)"
         }.get(pattern_type, "기타색상")
         
@@ -1445,7 +1423,11 @@ def handler(event):
                     "011": "COLOR section"
                 },
                 "optimization_features": [
-                    "✅ V26 STABLE: Always apply background removal",
+                    "✅ V27 STABLE: Always apply background removal",
+                    "✅ MATCHED ENHANCEMENT: Same overlay values",
+                    "✅ AC Pattern: 12% white overlay only",
+                    "✅ AB Pattern: 5% white overlay + cool tone only",
+                    "✅ REMOVED: Secondary brightness checks",
                     "✅ STABLE TRANSPARENT PNG: Verified at every step",
                     "✅ ENHANCED: Font caching for performance",
                     "✅ OPTIMIZED: Single sharpening pass (1.6)",
@@ -1468,7 +1450,7 @@ def handler(event):
                 "output_size": "1000x1300",
                 "output_format": "PNG with full transparency",
                 "transparency_info": "Full RGBA transparency preserved - NO background",
-                "white_overlay": "AC: 12% (1차), 15% (2차) | AB: 5% (1차), 8% (2차) + Cool Tone - WITH VERIFICATION",
+                "white_overlay": "AC: 12% | AB: 5% + Cool Tone | Other: None - MATCHED WITH ENHANCEMENT",
                 "brightness_increased": "8%",
                 "contrast_increased": "5%", 
                 "sharpness": "1.6 (single application)",
