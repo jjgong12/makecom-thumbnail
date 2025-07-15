@@ -16,10 +16,10 @@ logger = logging.getLogger(__name__)
 
 ################################
 # THUMBNAIL HANDLER - 1000x1300
-# VERSION: V31-AC20-Brightness-Up
+# VERSION: V31-AC20-GoogleScript-Fixed
 ################################
 
-VERSION = "V31-AC20-Brightness-Up"
+VERSION = "V31-AC20-GoogleScript-Fixed"
 
 # ===== GLOBAL INITIALIZATION =====
 REPLICATE_API_TOKEN = os.environ.get('REPLICATE_API_TOKEN')
@@ -70,8 +70,8 @@ def download_korean_font():
         # If font exists and not verified, verify it
         if os.path.exists(font_path) and not FONT_VERIFIED:
             try:
-                # Test with actual Korean text
-                test_font = ImageFont.truetype(font_path, 20, encoding='utf-8')
+                # Test with actual Korean text - WITHOUT encoding parameter
+                test_font = ImageFont.truetype(font_path, 20)
                 img_test = Image.new('RGBA', (200, 100), (255, 255, 255, 0))
                 draw_test = ImageDraw.Draw(img_test)
                 # Test with various Korean characters
@@ -89,9 +89,9 @@ def download_korean_font():
         # Download if not exists or verification failed
         if not os.path.exists(font_path):
             font_urls = [
-                'https://github.com/naver/nanumfont/raw/master/fonts/NanumFontSetup_TTF_GOTHIC/NanumGothic.ttf',
-                'https://cdn.jsdelivr.net/gh/naver/nanumfont@master/fonts/NanumFontSetup_TTF_GOTHIC/NanumGothic.ttf',
-                'https://github.com/naver/nanumfont/raw/master/fonts/NanumFontSetup_TTF_GOTHIC/NanumGothicBold.ttf'
+                'https://github.com/google/fonts/raw/main/ofl/nanumgothic/NanumGothic-Regular.ttf',
+                'https://fonts.gstatic.com/s/nanumgothic/v17/PN_3Rfi-oW3hYwmKDpxS7F_D-d7qPgJc.ttf',
+                'https://cdn.jsdelivr.net/gh/google/fonts@main/ofl/nanumgothic/NanumGothic-Regular.ttf'
             ]
             
             for url in font_urls:
@@ -102,8 +102,8 @@ def download_korean_font():
                         with open(font_path, 'wb') as f:
                             f.write(response.content)
                         
-                        # Verify the font works with Korean
-                        test_font = ImageFont.truetype(font_path, 20, encoding='utf-8')
+                        # Verify the font works with Korean - WITHOUT encoding parameter
+                        test_font = ImageFont.truetype(font_path, 20)
                         img_test = Image.new('RGBA', (200, 100), (255, 255, 255, 0))
                         draw_test = ImageDraw.Draw(img_test)
                         draw_test.text((10, 10), "한글 테스트", font=test_font, fill='black')
@@ -122,11 +122,11 @@ def download_korean_font():
         return None
 
 def get_font(size, korean_font_path=None):
-    """Get font with proper encoding - ENHANCED"""
+    """Get font with proper encoding - ENHANCED WITHOUT encoding parameter"""
     if korean_font_path and os.path.exists(korean_font_path):
         try:
-            # Always use UTF-8 encoding for Korean fonts
-            font = ImageFont.truetype(korean_font_path, size, encoding='utf-8')
+            # FIXED: Remove encoding parameter completely
+            font = ImageFont.truetype(korean_font_path, size)
             return font
         except Exception as e:
             logger.error(f"Font loading error: {e}")
@@ -708,18 +708,18 @@ def process_color_section(job):
         # Create COLOR section
         color_section = create_color_section(ring_image, width=1200)
         
-        # Convert to base64
+        # Convert to base64 WITH PADDING for Google Script
         buffered = BytesIO()
         color_section.save(buffered, format="PNG", optimize=True, compress_level=1)
         buffered.seek(0)
         section_base64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
-        section_base64_no_padding = section_base64.rstrip('=')
+        # FIXED: Keep padding for Google Script
         
         logger.info("COLOR section created successfully")
         
         return {
             "output": {
-                "thumbnail": section_base64_no_padding,
+                "thumbnail": section_base64,
                 "size": list(color_section.size),
                 "section_type": "color",
                 "special_mode": "color_section",
@@ -727,7 +727,8 @@ def process_color_section(job):
                 "file_number": "011",
                 "version": VERSION,
                 "status": "success",
-                "format": "base64_no_padding",
+                "format": "base64_with_padding",
+                "base64_padding": "INCLUDED_FOR_GOOGLE_SCRIPT",
                 "colors_generated": ["YELLOW GOLD", "ROSE GOLD", "WHITE GOLD", "ANTIQUE GOLD"],
                 "background_removal": "ULTRA_PRECISE",
                 "transparency_info": "Each ring variant has transparent background"
@@ -812,7 +813,7 @@ def generate_thumbnail_filename(original_filename, image_index):
     return new_filename
 
 def decode_base64_fast(base64_str: str) -> bytes:
-    """ENHANCED: Fast base64 decode with consistent padding handling"""
+    """ENHANCED: Fast base64 decode with Google Script support"""
     try:
         if not base64_str or len(base64_str) < 50:
             raise ValueError("Invalid base64 string")
@@ -824,21 +825,20 @@ def decode_base64_fast(base64_str: str) -> bytes:
         # Clean whitespace
         base64_str = ''.join(base64_str.split())
         
-        # Keep only valid base64 characters
-        valid_chars = set(string.ascii_letters + string.digits + '+/=')
-        base64_str = ''.join(c for c in base64_str if c in valid_chars)
-        
-        # Try without padding first (for Make.com compatibility)
-        no_pad = base64_str.rstrip('=')
-        
+        # For Google Script, try with existing padding first
         try:
-            decoded = base64.b64decode(no_pad + '==', validate=True)
+            decoded = base64.b64decode(base64_str, validate=True)
             return decoded
-        except Exception:
+        except:
+            # Keep only valid base64 characters
+            valid_chars = set(string.ascii_letters + string.digits + '+/=')
+            base64_str = ''.join(c for c in base64_str if c in valid_chars)
+            
             # Try with proper padding
-            padding_needed = (4 - len(no_pad) % 4) % 4
-            padded = no_pad + ('=' * padding_needed)
-            decoded = base64.b64decode(padded, validate=True)
+            padding_needed = (4 - len(base64_str) % 4) % 4
+            base64_str += '=' * padding_needed
+            
+            decoded = base64.b64decode(base64_str, validate=True)
             return decoded
             
     except Exception as e:
@@ -1111,8 +1111,8 @@ def apply_pattern_enhancement_transparent(image: Image.Image, pattern_type: str)
     
     return enhanced_image
 
-def image_to_base64(image, keep_transparency=True):
-    """Convert to base64 without padding - TRULY preserving transparency"""
+def image_to_base64(image, keep_transparency=True, for_google_script=True):
+    """Convert to base64 - WITH PADDING for Google Script"""
     buffered = BytesIO()
     
     # CRITICAL FIX: Force RGBA and save as PNG
@@ -1130,8 +1130,14 @@ def image_to_base64(image, keep_transparency=True):
     
     buffered.seek(0)
     base64_str = base64.b64encode(buffered.getvalue()).decode('utf-8')
-    # Remove padding for Make.com compatibility
-    return base64_str.rstrip('=')
+    
+    # CRITICAL FIX: Keep padding for Google Script
+    if for_google_script:
+        logger.info("✅ Keeping base64 padding for Google Script compatibility")
+        return base64_str
+    else:
+        # Remove padding for Make.com compatibility
+        return base64_str.rstrip('=')
 
 def handler(event):
     """Optimized thumbnail handler - V31 AC 20% White Overlay, Increased Brightness/Sharpness"""
@@ -1144,6 +1150,7 @@ def handler(event):
         logger.info("✨ ALL PATTERNS: Increased brightness and sharpness")
         logger.info("🎨 COLORS: Yellow/Rose/White/Antique Gold only")
         logger.info("🔄 PROCESSING ORDER: 1.Pattern Enhancement → 2.Resize → 3.SwinIR → 4.Ring Holes")
+        logger.info("📌 GOOGLE SCRIPT: Base64 WITH padding")
         
         # Check for special mode first
         if event.get('special_mode') == 'color_section':
@@ -1217,8 +1224,8 @@ def handler(event):
         logger.info(f"✅ Final thumbnail mode: {thumbnail.mode}")
         logger.info(f"✅ Final thumbnail size: {thumbnail.size}")
         
-        # Convert to base64 - preserving transparency
-        thumbnail_base64 = image_to_base64(thumbnail, keep_transparency=True)
+        # Convert to base64 - WITH PADDING for Google Script
+        thumbnail_base64 = image_to_base64(thumbnail, keep_transparency=True, for_google_script=True)
         
         # Verify transparency is preserved
         logger.info("✅ Transparency preserved in final output")
@@ -1235,7 +1242,8 @@ def handler(event):
                 "filename": output_filename,
                 "original_filename": filename,
                 "image_index": image_index,
-                "format": "base64_no_padding",
+                "format": "base64_with_padding",
+                "base64_padding": "INCLUDED_FOR_GOOGLE_SCRIPT",
                 "version": VERSION,
                 "status": "success",
                 "swinir_applied": True,
@@ -1253,7 +1261,10 @@ def handler(event):
                     "010": "Thumbnail 3",
                     "011": "COLOR section"
                 },
+                "google_script_info": "Base64 includes padding for Google Script compatibility",
+                "make_com_info": "For Make.com, remove padding with .rstrip('=')",
                 "optimization_features": [
+                    "✅ GOOGLE SCRIPT FIX: Base64 WITH padding",
                     "✅ V31 AC PATTERN: 20% white overlay (increased from 12%)",
                     "✅ BRIGHTNESS: AC/AB 1.02 (up from 1.005), Other 1.12 (up from 1.08)",
                     "✅ SHARPNESS: Other 1.5 (up from 1.4), Final 1.8 (up from 1.6)",
@@ -1278,7 +1289,7 @@ def handler(event):
                     "✅ SwinIR with transparency support",
                     "✅ Ready for Figma transparent overlay",
                     "✅ Pure PNG with full alpha channel",
-                    "✅ Make.com compatible base64 (no padding)"
+                    "✅ Google Script compatible base64 (with padding)"
                 ],
                 "thumbnail_method": "Proportional resize (no aggressive cropping)",
                 "processing_order": "1.U2Net-Ultra → 2.White Balance → 3.Pattern Enhancement → 4.Resize → 5.SwinIR → 6.Ring Holes",
@@ -1293,7 +1304,6 @@ def handler(event):
                 "contrast_final": "1.08 (increased from 1.05)",
                 "sharpness_final": "Other: 1.5 → Final: 1.8 (increased from 1.6)",
                 "quality": "95",
-                "make_com_compatibility": "Base64 without padding",
                 "metal_colors": "Yellow Gold, Rose Gold, White Gold, Antique Gold",
                 "enhancement_matching": "FULLY MATCHED with Enhancement Handler including increased values"
             }
