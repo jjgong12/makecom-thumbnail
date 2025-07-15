@@ -16,10 +16,10 @@ logger = logging.getLogger(__name__)
 
 ################################
 # THUMBNAIL HANDLER - 1000x1300
-# VERSION: V30-Enhancement-Matched-Order-AB12
+# VERSION: V30-Enhancement-Matched-Order-AB16
 ################################
 
-VERSION = "V30-Enhancement-Matched-Order-AB12"
+VERSION = "V30-Enhancement-Matched-Order-AB16"
 
 # ===== GLOBAL INITIALIZATION =====
 REPLICATE_API_TOKEN = os.environ.get('REPLICATE_API_TOKEN')
@@ -1017,7 +1017,7 @@ def auto_white_balance_fast(image: Image.Image) -> Image.Image:
     return result
 
 def apply_pattern_enhancement_transparent(image: Image.Image, pattern_type: str) -> Image.Image:
-    """Apply pattern enhancement while TRULY preserving transparency - AB FIXED to 12%"""
+    """Apply pattern enhancement while TRULY preserving transparency - AB 16%"""
     # CRITICAL: Ensure RGBA mode
     if image.mode != 'RGBA':
         logger.warning(f"⚠️ Converting {image.mode} to RGBA in pattern enhancement")
@@ -1050,9 +1050,9 @@ def apply_pattern_enhancement_transparent(image: Image.Image, pattern_type: str)
         logger.info("✅ AC Pattern enhancement applied")
     
     elif pattern_type == "ab_pattern":
-        logger.info("🔍 AB Pattern - Applying 12% white overlay and cool tone (FIXED)")
-        # FIXED: Apply 12% white overlay (same as AC pattern)
-        white_overlay = 0.12  # Changed from 0.05 to 0.12
+        logger.info("🔍 AB Pattern - Applying 16% white overlay and cool tone")
+        # Apply 16% white overlay
+        white_overlay = 0.16  # Changed to 16%
         img_array = img_array * (1 - white_overlay) + 255 * white_overlay
         
         # Cool tone adjustment
@@ -1073,7 +1073,7 @@ def apply_pattern_enhancement_transparent(image: Image.Image, pattern_type: str)
         brightness = ImageEnhance.Brightness(rgb_image)
         rgb_image = brightness.enhance(1.005)
         
-        logger.info("✅ AB Pattern enhancement applied with 12% white overlay")
+        logger.info("✅ AB Pattern enhancement applied with 16% white overlay")
         
     else:
         logger.info("🔍 Other Pattern - Standard enhancement")
@@ -1131,12 +1131,12 @@ def image_to_base64(image, keep_transparency=True):
     return base64_str.rstrip('=')
 
 def handler(event):
-    """Optimized thumbnail handler - V30 ENHANCEMENT MATCHED ORDER - AB FIXED"""
+    """Optimized thumbnail handler - V30 ENHANCEMENT MATCHED ORDER - AB 16%"""
     try:
         logger.info(f"=== Thumbnail {VERSION} Started ===")
         logger.info("🎯 ENHANCEMENT MATCHED: Same processing order as Enhancement Handler")
         logger.info("💎 TRANSPARENT OUTPUT: Preserving alpha channel throughout")
-        logger.info("🔧 AB PATTERN FIXED: Now using 12% white overlay (same as AC)")
+        logger.info("🔧 AB PATTERN: Now using 16% white overlay")
         logger.info("🎨 COLORS: Yellow/Rose/White/Antique Gold only")
         logger.info("🔄 PROCESSING ORDER: 1.Pattern Enhancement → 2.Resize → 3.SwinIR → 4.Ring Holes")
         
@@ -1182,7 +1182,7 @@ def handler(event):
         
         detected_type = {
             "ac_pattern": "무도금화이트(0.12)",
-            "ab_pattern": "무도금화이트-쿨톤(0.12)",  # FIXED: Changed from 0.05 to 0.12
+            "ab_pattern": "무도금화이트-쿨톤(0.16)",  # Changed to 16%
             "other": "기타색상(no_overlay)"
         }.get(pattern_type, "기타색상")
         
@@ -1250,13 +1250,13 @@ def handler(event):
                 },
                 "optimization_features": [
                     "✅ V30 ENHANCEMENT MATCHED ORDER: Same processing order as Enhancement Handler",
-                    "✅ AB PATTERN FIXED: Now using 12% white overlay (same as AC)",
+                    "✅ AB PATTERN: Now using 16% white overlay",
                     "✅ PATTERN ENHANCEMENT FIRST: Same order as Enhancement Handler",
                     "✅ ENHANCEMENT VALUES MATCHED: Other pattern uses sharpness 1.4 (not 1.6)",
                     "✅ CUBIC DETAILS REMOVED: No enhance_cubic_details function",
                     "✅ PROCESSING ORDER: 1.Pattern Enhancement → 2.Resize → 3.SwinIR → 4.Ring Holes",
                     "✅ AC Pattern: 12% white overlay + brightness 1.005 + color 0.98",
-                    "✅ AB Pattern: 12% white overlay + cool tone + color 0.88 + brightness 1.005",
+                    "✅ AB Pattern: 16% white overlay + cool tone + color 0.88 + brightness 1.005",
                     "✅ Other Pattern: brightness 1.08 + color 0.99 + sharpness 1.4",
                     "✅ Common: contrast 1.05 + final sharpness 1.6",
                     "✅ STABLE TRANSPARENT PNG: Verified at every step",
@@ -1279,14 +1279,14 @@ def handler(event):
                 "output_size": "1000x1300",
                 "output_format": "PNG with full transparency",
                 "transparency_info": "Full RGBA transparency preserved - NO background",
-                "white_overlay": "AC: 12% | AB: 12% (FIXED) | Other: None",
+                "white_overlay": "AC: 12% | AB: 16% | Other: None",
                 "brightness_adjustments": "AC/AB: 1.005 | Other: 1.08",
                 "contrast_final": "1.05 (same as Enhancement Handler)",
                 "sharpness_final": "Other: 1.4 → Final: 1.6 (same as Enhancement Handler)",
                 "quality": "95",
                 "make_com_compatibility": "Base64 without padding",
                 "metal_colors": "Yellow Gold, Rose Gold, White Gold, Antique Gold",
-                "enhancement_matching": "FULLY MATCHED with Enhancement Handler including AB 12%"
+                "enhancement_matching": "FULLY MATCHED with Enhancement Handler including AB 16%"
             }
         }
         
