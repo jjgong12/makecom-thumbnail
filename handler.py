@@ -16,10 +16,10 @@ logger = logging.getLogger(__name__)
 
 ################################
 # THUMBNAIL HANDLER - 1000x1300
-# VERSION: V31-AC20-GoogleScript-Fixed-MakeCom
+# VERSION: V32-PLATFORM-AWARE
 ################################
 
-VERSION = "V31-AC20-GoogleScript-Fixed-MakeCom"
+VERSION = "V32-PLATFORM-AWARE"
 
 # ===== GLOBAL INITIALIZATION =====
 REPLICATE_API_TOKEN = os.environ.get('REPLICATE_API_TOKEN')
@@ -620,10 +620,13 @@ def ensure_ring_holes_transparent_ultra(image: Image.Image) -> Image.Image:
     return result
 
 def process_color_section(job):
-    """Process COLOR section special mode"""
+    """Process COLOR section special mode - Platform aware"""
     logger.info("Processing COLOR section special mode")
     
     try:
+        # Determine target platform
+        target_platform = job.get('target_platform', 'make')  # Default to make.com
+        
         # Find image data - FIXED
         image_data_str = find_input_data_fast(job)
         
@@ -643,12 +646,18 @@ def process_color_section(job):
         # Create COLOR section
         color_section = create_color_section(ring_image, width=1200)
         
-        # Convert to base64 WITH PADDING for Google Script
+        # Convert to base64 with platform-specific padding
         buffered = BytesIO()
         color_section.save(buffered, format="PNG", optimize=True, compress_level=1)
         buffered.seek(0)
         section_base64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
-        # FIXED: Keep padding for Google Script
+        
+        # Platform-specific padding handling
+        if target_platform != "google":
+            logger.info("✅ Make.com mode: Removing base64 padding")
+            section_base64 = section_base64.rstrip('=')
+        else:
+            logger.info("✅ Google Script mode: Keeping base64 padding")
         
         logger.info("COLOR section created successfully")
         
@@ -662,12 +671,12 @@ def process_color_section(job):
                 "file_number": "011",
                 "version": VERSION,
                 "status": "success",
-                "format": "base64_with_padding",
-                "base64_padding": "INCLUDED_FOR_GOOGLE_SCRIPT",
+                "format": "PNG",
+                "base64_padding": "REMOVED" if target_platform != "google" else "INCLUDED",
+                "target_platform": target_platform,
                 "colors_generated": ["YELLOW GOLD", "ROSE GOLD", "WHITE GOLD", "ANTIQUE GOLD"],
                 "background_removal": "ULTRA_PRECISE",
-                "transparency_info": "Each ring variant has transparent background",
-                "make_com_compatible": True
+                "transparency_info": "Each ring variant has transparent background"
             }
         }
         
@@ -1006,8 +1015,8 @@ def apply_pattern_enhancement_transparent(image: Image.Image, pattern_type: str)
     
     return enhanced_image
 
-def image_to_base64(image, keep_transparency=True, for_google_script=True):
-    """Convert to base64 - WITH PADDING for Google Script"""
+def image_to_base64(image, keep_transparency=True, target_platform='make'):
+    """Convert to base64 - Platform aware (Make.com vs Google Script)"""
     buffered = BytesIO()
     
     # CRITICAL FIX: Force RGBA and save as PNG
@@ -1026,27 +1035,30 @@ def image_to_base64(image, keep_transparency=True, for_google_script=True):
     buffered.seek(0)
     base64_str = base64.b64encode(buffered.getvalue()).decode('utf-8')
     
-    # CRITICAL FIX: Keep padding for Google Script
-    if for_google_script:
-        logger.info("✅ Keeping base64 padding for Google Script compatibility")
+    # Platform-specific padding handling
+    if target_platform == 'google':
+        logger.info("✅ Google Script mode: Keeping base64 padding")
         return base64_str
     else:
-        # Remove padding for Make.com compatibility
+        logger.info("✅ Make.com mode: Removing base64 padding")
         return base64_str.rstrip('=')
 
 def handler(event):
-    """Optimized thumbnail handler - FIXED FOR MAKE.COM"""
+    """Optimized thumbnail handler - Platform aware"""
     try:
         logger.info(f"=== Thumbnail {VERSION} Started ===")
-        logger.info("🎯 ENHANCEMENT MATCHED: Same processing order as Enhancement Handler")
+        logger.info("🎯 PLATFORM AWARE: Now supporting both Make.com and Google Script")
         logger.info("💎 TRANSPARENT OUTPUT: Preserving alpha channel throughout")
         logger.info("🔧 AC PATTERN: Now using 20% white overlay (increased from 12%)")
         logger.info("🔧 AB PATTERN: Using 16% white overlay")
         logger.info("✨ ALL PATTERNS: Increased brightness and sharpness")
         logger.info("🎨 COLORS: Yellow/Rose/White/Antique Gold only")
         logger.info("🔄 PROCESSING ORDER: 1.Pattern Enhancement → 2.Resize → 3.SwinIR → 4.Ring Holes")
-        logger.info("📌 GOOGLE SCRIPT: Base64 WITH padding")
-        logger.info("🔧 MAKE.COM: Fixed return structure for compatibility")
+        logger.info("📌 BASE64 PADDING: Platform-specific handling")
+        
+        # Determine target platform
+        target_platform = event.get('target_platform', 'make')  # Default to make.com
+        logger.info(f"🎯 Target platform: {target_platform}")
         
         # Check for special mode first
         if event.get('special_mode') == 'color_section':
@@ -1120,8 +1132,8 @@ def handler(event):
         logger.info(f"✅ Final thumbnail mode: {thumbnail.mode}")
         logger.info(f"✅ Final thumbnail size: {thumbnail.size}")
         
-        # Convert to base64 - WITH PADDING for Google Script
-        thumbnail_base64 = image_to_base64(thumbnail, keep_transparency=True, for_google_script=True)
+        # Convert to base64 - Platform aware
+        thumbnail_base64 = image_to_base64(thumbnail, keep_transparency=True, target_platform=target_platform)
         
         # Verify transparency is preserved
         logger.info("✅ Transparency preserved in final output")
@@ -1138,8 +1150,9 @@ def handler(event):
                 "filename": output_filename,
                 "original_filename": filename,
                 "image_index": image_index,
-                "format": "base64_with_padding",
-                "base64_padding": "INCLUDED_FOR_GOOGLE_SCRIPT",
+                "format": "PNG",
+                "base64_padding": "REMOVED" if target_platform != "google" else "INCLUDED",
+                "target_platform": target_platform,
                 "version": VERSION,
                 "status": "success",
                 "swinir_applied": True,
@@ -1157,20 +1170,22 @@ def handler(event):
                     "010": "Thumbnail 3",
                     "011": "COLOR section"
                 },
-                "google_script_info": "Base64 includes padding for Google Script compatibility",
-                "make_com_info": "Return structure fixed for Make.com compatibility",
+                "platform_info": {
+                    "make": "Base64 without padding (= removed)",
+                    "google": "Base64 with padding (= included)"
+                },
                 "optimization_features": [
-                    "✅ MAKE.COM FIX: Single structure return for compatibility",
-                    "✅ GOOGLE SCRIPT FIX: Base64 WITH padding",
-                    "✅ V31 AC PATTERN: 20% white overlay (increased from 12%)",
-                    "✅ BRIGHTNESS: AC/AB 1.02 (up from 1.005), Other 1.12 (up from 1.08)",
-                    "✅ SHARPNESS: Other 1.5 (up from 1.4), Final 1.8 (up from 1.6)",
-                    "✅ CONTRAST: 1.08 (up from 1.05)",
-                    "✅ AB PATTERN: Maintained at 16% white overlay",
+                    "✅ PLATFORM AWARE: Automatic padding handling",
+                    "✅ MAKE.COM: Base64 without padding",
+                    "✅ GOOGLE SCRIPT: Base64 with padding",
+                    "✅ V32 AC PATTERN: 20% white overlay",
+                    "✅ BRIGHTNESS: AC/AB 1.02, Other 1.12",
+                    "✅ SHARPNESS: Other 1.5, Final 1.8",
+                    "✅ CONTRAST: 1.08",
+                    "✅ AB PATTERN: 16% white overlay",
                     "✅ ENHANCEMENT MATCHED ORDER: Same processing order as Enhancement Handler",
                     "✅ PATTERN ENHANCEMENT FIRST: Same order as Enhancement Handler",
                     "✅ ENHANCEMENT VALUES MATCHED: Other pattern uses sharpness 1.5",
-                    "✅ CUBIC DETAILS REMOVED: No enhance_cubic_details function",
                     "✅ PROCESSING ORDER: 1.Pattern Enhancement → 2.Resize → 3.SwinIR → 4.Ring Holes",
                     "✅ AC Pattern: 20% white overlay + brightness 1.02 + color 0.98",
                     "✅ AB Pattern: 16% white overlay + cool tone + color 0.88 + brightness 1.02",
@@ -1185,8 +1200,7 @@ def handler(event):
                     "✅ Fixed proportional thumbnail (50% for 2000x2600)",
                     "✅ SwinIR with transparency support",
                     "✅ Ready for Figma transparent overlay",
-                    "✅ Pure PNG with full alpha channel",
-                    "✅ Google Script compatible base64 (with padding)"
+                    "✅ Pure PNG with full alpha channel"
                 ],
                 "thumbnail_method": "Proportional resize (no aggressive cropping)",
                 "processing_order": "1.U2Net-Ultra → 2.White Balance → 3.Pattern Enhancement → 4.Resize → 5.SwinIR → 6.Ring Holes",
