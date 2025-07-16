@@ -16,10 +16,10 @@ logger = logging.getLogger(__name__)
 
 ################################
 # THUMBNAIL HANDLER - 1000x1300
-# VERSION: V31-AC20-Brightness-Up-Fixed
+# VERSION: V31-AC20-Brightness-Up-Fixed-Compress3
 ################################
 
-VERSION = "V31-AC20-Brightness-Up-Fixed"
+VERSION = "V31-AC20-Brightness-Up-Fixed-Compress3"
 
 # ===== GLOBAL INITIALIZATION =====
 REPLICATE_API_TOKEN = os.environ.get('REPLICATE_API_TOKEN')
@@ -418,7 +418,8 @@ def u2net_ultra_precise_removal(image: Image.Image) -> Image.Image:
         
         # Save image to buffer
         buffered = BytesIO()
-        image_enhanced.save(buffered, format="PNG", compress_level=0)
+        # CHANGED: compress_level=0 → compress_level=3, optimize=False → optimize=True
+        image_enhanced.save(buffered, format="PNG", compress_level=3, optimize=True)
         buffered.seek(0)
         img_data = buffered.getvalue()
         
@@ -710,7 +711,8 @@ def process_color_section(job):
         
         # Convert to base64
         buffered = BytesIO()
-        color_section.save(buffered, format="PNG", optimize=True, compress_level=1)
+        # CHANGED: compress_level=1 → compress_level=3
+        color_section.save(buffered, format="PNG", optimize=True, compress_level=3)
         buffered.seek(0)
         section_base64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
         # FIXED: Keep padding for Google Script compatibility
@@ -731,7 +733,8 @@ def process_color_section(job):
                 "colors_generated": ["YELLOW GOLD", "ROSE GOLD", "WHITE GOLD", "ANTIQUE GOLD"],
                 "background_removal": "ULTRA_PRECISE",
                 "transparency_info": "Each ring variant has transparent background",
-                "base64_padding": "INCLUDED"
+                "base64_padding": "INCLUDED",
+                "compression": "level_3"
             }
         }
         
@@ -934,7 +937,8 @@ def apply_swinir_thumbnail(image: Image.Image) -> Image.Image:
         rgb_image = Image.merge('RGB', (r, g, b))
         
         buffered = BytesIO()
-        rgb_image.save(buffered, format="PNG", optimize=True, compress_level=1)
+        # CHANGED: compress_level=1 → compress_level=3
+        rgb_image.save(buffered, format="PNG", optimize=True, compress_level=3)
         buffered.seek(0)
         img_base64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
         img_data_url = f"data:image/png;base64,{img_base64}"
@@ -1121,12 +1125,12 @@ def image_to_base64(image, keep_transparency=True):
         image = image.convert('RGBA')
     
     if image.mode == 'RGBA':
-        logger.info("💎 Saving RGBA image as PNG with full transparency")
-        # Save as PNG with NO compression for maximum transparency preservation
-        image.save(buffered, format='PNG', compress_level=0, optimize=False)
+        logger.info("💎 Saving RGBA image as PNG with compression level 3")
+        # CHANGED: compress_level=0 → compress_level=3, optimize=False → optimize=True
+        image.save(buffered, format='PNG', compress_level=3, optimize=True)
     else:
         logger.info(f"Saving {image.mode} mode image as PNG")
-        image.save(buffered, format='PNG', optimize=True, compress_level=1)
+        image.save(buffered, format='PNG', optimize=True, compress_level=3)
     
     buffered.seek(0)
     base64_str = base64.b64encode(buffered.getvalue()).decode('utf-8')
@@ -1145,6 +1149,7 @@ def handler(event):
         logger.info("🎨 COLORS: Yellow/Rose/White/Antique Gold only")
         logger.info("🔄 PROCESSING ORDER: 1.Pattern Enhancement → 2.Resize → 3.SwinIR → 4.Ring Holes")
         logger.info("📌 BASE64 PADDING: ALWAYS INCLUDED for Google Script compatibility")
+        logger.info("🗜️ COMPRESSION: Level 3 (balanced speed/size)")
         
         # Check for special mode first
         if event.get('special_mode') == 'color_section':
@@ -1248,6 +1253,7 @@ def handler(event):
                 "background_applied": False,
                 "output_mode": "RGBA",
                 "base64_padding": "INCLUDED",
+                "compression": "level_3",
                 "special_modes_available": ["color_section"],
                 "file_number_info": {
                     "007": "Thumbnail 1",
@@ -1258,6 +1264,7 @@ def handler(event):
                 "optimization_features": [
                     "✅ V31 AC PATTERN: 20% white overlay (increased from 12%)",
                     "✅ BASE64 PADDING: ALWAYS INCLUDED for Google Script",
+                    "✅ COMPRESSION: Level 3 for balanced speed/size",
                     "✅ BRIGHTNESS: AC/AB 1.02 (up from 1.005), Other 1.12 (up from 1.08)",
                     "✅ SHARPNESS: Other 1.5 (up from 1.4), Final 1.8 (up from 1.6)",
                     "✅ CONTRAST: 1.08 (up from 1.05)",
