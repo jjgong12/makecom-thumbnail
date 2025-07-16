@@ -16,10 +16,10 @@ logger = logging.getLogger(__name__)
 
 ################################
 # THUMBNAIL HANDLER - 1000x1300
-# VERSION: V32-FIXED-MAKE-GOOGLE
+# VERSION: V31-AC20-GoogleScript-Fixed
 ################################
 
-VERSION = "V32-FIXED-MAKE-GOOGLE"
+VERSION = "V31-AC20-GoogleScript-Fixed"
 
 # ===== GLOBAL INITIALIZATION =====
 REPLICATE_API_TOKEN = os.environ.get('REPLICATE_API_TOKEN')
@@ -371,7 +371,7 @@ def u2net_ultra_precise_removal(image: Image.Image) -> Image.Image:
             if REMBG_SESSION is None:
                 return image
         
-        logger.info("🔷 U2Net ULTRA PRECISE Background Removal V32")
+        logger.info("🔷 U2Net ULTRA PRECISE Background Removal V30")
         
         if image.mode != 'RGBA':
             if image.mode == 'RGB':
@@ -508,7 +508,7 @@ def ensure_ring_holes_transparent_ultra(image: Image.Image) -> Image.Image:
     if image.mode != 'RGBA':
         image = image.convert('RGBA')
     
-    logger.info("🔍 ULTRA PRECISE Ring Hole Detection V32 - Preserving RGBA")
+    logger.info("🔍 ULTRA PRECISE Ring Hole Detection V30 - Preserving RGBA")
     
     r, g, b, a = image.split()
     alpha_array = np.array(a, dtype=np.uint8)
@@ -620,14 +620,11 @@ def ensure_ring_holes_transparent_ultra(image: Image.Image) -> Image.Image:
     return result
 
 def process_color_section(job):
-    """Process COLOR section special mode - FIXED for Make.com"""
+    """Process COLOR section special mode"""
     logger.info("Processing COLOR section special mode")
     
     try:
-        # Determine target platform
-        target_platform = job.get('target_platform', 'make')  # Default to make.com
-        
-        # Find image data
+        # Find image data - FIXED
         image_data_str = find_input_data_fast(job)
         
         if not image_data_str:
@@ -646,22 +643,15 @@ def process_color_section(job):
         # Create COLOR section
         color_section = create_color_section(ring_image, width=1200)
         
-        # Convert to base64 with platform-specific padding
+        # Convert to base64 WITH PADDING for Google Script
         buffered = BytesIO()
         color_section.save(buffered, format="PNG", optimize=True, compress_level=1)
         buffered.seek(0)
         section_base64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
-        
-        # Platform-specific padding handling
-        if target_platform != "google":
-            logger.info("✅ Make.com mode: Removing base64 padding")
-            section_base64 = section_base64.rstrip('=')
-        else:
-            logger.info("✅ Google Script mode: Keeping base64 padding")
+        # FIXED: Keep padding for Google Script
         
         logger.info("COLOR section created successfully")
         
-        # SIMPLIFIED RESPONSE STRUCTURE
         return {
             "output": {
                 "thumbnail": section_base64,
@@ -672,7 +662,11 @@ def process_color_section(job):
                 "file_number": "011",
                 "version": VERSION,
                 "status": "success",
-                "base64_padding": "REMOVED" if target_platform != "google" else "INCLUDED"
+                "format": "base64_with_padding",
+                "base64_padding": "INCLUDED_FOR_GOOGLE_SCRIPT",
+                "colors_generated": ["YELLOW GOLD", "ROSE GOLD", "WHITE GOLD", "ANTIQUE GOLD"],
+                "background_removal": "ULTRA_PRECISE",
+                "transparency_info": "Each ring variant has transparent background"
             }
         }
         
@@ -1011,48 +1005,52 @@ def apply_pattern_enhancement_transparent(image: Image.Image, pattern_type: str)
     
     return enhanced_image
 
-def image_to_base64(image, target_platform="make"):
-    """Convert to base64 - FIXED for Make.com vs Google Script"""
+def image_to_base64(image, keep_transparency=True, for_google_script=True):
+    """Convert to base64 - WITH PADDING for Google Script"""
     buffered = BytesIO()
     
-    if image.mode != 'RGBA':
+    # CRITICAL FIX: Force RGBA and save as PNG
+    if image.mode != 'RGBA' and keep_transparency:
         logger.warning(f"⚠️ Converting {image.mode} to RGBA for transparency")
         image = image.convert('RGBA')
     
-    logger.info("💎 Saving RGBA image as PNG with full transparency")
-    image.save(buffered, format='PNG', compress_level=0, optimize=False)
+    if image.mode == 'RGBA':
+        logger.info("💎 Saving RGBA image as PNG with full transparency")
+        # Save as PNG with NO compression for maximum transparency preservation
+        image.save(buffered, format='PNG', compress_level=0, optimize=False)
+    else:
+        logger.info(f"Saving {image.mode} mode image as PNG")
+        image.save(buffered, format='PNG', optimize=True, compress_level=1)
     
     buffered.seek(0)
     base64_str = base64.b64encode(buffered.getvalue()).decode('utf-8')
     
-    # Platform-specific padding handling
-    if target_platform == "google":
-        logger.info("✅ Google Script mode: Keeping base64 padding")
+    # CRITICAL FIX: Keep padding for Google Script
+    if for_google_script:
+        logger.info("✅ Keeping base64 padding for Google Script compatibility")
         return base64_str
-    else:  # make.com or others
-        logger.info("✅ Make.com mode: Removing base64 padding")
+    else:
+        # Remove padding for Make.com compatibility
         return base64_str.rstrip('=')
 
 def handler(event):
-    """Optimized thumbnail handler - V32 FIXED for Make.com"""
+    """Optimized thumbnail handler - V31 AC 20% White Overlay, Increased Brightness/Sharpness"""
     try:
         logger.info(f"=== Thumbnail {VERSION} Started ===")
-        logger.info("🎯 FIXED: Make.com base64 padding handling")
+        logger.info("🎯 ENHANCEMENT MATCHED: Same processing order as Enhancement Handler")
         logger.info("💎 TRANSPARENT OUTPUT: Preserving alpha channel throughout")
-        logger.info("🔧 AC PATTERN: 20% white overlay")
-        logger.info("🔧 AB PATTERN: 16% white overlay")
+        logger.info("🔧 AC PATTERN: Now using 20% white overlay (increased from 12%)")
+        logger.info("🔧 AB PATTERN: Using 16% white overlay")
         logger.info("✨ ALL PATTERNS: Increased brightness and sharpness")
         logger.info("🎨 COLORS: Yellow/Rose/White/Antique Gold only")
         logger.info("🔄 PROCESSING ORDER: 1.Pattern Enhancement → 2.Resize → 3.SwinIR → 4.Ring Holes")
-        
-        # Determine target platform
-        target_platform = event.get('target_platform', 'make')  # Default to make.com
+        logger.info("📌 GOOGLE SCRIPT: Base64 WITH padding")
         
         # Check for special mode first
         if event.get('special_mode') == 'color_section':
             return process_color_section(event)
         
-        # Normal thumbnail processing
+        # Normal thumbnail processing with MATCHED ORDER
         image_index = event.get('image_index', 1)
         if isinstance(event.get('input'), dict):
             image_index = event.get('input', {}).get('image_index', image_index)
@@ -1063,9 +1061,10 @@ def handler(event):
         if not image_data_str:
             raise ValueError("No input data found")
         
-        # Load image
+        # Load image using fixed function
         image = base64_to_image_fast(image_data_str)
         
+        # CRITICAL: Convert to RGBA immediately
         if image.mode != 'RGBA':
             logger.info(f"Converting {image.mode} to RGBA immediately")
             image = image.convert('RGBA')
@@ -1074,6 +1073,7 @@ def handler(event):
         logger.info("📸 STEP 1: ALWAYS applying ULTRA PRECISE background removal")
         image = u2net_ultra_precise_removal(image)
         
+        # Verify RGBA after removal
         if image.mode != 'RGBA':
             logger.error("❌ Image lost RGBA after background removal!")
             image = image.convert('RGBA')
@@ -1082,46 +1082,50 @@ def handler(event):
         logger.info("⚖️ STEP 2: Applying white balance")
         image = auto_white_balance_fast(image)
         
-        # STEP 3: PATTERN ENHANCEMENT FIRST
-        logger.info("🎨 STEP 3: Applying pattern enhancement FIRST")
+        # STEP 3: PATTERN ENHANCEMENT FIRST (MATCHED ORDER)
+        logger.info("🎨 STEP 3: Applying pattern enhancement FIRST (matched with Enhancement Handler)")
         pattern_type = detect_pattern_type(filename)
         
         detected_type = {
-            "ac_pattern": "무도금화이트(0.20)",
+            "ac_pattern": "무도금화이트(0.20)",  # Changed to 20%
             "ab_pattern": "무도금화이트-쿨톤(0.16)",
             "other": "기타색상(no_overlay)"
         }.get(pattern_type, "기타색상")
         
+        # Apply pattern enhancement with EXACT same logic as Enhancement Handler
         image = apply_pattern_enhancement_transparent(image, pattern_type)
         
-        # STEP 4: RESIZE
+        # STEP 4: RESIZE (MATCHED ORDER)
         logger.info("📏 STEP 4: Creating proportional thumbnail")
         thumbnail = create_thumbnail_proportional(image, 1000, 1300)
         
-        # STEP 5: SWINIR ENHANCEMENT
+        # STEP 5: SWINIR ENHANCEMENT (MATCHED ORDER)
         logger.info("🚀 STEP 5: Applying SwinIR enhancement")
         thumbnail = apply_swinir_thumbnail(thumbnail)
         
-        # STEP 6: Ultra precise ring hole detection
+        # STEP 6: Ultra precise ring hole detection (MATCHED ORDER)
         logger.info("🔍 STEP 6: Applying ULTRA PRECISE ring hole detection")
         thumbnail = ensure_ring_holes_transparent_ultra(thumbnail)
         
+        # Final verification
         if thumbnail.mode != 'RGBA':
             logger.error("❌ CRITICAL: Final thumbnail is not RGBA! Converting...")
             thumbnail = thumbnail.convert('RGBA')
         
+        # CRITICAL: NO BACKGROUND COMPOSITE - Keep transparency
         logger.info("💎 NO background composite - keeping pure transparency")
+        
         logger.info(f"✅ Final thumbnail mode: {thumbnail.mode}")
         logger.info(f"✅ Final thumbnail size: {thumbnail.size}")
         
-        # Convert to base64 with platform-specific padding
-        thumbnail_base64 = image_to_base64(thumbnail, target_platform)
+        # Convert to base64 - WITH PADDING for Google Script
+        thumbnail_base64 = image_to_base64(thumbnail, keep_transparency=True, for_google_script=True)
         
+        # Verify transparency is preserved
         logger.info("✅ Transparency preserved in final output")
         
         output_filename = generate_thumbnail_filename(filename, image_index)
         
-        # SIMPLIFIED OUTPUT STRUCTURE FOR MAKE.COM
         return {
             "output": {
                 "thumbnail": thumbnail_base64,
@@ -1132,12 +1136,70 @@ def handler(event):
                 "filename": output_filename,
                 "original_filename": filename,
                 "image_index": image_index,
+                "format": "base64_with_padding",
+                "base64_padding": "INCLUDED_FOR_GOOGLE_SCRIPT",
                 "version": VERSION,
                 "status": "success",
+                "swinir_applied": True,
+                "swinir_timing": "AFTER pattern enhancement and resize",
+                "png_support": True,
                 "has_transparency": True,
-                "format": "PNG",
+                "transparency_preserved": True,
+                "background_removed": True,
+                "background_applied": False,
                 "output_mode": "RGBA",
-                "base64_padding": "REMOVED" if target_platform != "google" else "INCLUDED"
+                "special_modes_available": ["color_section"],
+                "file_number_info": {
+                    "007": "Thumbnail 1",
+                    "009": "Thumbnail 2", 
+                    "010": "Thumbnail 3",
+                    "011": "COLOR section"
+                },
+                "google_script_info": "Base64 includes padding for Google Script compatibility",
+                "make_com_info": "For Make.com, remove padding with .rstrip('=')",
+                "optimization_features": [
+                    "✅ GOOGLE SCRIPT FIX: Base64 WITH padding",
+                    "✅ V31 AC PATTERN: 20% white overlay (increased from 12%)",
+                    "✅ BRIGHTNESS: AC/AB 1.02 (up from 1.005), Other 1.12 (up from 1.08)",
+                    "✅ SHARPNESS: Other 1.5 (up from 1.4), Final 1.8 (up from 1.6)",
+                    "✅ CONTRAST: 1.08 (up from 1.05)",
+                    "✅ AB PATTERN: Maintained at 16% white overlay",
+                    "✅ ENHANCEMENT MATCHED ORDER: Same processing order as Enhancement Handler",
+                    "✅ PATTERN ENHANCEMENT FIRST: Same order as Enhancement Handler",
+                    "✅ ENHANCEMENT VALUES MATCHED: Other pattern uses sharpness 1.5",
+                    "✅ CUBIC DETAILS REMOVED: No enhance_cubic_details function",
+                    "✅ PROCESSING ORDER: 1.Pattern Enhancement → 2.Resize → 3.SwinIR → 4.Ring Holes",
+                    "✅ AC Pattern: 20% white overlay + brightness 1.02 + color 0.98",
+                    "✅ AB Pattern: 16% white overlay + cool tone + color 0.88 + brightness 1.02",
+                    "✅ Other Pattern: brightness 1.12 + color 0.99 + sharpness 1.5",
+                    "✅ Common: contrast 1.08 + final sharpness 1.8",
+                    "✅ STABLE TRANSPARENT PNG: Verified at every step",
+                    "✅ ENHANCED: Font caching for performance",
+                    "✅ CRITICAL: RGBA mode enforced throughout",
+                    "✅ ULTRA PRECISE edge detection maintained",
+                    "✅ Ring hole detection with transparency",
+                    "✅ Enhanced metal color algorithms",
+                    "✅ Fixed proportional thumbnail (50% for 2000x2600)",
+                    "✅ SwinIR with transparency support",
+                    "✅ Ready for Figma transparent overlay",
+                    "✅ Pure PNG with full alpha channel",
+                    "✅ Google Script compatible base64 (with padding)"
+                ],
+                "thumbnail_method": "Proportional resize (no aggressive cropping)",
+                "processing_order": "1.U2Net-Ultra → 2.White Balance → 3.Pattern Enhancement → 4.Resize → 5.SwinIR → 6.Ring Holes",
+                "edge_detection": "ULTRA PRECISE (Sobel + Guided Filter)",
+                "korean_support": "ENHANCED with font caching",
+                "expected_input": "2000x2600 (any format)",
+                "output_size": "1000x1300",
+                "output_format": "PNG with full transparency",
+                "transparency_info": "Full RGBA transparency preserved - NO background",
+                "white_overlay": "AC: 20% | AB: 16% | Other: None",
+                "brightness_adjustments": "AC/AB: 1.02 | Other: 1.12",
+                "contrast_final": "1.08 (increased from 1.05)",
+                "sharpness_final": "Other: 1.5 → Final: 1.8 (increased from 1.6)",
+                "quality": "95",
+                "metal_colors": "Yellow Gold, Rose Gold, White Gold, Antique Gold",
+                "enhancement_matching": "FULLY MATCHED with Enhancement Handler including increased values"
             }
         }
         
