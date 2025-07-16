@@ -191,7 +191,7 @@ def auto_crop_transparent(image):
     return cropped
 
 def apply_enhanced_metal_color(image, metal_color, strength=0.3, color_id=""):
-    """Apply enhanced metal color effect - Yellow/Rose/White/Antique Gold only"""
+    """Apply enhanced metal color effect - Yellow/Rose/White/Antique White only"""
     if image.mode != 'RGBA':
         image = image.convert('RGBA')
     
@@ -276,7 +276,7 @@ def apply_enhanced_metal_color(image, metal_color, strength=0.3, color_id=""):
     return result
 
 def create_color_section(ring_image, width=1200):
-    """Create COLOR section with 4 metal variations - Yellow/Rose/White/Antique Gold only"""
+    """Create COLOR section with 4 metal variations - Yellow/Rose/White/Antique White only"""
     logger.info("Creating COLOR section with transparent PNGs")
     
     height = 850
@@ -309,7 +309,7 @@ def create_color_section(ring_image, width=1200):
         ("yellow", "YELLOW GOLD", (255, 200, 50), 0.3),
         ("rose", "ROSE GOLD", (255, 160, 120), 0.35),
         ("white", "WHITE GOLD", (255, 255, 255), 0.0),
-        ("antique", "ANTIQUE GOLD", (245, 235, 225), 0.1)
+        ("antique", "ANTIQUE WHITE", (245, 235, 225), 0.1)
     ]
     
     grid_size = 260
@@ -371,7 +371,7 @@ def u2net_ultra_precise_removal(image: Image.Image) -> Image.Image:
             if REMBG_SESSION is None:
                 return image
         
-        logger.info("🔷 U2Net ULTRA PRECISE Background Removal V30")
+        logger.info("🔷 U2Net ULTRA PRECISE Background Removal V32")
         
         if image.mode != 'RGBA':
             if image.mode == 'RGB':
@@ -508,7 +508,7 @@ def ensure_ring_holes_transparent_ultra(image: Image.Image) -> Image.Image:
     if image.mode != 'RGBA':
         image = image.convert('RGBA')
     
-    logger.info("🔍 ULTRA PRECISE Ring Hole Detection V30 - Preserving RGBA")
+    logger.info("🔍 ULTRA PRECISE Ring Hole Detection V32 - Preserving RGBA")
     
     r, g, b, a = image.split()
     alpha_array = np.array(a, dtype=np.uint8)
@@ -674,7 +674,7 @@ def process_color_section(job):
                 "format": "PNG",
                 "base64_padding": "REMOVED" if target_platform != "google" else "INCLUDED",
                 "target_platform": target_platform,
-                "colors_generated": ["YELLOW GOLD", "ROSE GOLD", "WHITE GOLD", "ANTIQUE GOLD"],
+                "colors_generated": ["YELLOW GOLD", "ROSE GOLD", "WHITE GOLD", "ANTIQUE WHITE"],
                 "background_removal": "ULTRA_PRECISE",
                 "transparency_info": "Each ring variant has transparent background"
             }
@@ -1049,10 +1049,10 @@ def handler(event):
         logger.info(f"=== Thumbnail {VERSION} Started ===")
         logger.info("🎯 PLATFORM AWARE: Now supporting both Make.com and Google Script")
         logger.info("💎 TRANSPARENT OUTPUT: Preserving alpha channel throughout")
-        logger.info("🔧 AC PATTERN: Now using 20% white overlay (increased from 12%)")
+        logger.info("🔧 AC PATTERN: Now using 20% white overlay")
         logger.info("🔧 AB PATTERN: Using 16% white overlay")
         logger.info("✨ ALL PATTERNS: Increased brightness and sharpness")
-        logger.info("🎨 COLORS: Yellow/Rose/White/Antique Gold only")
+        logger.info("🎨 COLORS: Yellow/Rose/White/Antique White only")
         logger.info("🔄 PROCESSING ORDER: 1.Pattern Enhancement → 2.Resize → 3.SwinIR → 4.Ring Holes")
         logger.info("📌 BASE64 PADDING: Platform-specific handling")
         
@@ -1101,10 +1101,10 @@ def handler(event):
         pattern_type = detect_pattern_type(filename)
         
         detected_type = {
-            "ac_pattern": "무도금화이트(0.20)",  # Changed to 20%
-            "ab_pattern": "무도금화이트-쿨톤(0.16)",
-            "other": "기타색상(no_overlay)"
-        }.get(pattern_type, "기타색상")
+            "ac_pattern": "ANTIQUE WHITE(0.20)",
+            "ab_pattern": "ANTIQUE WHITE-COOL(0.16)",
+            "other": "OTHER COLOR(no_overlay)"
+        }.get(pattern_type, "OTHER COLOR")
         
         # Apply pattern enhancement with EXACT same logic as Enhancement Handler
         image = apply_pattern_enhancement_transparent(image, pattern_type)
@@ -1212,10 +1212,10 @@ def handler(event):
                 "transparency_info": "Full RGBA transparency preserved - NO background",
                 "white_overlay": "AC: 20% | AB: 16% | Other: None",
                 "brightness_adjustments": "AC/AB: 1.02 | Other: 1.12",
-                "contrast_final": "1.08 (increased from 1.05)",
-                "sharpness_final": "Other: 1.5 → Final: 1.8 (increased from 1.6)",
+                "contrast_final": "1.08",
+                "sharpness_final": "Other: 1.5 → Final: 1.8",
                 "quality": "95",
-                "metal_colors": "Yellow Gold, Rose Gold, White Gold, Antique Gold",
+                "metal_colors": "Yellow Gold, Rose Gold, White Gold, Antique White",
                 "enhancement_matching": "FULLY MATCHED with Enhancement Handler including increased values"
             }
         }
