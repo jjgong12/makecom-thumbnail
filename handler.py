@@ -16,10 +16,10 @@ logger = logging.getLogger(__name__)
 
 ################################
 # THUMBNAIL HANDLER - 1000x1300
-# VERSION: V31-AC20-GoogleScript-Fixed
+# VERSION: V31-AC20-GoogleScript-Fixed-MakeCom
 ################################
 
-VERSION = "V31-AC20-GoogleScript-Fixed"
+VERSION = "V31-AC20-GoogleScript-Fixed-MakeCom"
 
 # ===== GLOBAL INITIALIZATION =====
 REPLICATE_API_TOKEN = os.environ.get('REPLICATE_API_TOKEN')
@@ -666,7 +666,8 @@ def process_color_section(job):
                 "base64_padding": "INCLUDED_FOR_GOOGLE_SCRIPT",
                 "colors_generated": ["YELLOW GOLD", "ROSE GOLD", "WHITE GOLD", "ANTIQUE GOLD"],
                 "background_removal": "ULTRA_PRECISE",
-                "transparency_info": "Each ring variant has transparent background"
+                "transparency_info": "Each ring variant has transparent background",
+                "make_com_compatible": True
             }
         }
         
@@ -1034,7 +1035,7 @@ def image_to_base64(image, keep_transparency=True, for_google_script=True):
         return base64_str.rstrip('=')
 
 def handler(event):
-    """Optimized thumbnail handler - V31 AC 20% White Overlay, Increased Brightness/Sharpness"""
+    """Optimized thumbnail handler - FIXED FOR MAKE.COM"""
     try:
         logger.info(f"=== Thumbnail {VERSION} Started ===")
         logger.info("🎯 ENHANCEMENT MATCHED: Same processing order as Enhancement Handler")
@@ -1045,6 +1046,7 @@ def handler(event):
         logger.info("🎨 COLORS: Yellow/Rose/White/Antique Gold only")
         logger.info("🔄 PROCESSING ORDER: 1.Pattern Enhancement → 2.Resize → 3.SwinIR → 4.Ring Holes")
         logger.info("📌 GOOGLE SCRIPT: Base64 WITH padding")
+        logger.info("🔧 MAKE.COM: Fixed return structure for compatibility")
         
         # Check for special mode first
         if event.get('special_mode') == 'color_section':
@@ -1156,8 +1158,9 @@ def handler(event):
                     "011": "COLOR section"
                 },
                 "google_script_info": "Base64 includes padding for Google Script compatibility",
-                "make_com_info": "For Make.com, remove padding with .rstrip('=')",
+                "make_com_info": "Return structure fixed for Make.com compatibility",
                 "optimization_features": [
+                    "✅ MAKE.COM FIX: Single structure return for compatibility",
                     "✅ GOOGLE SCRIPT FIX: Base64 WITH padding",
                     "✅ V31 AC PATTERN: 20% white overlay (increased from 12%)",
                     "✅ BRIGHTNESS: AC/AB 1.02 (up from 1.005), Other 1.12 (up from 1.08)",
