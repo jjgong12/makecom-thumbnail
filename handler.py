@@ -504,7 +504,8 @@ def u2net_ultra_precise_removal_v2(image: Image.Image) -> Image.Image:
             )
             
             # Adaptive blending based on edge proximity
-            edge_distance = cv2.distanceTransform(~edge_dilated, cv2.DIST_L2, 3)
+            # FIXED: Convert boolean to uint8 for distanceTransform
+            edge_distance = cv2.distanceTransform((~edge_dilated).astype(np.uint8), cv2.DIST_L2, 3)
             edge_weight = np.clip(edge_distance / 10, 0, 1)
             
             alpha_float = (alpha_guided1 * (1 - edge_weight) + 
@@ -674,7 +675,8 @@ def ensure_ring_holes_transparent_ultra_v2(image: Image.Image) -> Image.Image:
     
     # Use distance transform to find narrow regions
     if np.any(alpha_array > 128):
-        dist_transform = cv2.distanceTransform(alpha_array > 128, cv2.DIST_L2, 3)
+        # FIXED: Convert boolean to uint8 for distanceTransform
+        dist_transform = cv2.distanceTransform((alpha_array > 128).astype(np.uint8), cv2.DIST_L2, 3)
         narrow_regions = (dist_transform > 0) & (dist_transform < 20)  # Narrow band
         
         # Check brightness in narrow regions
@@ -1395,7 +1397,8 @@ def handler(event):
                     "✅ MULTI-PASS GUIDED FILTER: 3 passes with adaptive blending",
                     "✅ FINE DETAIL PRESERVATION: Lower threshold (0.03)",
                     "✅ SMOOTHER FEATHERING: Factor 0.7 for natural edges",
-                    "✅ COLOR SECTION: Using V2 background removal"
+                    "✅ COLOR SECTION: Using V2 background removal",
+                    "✅ OPENCV FIX: distanceTransform now properly handles boolean to uint8 conversion"
                 ],
                 "thumbnail_method": "Proportional resize (no aggressive cropping)",
                 "processing_order": "1.U2Net-Ultra-V2 → 2.White Balance → 3.Pattern Enhancement → 4.Resize → 5.SwinIR → 6.Ring Holes",
@@ -1412,7 +1415,8 @@ def handler(event):
                 "quality": "95",
                 "google_script_compatibility": "Base64 WITH padding - FIXED",
                 "metal_colors": "Yellow Gold, Rose Gold, White Gold, Antique Gold",
-                "enhancement_matching": "FULLY MATCHED with Enhancement Handler including increased values"
+                "enhancement_matching": "FULLY MATCHED with Enhancement Handler including increased values",
+                "opencv_fix": "distanceTransform boolean to uint8 conversion FIXED"
             }
         }
         
