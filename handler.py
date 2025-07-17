@@ -1220,9 +1220,9 @@ def apply_pattern_enhancement_transparent(image: Image.Image, pattern_type: str)
         sharpness = ImageEnhance.Sharpness(rgb_image)
         rgb_image = sharpness.enhance(1.5)  # Increased from 1.4
     
-    # Apply common enhancements - EXACTLY SAME AS ENHANCEMENT HANDLER
+    # Apply common enhancements - FIXED: Changed from 1.08 to 1.06
     contrast = ImageEnhance.Contrast(rgb_image)
-    rgb_image = contrast.enhance(1.08)  # Increased from 1.05
+    rgb_image = contrast.enhance(1.06)  # CHANGED from 1.08 to 1.06
     
     # Apply sharpening - EXACTLY SAME AS ENHANCEMENT HANDLER
     sharpness = ImageEnhance.Sharpness(rgb_image)
@@ -1279,6 +1279,7 @@ def handler(event):
         logger.info("🆕 SHADOW DETECTION: Enhanced gray shadow detection")
         logger.info("🆕 EDGE CLEANING: Aggressive edge cleaning for shadows")
         logger.info("🆕 FINAL VERIFICATION: Shadow-like pixel elimination")
+        logger.info("⚡ CONTRAST: 1.06 (reduced from 1.08)")
         
         # Check for special mode first
         if event.get('special_mode') == 'color_section':
@@ -1391,6 +1392,7 @@ def handler(event):
                     "011": "COLOR section"
                 },
                 "brightness_modified": "Other pattern: 1.08 (changed from 1.12)",
+                "contrast_reduced": "ALL PATTERNS: 1.06 (reduced from 1.08)",
                 "new_neo_v2_features": [
                     "✅ SHADOW ELIMINATION: Aggressive shadow detection and removal",
                     "✅ GRAY SHADOW DETECTION: Enhanced detection for gray/neutral shadows",
@@ -1402,7 +1404,8 @@ def handler(event):
                     "✅ HIGHER THRESHOLD: 0.6-0.7 for edge areas (was 0.5)",
                     "✅ STRICTER SIGMOID: k=80 for sharper cutoff (was 60)",
                     "✅ POST-PROCESS CLEANUP: Morphological operations on final mask",
-                    "✅ SHADOW PIXEL CHECK: RGB similarity check on remaining pixels"
+                    "✅ SHADOW PIXEL CHECK: RGB similarity check on remaining pixels",
+                    "✅ CONTRAST REDUCED: 1.06 (from 1.08) for all patterns"
                 ],
                 "thumbnail_method": "Proportional resize (no aggressive cropping)",
                 "processing_order": "1.U2Net-Ultra-V2-Shadow → 2.White Balance → 3.Pattern Enhancement → 4.Resize → 5.SwinIR → 6.Ring Holes",
@@ -1414,7 +1417,7 @@ def handler(event):
                 "transparency_info": "Full RGBA transparency preserved - NO background or shadows",
                 "white_overlay": "AC: 20% | AB: 16% | Other: None",
                 "brightness_adjustments": "AC/AB: 1.02 | Other: 1.08 (modified from 1.12)",
-                "contrast_final": "1.08 (increased from 1.05)",
+                "contrast_final": "1.06 (reduced from 1.08)",
                 "sharpness_final": "Other: 1.5 → Final: 1.8 (increased from 1.6)",
                 "quality": "95",
                 "google_script_compatibility": "Base64 WITH padding - FIXED",
