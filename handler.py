@@ -1208,10 +1208,10 @@ def apply_pattern_enhancement_transparent(image: Image.Image, pattern_type: str)
         logger.info("✅ AB Pattern enhancement applied with 16% white overlay")
         
     else:
-        logger.info("🔍 Other Pattern - Standard enhancement with increased values")
-        # Increased brightness for other patterns
+        logger.info("🔍 Other Pattern - Standard enhancement with brightness 1.08")
+        # MODIFIED: Changed brightness from 1.12 to 1.08
         brightness = ImageEnhance.Brightness(rgb_image)
-        rgb_image = brightness.enhance(1.12)  # Increased from 1.08
+        rgb_image = brightness.enhance(1.08)  # Changed from 1.12
         
         color = ImageEnhance.Color(rgb_image)
         rgb_image = color.enhance(0.99)
@@ -1271,7 +1271,7 @@ def handler(event):
         logger.info("🔥 SHADOW ELIMINATION: Aggressive shadow detection and removal")
         logger.info("🔧 AC PATTERN: 20% white overlay")
         logger.info("🔧 AB PATTERN: 16% white overlay")
-        logger.info("✨ ALL PATTERNS: Increased brightness and sharpness")
+        logger.info("✨ OTHER PATTERNS: Brightness 1.08 (modified from 1.12)")
         logger.info("🎨 COLORS: Yellow/Rose/White/Antique Gold only")
         logger.info("🔄 PROCESSING ORDER: 1.Pattern Enhancement → 2.Resize → 3.SwinIR → 4.Ring Holes")
         logger.info("📌 BASE64 PADDING: ALWAYS INCLUDED for Google Script compatibility")
@@ -1390,6 +1390,7 @@ def handler(event):
                     "010": "Thumbnail 3",
                     "011": "COLOR section"
                 },
+                "brightness_modified": "Other pattern: 1.08 (changed from 1.12)",
                 "new_neo_v2_features": [
                     "✅ SHADOW ELIMINATION: Aggressive shadow detection and removal",
                     "✅ GRAY SHADOW DETECTION: Enhanced detection for gray/neutral shadows",
@@ -1412,13 +1413,13 @@ def handler(event):
                 "output_format": "PNG with full transparency",
                 "transparency_info": "Full RGBA transparency preserved - NO background or shadows",
                 "white_overlay": "AC: 20% | AB: 16% | Other: None",
-                "brightness_adjustments": "AC/AB: 1.02 | Other: 1.12",
+                "brightness_adjustments": "AC/AB: 1.02 | Other: 1.08 (modified from 1.12)",
                 "contrast_final": "1.08 (increased from 1.05)",
                 "sharpness_final": "Other: 1.5 → Final: 1.8 (increased from 1.6)",
                 "quality": "95",
                 "google_script_compatibility": "Base64 WITH padding - FIXED",
                 "metal_colors": "Yellow Gold, Rose Gold, White Gold, Antique Gold",
-                "enhancement_matching": "FULLY MATCHED with Enhancement Handler including increased values",
+                "enhancement_matching": "FULLY MATCHED with Enhancement Handler including modified brightness",
                 "shadow_elimination": "ENHANCED with aggressive detection and removal"
             }
         }
