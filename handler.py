@@ -1178,7 +1178,7 @@ def auto_white_balance_fast(image: Image.Image) -> Image.Image:
     return result
 
 def apply_pattern_enhancement_transparent(image: Image.Image, pattern_type: str) -> Image.Image:
-    """Apply pattern enhancement while TRULY preserving transparency - AC 20%, AB 16%"""
+    """Apply pattern enhancement while TRULY preserving transparency - AC 20%, AB 16% - UPDATED"""
     # CRITICAL: Ensure RGBA mode
     if image.mode != 'RGBA':
         logger.warning(f"⚠️ Converting {image.mode} to RGBA in pattern enhancement")
@@ -1191,10 +1191,10 @@ def apply_pattern_enhancement_transparent(image: Image.Image, pattern_type: str)
     # Convert to array for processing
     img_array = np.array(rgb_image, dtype=np.float32)
     
-    # Apply enhancements based on pattern type - EXACTLY SAME AS ENHANCEMENT HANDLER
+    # Apply enhancements based on pattern type - UPDATED BRIGHTNESS
     if pattern_type == "ac_pattern":
-        logger.info("🔍 AC Pattern - Applying 20% white overlay (increased from 12%)")
-        # Apply 20% white overlay (increased from 12%)
+        logger.info("🔍 AC Pattern - Applying 20% white overlay with brightness 1.03")
+        # Apply 20% white overlay
         white_overlay = 0.20
         img_array = img_array * (1 - white_overlay) + 255 * white_overlay
         img_array = np.clip(img_array, 0, 255)
@@ -1202,9 +1202,9 @@ def apply_pattern_enhancement_transparent(image: Image.Image, pattern_type: str)
         # Convert back to image
         rgb_image = Image.fromarray(img_array.astype(np.uint8))
         
-        # Slightly increased brightness for AC pattern
+        # UPDATED: Brightness increased by 0.01
         brightness = ImageEnhance.Brightness(rgb_image)
-        rgb_image = brightness.enhance(1.02)  # Increased from 1.005
+        rgb_image = brightness.enhance(1.03)  # Changed from 1.02
         
         color = ImageEnhance.Color(rgb_image)
         rgb_image = color.enhance(0.98)
@@ -1212,7 +1212,7 @@ def apply_pattern_enhancement_transparent(image: Image.Image, pattern_type: str)
         logger.info("✅ AC Pattern enhancement applied with 20% white overlay")
     
     elif pattern_type == "ab_pattern":
-        logger.info("🔍 AB Pattern - Applying 16% white overlay and cool tone")
+        logger.info("🔍 AB Pattern - Applying 16% white overlay and cool tone with brightness 1.03")
         # Apply 16% white overlay
         white_overlay = 0.16
         img_array = img_array * (1 - white_overlay) + 255 * white_overlay
@@ -1232,38 +1232,38 @@ def apply_pattern_enhancement_transparent(image: Image.Image, pattern_type: str)
         color = ImageEnhance.Color(rgb_image)
         rgb_image = color.enhance(0.88)
         
-        # Slightly increased brightness for AB pattern
+        # UPDATED: Brightness increased by 0.01
         brightness = ImageEnhance.Brightness(rgb_image)
-        rgb_image = brightness.enhance(1.02)  # Increased from 1.005
+        rgb_image = brightness.enhance(1.03)  # Changed from 1.02
         
         logger.info("✅ AB Pattern enhancement applied with 16% white overlay")
         
     else:
-        logger.info("🔍 Other Pattern - Standard enhancement with brightness 1.08")
-        # MODIFIED: Changed brightness from 1.12 to 1.08
+        logger.info("🔍 Other Pattern - Standard enhancement with brightness 1.09")
+        # UPDATED: Brightness increased by 0.01
         brightness = ImageEnhance.Brightness(rgb_image)
-        rgb_image = brightness.enhance(1.08)  # Changed from 1.12
+        rgb_image = brightness.enhance(1.09)  # Changed from 1.08
         
         color = ImageEnhance.Color(rgb_image)
         rgb_image = color.enhance(0.99)
         
-        # MATCHED WITH ENHANCEMENT: Use 1.5 for Other pattern (not 1.4)
+        # MATCHED WITH ENHANCEMENT: Use 1.5 for Other pattern
         sharpness = ImageEnhance.Sharpness(rgb_image)
-        rgb_image = sharpness.enhance(1.5)  # Increased from 1.4
+        rgb_image = sharpness.enhance(1.5)
     
-    # Apply common enhancements - FIXED: Changed from 1.08 to 1.06
+    # UPDATED: Apply common enhancements with contrast 1.1
     contrast = ImageEnhance.Contrast(rgb_image)
-    rgb_image = contrast.enhance(1.06)  # CHANGED from 1.08 to 1.06
+    rgb_image = contrast.enhance(1.1)  # Changed from 1.06
     
     # Apply sharpening - EXACTLY SAME AS ENHANCEMENT HANDLER
     sharpness = ImageEnhance.Sharpness(rgb_image)
-    rgb_image = sharpness.enhance(1.8)  # Increased from 1.6
+    rgb_image = sharpness.enhance(1.8)
     
     # CRITICAL: Recombine with ORIGINAL alpha channel
     r2, g2, b2 = rgb_image.split()
     enhanced_image = Image.merge('RGBA', (r2, g2, b2, a))
     
-    logger.info(f"✅ Enhancement applied while preserving transparency. Mode: {enhanced_image.mode}")
+    logger.info(f"✅ Enhancement applied with contrast 1.1 and updated brightness. Mode: {enhanced_image.mode}")
     
     # Verify RGBA mode
     if enhanced_image.mode != 'RGBA':
@@ -1294,15 +1294,15 @@ def image_to_base64(image, keep_transparency=True):
     return base64_str
 
 def handler(event):
-    """Optimized thumbnail handler - New Neo V3 Shadow Fix Ultra Enhanced"""
+    """Optimized thumbnail handler - New Neo V3 Shadow Fix Ultra Enhanced - UPDATED"""
     try:
         logger.info(f"=== Thumbnail {VERSION} Started ===")
         logger.info("🎯 NEW NEO V3: Shadow Fix Ultra Enhanced")
         logger.info("💎 TRANSPARENT OUTPUT: Preserving alpha channel throughout")
         logger.info("🔥 AGGRESSIVE SHADOW REMOVAL: Multi-level + LAB color space")
-        logger.info("🔧 AC PATTERN: 20% white overlay")
-        logger.info("🔧 AB PATTERN: 16% white overlay")
-        logger.info("✨ OTHER PATTERNS: Brightness 1.08 (modified from 1.12)")
+        logger.info("🔧 AC PATTERN: 20% white overlay, brightness 1.03, contrast 1.1")
+        logger.info("🔧 AB PATTERN: 16% white overlay, brightness 1.03, contrast 1.1")
+        logger.info("✨ OTHER PATTERNS: Brightness 1.09, contrast 1.1")
         logger.info("🎨 COLORS: Yellow/Rose/White/Antique Gold only")
         logger.info("🔄 PROCESSING ORDER: 1.Pattern Enhancement → 2.Resize → 3.SwinIR → 4.Ring Holes")
         logger.info("📌 BASE64 PADDING: ALWAYS INCLUDED for Google Script compatibility")
@@ -1310,7 +1310,8 @@ def handler(event):
         logger.info("🆕 6-METHOD EDGE DETECTION: Sobel(3,5,7) + Scharr + Laplacian + Canny")
         logger.info("🆕 MULTI-COLOR SPACE HOLE DETECTION: RGB + HSV + LAB")
         logger.info("🆕 ENCLOSED REGION DETECTION: For inner ring holes")
-        logger.info("⚡ CONTRAST: 1.06 (reduced from 1.08)")
+        logger.info("⚡ CONTRAST: 1.1 (updated from 1.06)")
+        logger.info("⚡ BRIGHTNESS: All patterns +0.01 increase")
         logger.info("🔗 MATCHING: Using same V3 Enhanced removal as Enhancement Handler")
         
         # Check for special mode first
@@ -1359,7 +1360,7 @@ def handler(event):
             "other": "기타색상(no_overlay)"
         }.get(pattern_type, "기타색상")
         
-        # Apply pattern enhancement with EXACT same logic as Enhancement Handler
+        # Apply pattern enhancement with UPDATED settings
         image = apply_pattern_enhancement_transparent(image, pattern_type)
         
         # STEP 4: RESIZE (MATCHED ORDER)
@@ -1423,8 +1424,12 @@ def handler(event):
                     "010": "Thumbnail 3",
                     "011": "COLOR section"
                 },
-                "brightness_modified": "Other pattern: 1.08 (changed from 1.12)",
-                "contrast_reduced": "ALL PATTERNS: 1.06 (reduced from 1.08)",
+                "contrast_brightness_update": {
+                    "contrast": "1.1 (updated from 1.06)",
+                    "brightness_ac_ab": "1.03 (increased from 1.02)",
+                    "brightness_other": "1.09 (increased from 1.08)",
+                    "reason": "User requested +0.01 brightness and contrast 1.1"
+                },
                 "new_neo_v3_enhanced_features": [
                     "✅ AGGRESSIVE SHADOW REMOVAL: Multi-level + LAB color space",
                     "✅ 6-METHOD EDGE DETECTION: Sobel(3,5,7) + Scharr + Laplacian + Canny(3 levels)",
@@ -1447,9 +1452,9 @@ def handler(event):
                 "output_format": "PNG with full transparency",
                 "transparency_info": "Full RGBA transparency preserved - NO background or shadows",
                 "white_overlay": "AC: 20% | AB: 16% | Other: None",
-                "brightness_adjustments": "AC/AB: 1.02 | Other: 1.08 (modified from 1.12)",
-                "contrast_final": "1.06 (reduced from 1.08)",
-                "sharpness_final": "Other: 1.5 → Final: 1.8 (increased from 1.6)",
+                "brightness_adjustments": "AC/AB: 1.03 | Other: 1.09",
+                "contrast_final": "1.1",
+                "sharpness_final": "Other: 1.5 → Final: 1.8",
                 "quality": "95",
                 "google_script_compatibility": "Base64 WITH padding - FIXED",
                 "metal_colors": "Yellow Gold, Rose Gold, White Gold, Antique Gold",
