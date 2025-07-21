@@ -16,10 +16,10 @@ logger = logging.getLogger(__name__)
 
 ################################
 # THUMBNAIL HANDLER - 1000x1300
-# VERSION: New-Neo-V3-Shadow-Fix-Ultra-Enhanced
+# VERSION: New-Neo-V3-Shadow-Fix-Ultra-Enhanced-White5
 ################################
 
-VERSION = "New-Neo-V3-Shadow-Fix-Ultra-Enhanced"
+VERSION = "New-Neo-V3-Shadow-Fix-Ultra-Enhanced-White5"
 
 # ===== GLOBAL INITIALIZATION =====
 REPLICATE_API_TOKEN = os.environ.get('REPLICATE_API_TOKEN')
@@ -1178,7 +1178,7 @@ def auto_white_balance_fast(image: Image.Image) -> Image.Image:
     return result
 
 def apply_pattern_enhancement_transparent(image: Image.Image, pattern_type: str) -> Image.Image:
-    """Apply pattern enhancement while TRULY preserving transparency - AC 20%, AB 16% - UPDATED"""
+    """Apply pattern enhancement while TRULY preserving transparency - AC 20%, AB 16%, Other 5% - UPDATED"""
     # CRITICAL: Ensure RGBA mode
     if image.mode != 'RGBA':
         logger.warning(f"⚠️ Converting {image.mode} to RGBA in pattern enhancement")
@@ -1191,7 +1191,7 @@ def apply_pattern_enhancement_transparent(image: Image.Image, pattern_type: str)
     # Convert to array for processing
     img_array = np.array(rgb_image, dtype=np.float32)
     
-    # Apply enhancements based on pattern type - UPDATED BRIGHTNESS
+    # Apply enhancements based on pattern type - UPDATED WITH 5% FOR OTHER
     if pattern_type == "ac_pattern":
         logger.info("🔍 AC Pattern - Applying 20% white overlay with brightness 1.03")
         # Apply 20% white overlay
@@ -1239,7 +1239,15 @@ def apply_pattern_enhancement_transparent(image: Image.Image, pattern_type: str)
         logger.info("✅ AB Pattern enhancement applied with 16% white overlay")
         
     else:
-        logger.info("🔍 Other Pattern - Standard enhancement with brightness 1.09")
+        logger.info("🔍 Other Pattern - Applying 5% white overlay with brightness 1.09")
+        # NEW: Apply 5% white overlay for other patterns
+        white_overlay = 0.05
+        img_array = img_array * (1 - white_overlay) + 255 * white_overlay
+        img_array = np.clip(img_array, 0, 255)
+        
+        # Convert back to image
+        rgb_image = Image.fromarray(img_array.astype(np.uint8))
+        
         # UPDATED: Brightness increased by 0.01
         brightness = ImageEnhance.Brightness(rgb_image)
         rgb_image = brightness.enhance(1.09)  # Changed from 1.08
@@ -1250,6 +1258,8 @@ def apply_pattern_enhancement_transparent(image: Image.Image, pattern_type: str)
         # MATCHED WITH ENHANCEMENT: Use 1.5 for Other pattern
         sharpness = ImageEnhance.Sharpness(rgb_image)
         rgb_image = sharpness.enhance(1.5)
+        
+        logger.info("✅ Other Pattern enhancement applied with 5% white overlay")
     
     # UPDATED: Apply common enhancements with contrast 1.1
     contrast = ImageEnhance.Contrast(rgb_image)
@@ -1294,15 +1304,15 @@ def image_to_base64(image, keep_transparency=True):
     return base64_str
 
 def handler(event):
-    """Optimized thumbnail handler - New Neo V3 Shadow Fix Ultra Enhanced - UPDATED"""
+    """Optimized thumbnail handler - New Neo V3 Shadow Fix Ultra Enhanced - WITH 5% WHITE OVERLAY FOR OTHER"""
     try:
         logger.info(f"=== Thumbnail {VERSION} Started ===")
-        logger.info("🎯 NEW NEO V3: Shadow Fix Ultra Enhanced")
+        logger.info("🎯 NEW NEO V3: Shadow Fix Ultra Enhanced with 5% White Overlay for Other")
         logger.info("💎 TRANSPARENT OUTPUT: Preserving alpha channel throughout")
         logger.info("🔥 AGGRESSIVE SHADOW REMOVAL: Multi-level + LAB color space")
         logger.info("🔧 AC PATTERN: 20% white overlay, brightness 1.03, contrast 1.1")
         logger.info("🔧 AB PATTERN: 16% white overlay, brightness 1.03, contrast 1.1")
-        logger.info("✨ OTHER PATTERNS: Brightness 1.09, contrast 1.1")
+        logger.info("✨ OTHER PATTERNS: 5% white overlay, brightness 1.09, contrast 1.1")
         logger.info("🎨 COLORS: Yellow/Rose/White/Antique Gold only")
         logger.info("🔄 PROCESSING ORDER: 1.Pattern Enhancement → 2.Resize → 3.SwinIR → 4.Ring Holes")
         logger.info("📌 BASE64 PADDING: ALWAYS INCLUDED for Google Script compatibility")
@@ -1313,6 +1323,7 @@ def handler(event):
         logger.info("⚡ CONTRAST: 1.1 (updated from 1.06)")
         logger.info("⚡ BRIGHTNESS: All patterns +0.01 increase")
         logger.info("🔗 MATCHING: Using same V3 Enhanced removal as Enhancement Handler")
+        logger.info("🆕 OTHER PATTERN: Now with 5% white overlay")
         
         # Check for special mode first
         if event.get('special_mode') == 'color_section':
@@ -1357,7 +1368,7 @@ def handler(event):
         detected_type = {
             "ac_pattern": "무도금화이트(0.20)",
             "ab_pattern": "무도금화이트-쿨톤(0.16)",
-            "other": "기타색상(no_overlay)"
+            "other": "기타색상(0.05)"
         }.get(pattern_type, "기타색상")
         
         # Apply pattern enhancement with UPDATED settings
@@ -1428,7 +1439,10 @@ def handler(event):
                     "contrast": "1.1 (updated from 1.06)",
                     "brightness_ac_ab": "1.03 (increased from 1.02)",
                     "brightness_other": "1.09 (increased from 1.08)",
-                    "reason": "User requested +0.01 brightness and contrast 1.1"
+                    "white_overlay_ac": "20%",
+                    "white_overlay_ab": "16%",
+                    "white_overlay_other": "5% (NEW)",
+                    "reason": "User requested 5% white overlay for other patterns"
                 },
                 "new_neo_v3_enhanced_features": [
                     "✅ AGGRESSIVE SHADOW REMOVAL: Multi-level + LAB color space",
@@ -1441,7 +1455,8 @@ def handler(event):
                     "✅ CONFIDENCE SCORING: Multi-criteria (brightness, saturation, shape, etc.)",
                     "✅ DISTANCE-BASED TRANSITIONS: Smooth hole edges",
                     "✅ FINAL CLEANUP: Remove components < 0.01% of image",
-                    "✅ MATCHED WITH ENHANCEMENT: Using same V3 Enhanced removal"
+                    "✅ MATCHED WITH ENHANCEMENT: Using same V3 Enhanced removal",
+                    "✅ OTHER PATTERN: Now with 5% white overlay"
                 ],
                 "thumbnail_method": "Proportional resize (no aggressive cropping)",
                 "processing_order": "1.U2Net-Ultra-V3-Enhanced → 2.White Balance → 3.Pattern Enhancement → 4.Resize → 5.SwinIR → 6.Ring Holes",
@@ -1451,7 +1466,7 @@ def handler(event):
                 "output_size": "1000x1300",
                 "output_format": "PNG with full transparency",
                 "transparency_info": "Full RGBA transparency preserved - NO background or shadows",
-                "white_overlay": "AC: 20% | AB: 16% | Other: None",
+                "white_overlay": "AC: 20% | AB: 16% | Other: 5%",
                 "brightness_adjustments": "AC/AB: 1.03 | Other: 1.09",
                 "contrast_final": "1.1",
                 "sharpness_final": "Other: 1.5 → Final: 1.8",
