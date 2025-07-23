@@ -16,10 +16,10 @@ logger = logging.getLogger(__name__)
 
 ################################
 # THUMBNAIL HANDLER - 1000x1300
-# VERSION: New-Neo-V3-Shadow-Fix-Ultra-Enhanced-White5-FingerShot
+# VERSION: New-Neo-V3-Shadow-Fix-Ultra-Enhanced-White5
 ################################
 
-VERSION = "New-Neo-V3-Shadow-Fix-Ultra-Enhanced-White5-FingerShot"
+VERSION = "New-Neo-V3-Shadow-Fix-Ultra-Enhanced-White5"
 
 # ===== GLOBAL INITIALIZATION =====
 REPLICATE_API_TOKEN = os.environ.get('REPLICATE_API_TOKEN')
@@ -1303,91 +1303,6 @@ def image_to_base64(image, keep_transparency=True):
     # FIXED: Always return WITH padding for Google Script compatibility
     return base64_str
 
-def create_ring_on_finger_shot(ring_image, job):
-    """Create ring-on-finger shot for 005 files"""
-    logger.info("🖐️ Creating ring-on-finger shot for 005 file")
-    
-    try:
-        # Process ring - remove background
-        logger.info("Removing background from ring")
-        ring_no_bg = u2net_ultra_precise_removal_v3_shadow_fix_ultra_enhanced(ring_image)
-        if ring_no_bg.mode != 'RGBA':
-            ring_no_bg = ring_no_bg.convert('RGBA')
-        ring_no_bg = auto_crop_transparent(ring_no_bg)
-        
-        # Apply ring hole detection
-        ring_no_bg = ensure_ring_holes_transparent_ultra_v3_enhanced(ring_no_bg)
-        
-        # Create hand image (base template)
-        # For now, create a simple placeholder - you would replace this with actual hand image
-        hand_width, hand_height = 1000, 1300
-        
-        # Create white background with hand placeholder
-        final_image = Image.new('RGB', (hand_width, hand_height), '#FFFFFF')
-        
-        # Define ring finger position (approximate coordinates)
-        # These would be adjusted based on actual hand image
-        ring_finger_x = hand_width // 2 - 50  # Center horizontally
-        ring_finger_y = int(hand_height * 0.45)  # About 45% down from top
-        ring_angle = -5  # Slight angle for natural look
-        
-        # Resize ring to appropriate size for finger
-        ring_width = int(hand_width * 0.15)  # Ring width about 15% of hand width
-        ring_ratio = ring_no_bg.height / ring_no_bg.width
-        ring_height = int(ring_width * ring_ratio)
-        
-        ring_resized = ring_no_bg.resize((ring_width, ring_height), Image.Resampling.LANCZOS)
-        
-        # Rotate ring slightly for natural positioning
-        ring_rotated = ring_resized.rotate(ring_angle, expand=True, fillcolor=(0,0,0,0))
-        
-        # Create shadow for realism
-        shadow = Image.new('RGBA', ring_rotated.size, (0, 0, 0, 0))
-        shadow_draw = ImageDraw.Draw(shadow)
-        
-        # Simple elliptical shadow
-        shadow_offset_x = 5
-        shadow_offset_y = 5
-        shadow_blur = 3
-        
-        # Get ring alpha for shadow shape
-        _, _, _, ring_alpha = ring_rotated.split()
-        shadow_alpha = ring_alpha.point(lambda x: int(x * 0.3))  # 30% opacity shadow
-        shadow = Image.merge('RGBA', (Image.new('L', ring_rotated.size, 0),
-                                      Image.new('L', ring_rotated.size, 0),
-                                      Image.new('L', ring_rotated.size, 0),
-                                      shadow_alpha))
-        
-        # Blur shadow
-        shadow = shadow.filter(ImageFilter.GaussianBlur(radius=shadow_blur))
-        
-        # Paste shadow first
-        final_image.paste(shadow, 
-                         (ring_finger_x + shadow_offset_x, ring_finger_y + shadow_offset_y),
-                         shadow)
-        
-        # Paste ring
-        final_image.paste(ring_rotated, (ring_finger_x, ring_finger_y), ring_rotated)
-        
-        # Add text overlay
-        korean_font_path = download_korean_font()
-        if korean_font_path:
-            draw = ImageDraw.Draw(final_image)
-            text_font = get_font(24, korean_font_path)
-            text = "착용 이미지"
-            text_width, text_height = get_text_size(draw, text, text_font)
-            text_x = (hand_width - text_width) // 2
-            text_y = hand_height - 100
-            safe_draw_text(draw, (text_x, text_y), text, text_font, (100, 100, 100))
-        
-        logger.info("✅ Ring-on-finger shot created successfully")
-        return final_image
-        
-    except Exception as e:
-        logger.error(f"Failed to create ring-on-finger shot: {e}")
-        # Return original image as fallback
-        return ring_image
-
 def handler(event):
     """Optimized thumbnail handler - New Neo V3 Shadow Fix Ultra Enhanced - WITH 5% WHITE OVERLAY FOR OTHER"""
     try:
@@ -1409,7 +1324,6 @@ def handler(event):
         logger.info("⚡ BRIGHTNESS: All patterns +0.01 increase")
         logger.info("🔗 MATCHING: Using same V3 Enhanced removal as Enhancement Handler")
         logger.info("🆕 OTHER PATTERN: Now with 5% white overlay")
-        logger.info("🆕 005 FILES: Ring-on-finger shot feature")
         
         # Check for special mode first
         if event.get('special_mode') == 'color_section':
@@ -1434,12 +1348,6 @@ def handler(event):
             logger.info(f"Converting {image.mode} to RGBA immediately")
             image = image.convert('RGBA')
         
-        # Check if this is a 005 file
-        is_005_file = False
-        if filename and '005' in filename:
-            is_005_file = True
-            logger.info("🖐️ Detected 005 file - will create ring-on-finger shot")
-        
         # STEP 1: ALWAYS apply background removal with V3 ENHANCED (matching Enhancement Handler)
         logger.info("📸 STEP 1: ALWAYS applying ULTRA PRECISE V3 ENHANCED background removal")
         image = u2net_ultra_precise_removal_v3_shadow_fix_ultra_enhanced(image)
@@ -1449,76 +1357,61 @@ def handler(event):
             logger.error("❌ Image lost RGBA after background removal!")
             image = image.convert('RGBA')
         
-        # If 005 file, create ring-on-finger shot
-        if is_005_file:
-            logger.info("🖐️ Creating ring-on-finger shot for 005 file")
-            thumbnail = create_ring_on_finger_shot(image, event)
-        else:
-            # Normal thumbnail processing
-            # STEP 2: Apply white balance
-            logger.info("⚖️ STEP 2: Applying white balance")
-            image = auto_white_balance_fast(image)
-            
-            # STEP 3: PATTERN ENHANCEMENT FIRST (MATCHED ORDER)
-            logger.info("🎨 STEP 3: Applying pattern enhancement FIRST (matched with Enhancement Handler)")
-            pattern_type = detect_pattern_type(filename)
-            
-            detected_type = {
-                "ac_pattern": "무도금화이트(0.20)",
-                "ab_pattern": "무도금화이트-쿨톤(0.16)",
-                "other": "기타색상(0.05)"
-            }.get(pattern_type, "기타색상")
-            
-            # Apply pattern enhancement with UPDATED settings
-            image = apply_pattern_enhancement_transparent(image, pattern_type)
-            
-            # STEP 4: RESIZE (MATCHED ORDER)
-            logger.info("📏 STEP 4: Creating proportional thumbnail")
-            thumbnail = create_thumbnail_proportional(image, 1000, 1300)
-            
-            # STEP 5: SWINIR ENHANCEMENT (MATCHED ORDER)
-            logger.info("🚀 STEP 5: Applying SwinIR enhancement")
-            thumbnail = apply_swinir_thumbnail(thumbnail)
-            
-            # STEP 6: Ultra precise V3 ENHANCED ring hole detection (MATCHED ORDER)
-            logger.info("🔍 STEP 6: Applying ULTRA PRECISE V3 ENHANCED ring hole detection")
-            thumbnail = ensure_ring_holes_transparent_ultra_v3_enhanced(thumbnail)
+        # STEP 2: Apply white balance
+        logger.info("⚖️ STEP 2: Applying white balance")
+        image = auto_white_balance_fast(image)
+        
+        # STEP 3: PATTERN ENHANCEMENT FIRST (MATCHED ORDER)
+        logger.info("🎨 STEP 3: Applying pattern enhancement FIRST (matched with Enhancement Handler)")
+        pattern_type = detect_pattern_type(filename)
+        
+        detected_type = {
+            "ac_pattern": "무도금화이트(0.20)",
+            "ab_pattern": "무도금화이트-쿨톤(0.16)",
+            "other": "기타색상(0.05)"
+        }.get(pattern_type, "기타색상")
+        
+        # Apply pattern enhancement with UPDATED settings
+        image = apply_pattern_enhancement_transparent(image, pattern_type)
+        
+        # STEP 4: RESIZE (MATCHED ORDER)
+        logger.info("📏 STEP 4: Creating proportional thumbnail")
+        thumbnail = create_thumbnail_proportional(image, 1000, 1300)
+        
+        # STEP 5: SWINIR ENHANCEMENT (MATCHED ORDER)
+        logger.info("🚀 STEP 5: Applying SwinIR enhancement")
+        thumbnail = apply_swinir_thumbnail(thumbnail)
+        
+        # STEP 6: Ultra precise V3 ENHANCED ring hole detection (MATCHED ORDER)
+        logger.info("🔍 STEP 6: Applying ULTRA PRECISE V3 ENHANCED ring hole detection")
+        thumbnail = ensure_ring_holes_transparent_ultra_v3_enhanced(thumbnail)
         
         # Final verification
-        if thumbnail.mode != 'RGBA' and not is_005_file:
+        if thumbnail.mode != 'RGBA':
             logger.error("❌ CRITICAL: Final thumbnail is not RGBA! Converting...")
             thumbnail = thumbnail.convert('RGBA')
         
-        # CRITICAL: NO BACKGROUND COMPOSITE - Keep transparency (unless 005 file)
-        if not is_005_file:
-            logger.info("💎 NO background composite - keeping pure transparency")
-        else:
-            logger.info("🖐️ Ring-on-finger shot created with white background")
+        # CRITICAL: NO BACKGROUND COMPOSITE - Keep transparency
+        logger.info("💎 NO background composite - keeping pure transparency")
         
         logger.info(f"✅ Final thumbnail mode: {thumbnail.mode}")
         logger.info(f"✅ Final thumbnail size: {thumbnail.size}")
         
         # Convert to base64 - WITH padding for Google Script
-        thumbnail_base64 = image_to_base64(thumbnail, keep_transparency=(not is_005_file))
+        thumbnail_base64 = image_to_base64(thumbnail, keep_transparency=True)
         
         # Verify transparency is preserved
-        if not is_005_file:
-            logger.info("✅ Transparency preserved in final output")
+        logger.info("✅ Transparency preserved in final output")
         
         output_filename = generate_thumbnail_filename(filename, image_index)
-        
-        # Special handling for 005 files
-        if is_005_file:
-            output_filename = filename.replace('.png', '_finger_shot.png') if filename else 'finger_shot_005.png'
         
         return {
             "output": {
                 "thumbnail": thumbnail_base64,
                 "size": list(thumbnail.size),
-                "detected_type": detected_type if not is_005_file else "finger_shot",
-                "pattern_type": pattern_type if not is_005_file else "finger_shot",
+                "detected_type": detected_type,
+                "pattern_type": pattern_type,
                 "is_wedding_ring": True,
-                "is_finger_shot": is_005_file,
                 "filename": output_filename,
                 "original_filename": filename,
                 "image_index": image_index,
@@ -1528,16 +1421,15 @@ def handler(event):
                 "swinir_applied": True,
                 "swinir_timing": "AFTER pattern enhancement and resize",
                 "png_support": True,
-                "has_transparency": not is_005_file,
-                "transparency_preserved": not is_005_file,
+                "has_transparency": True,
+                "transparency_preserved": True,
                 "background_removed": True,
-                "background_applied": is_005_file,
-                "output_mode": "RGB" if is_005_file else "RGBA",
+                "background_applied": False,
+                "output_mode": "RGBA",
                 "base64_padding": "INCLUDED",
                 "compression": "level_3",
-                "special_modes_available": ["color_section", "finger_shot_005"],
+                "special_modes_available": ["color_section"],
                 "file_number_info": {
-                    "005": "Ring-on-finger shot",
                     "007": "Thumbnail 1",
                     "009": "Thumbnail 2", 
                     "010": "Thumbnail 3",
@@ -1564,8 +1456,7 @@ def handler(event):
                     "✅ DISTANCE-BASED TRANSITIONS: Smooth hole edges",
                     "✅ FINAL CLEANUP: Remove components < 0.01% of image",
                     "✅ MATCHED WITH ENHANCEMENT: Using same V3 Enhanced removal",
-                    "✅ OTHER PATTERN: Now with 5% white overlay",
-                    "✅ 005 FILES: Ring-on-finger shot with shadow and rotation"
+                    "✅ OTHER PATTERN: Now with 5% white overlay"
                 ],
                 "thumbnail_method": "Proportional resize (no aggressive cropping)",
                 "processing_order": "1.U2Net-Ultra-V3-Enhanced → 2.White Balance → 3.Pattern Enhancement → 4.Resize → 5.SwinIR → 6.Ring Holes",
@@ -1573,8 +1464,8 @@ def handler(event):
                 "korean_support": "ENHANCED with font caching",
                 "expected_input": "2000x2600 (any format)",
                 "output_size": "1000x1300",
-                "output_format": "PNG with full transparency (RGB for 005 files)",
-                "transparency_info": "Full RGBA transparency preserved - NO background or shadows (except 005 files)",
+                "output_format": "PNG with full transparency",
+                "transparency_info": "Full RGBA transparency preserved - NO background or shadows",
                 "white_overlay": "AC: 20% | AB: 16% | Other: 5%",
                 "brightness_adjustments": "AC/AB: 1.03 | Other: 1.09",
                 "contrast_final": "1.1",
@@ -1583,8 +1474,7 @@ def handler(event):
                 "google_script_compatibility": "Base64 WITH padding - FIXED",
                 "metal_colors": "Yellow Gold, Rose Gold, White Gold, Antique Gold",
                 "enhancement_matching": "FULLY MATCHED with Enhancement Handler V3 Enhanced",
-                "shadow_elimination": "ENHANCED with aggressive detection and removal",
-                "finger_shot_005": "Automatic ring-on-finger creation for 005 files"
+                "shadow_elimination": "ENHANCED with aggressive detection and removal"
             }
         }
         
