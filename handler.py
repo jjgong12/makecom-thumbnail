@@ -16,10 +16,10 @@ logger = logging.getLogger(__name__)
 
 ################################
 # THUMBNAIL HANDLER - 1000x1300
-# VERSION: New-Neo-V3-Shadow-Fix-Ultra-Enhanced-White5-Refined
+# VERSION: New-Neo-V3-Shadow-Fix-Ultra-Enhanced-White5-Refined-Bright112
 ################################
 
-VERSION = "New-Neo-V3-Shadow-Fix-Ultra-Enhanced-White5-Refined"
+VERSION = "New-Neo-V3-Shadow-Fix-Ultra-Enhanced-White5-Refined-Bright112"
 
 # ===== GLOBAL INITIALIZATION =====
 REPLICATE_API_TOKEN = os.environ.get('REPLICATE_API_TOKEN')
@@ -1444,7 +1444,7 @@ def auto_white_balance_fast(image: Image.Image) -> Image.Image:
     return result
 
 def apply_pattern_enhancement_transparent(image: Image.Image, pattern_type: str) -> Image.Image:
-    """Apply pattern enhancement while TRULY preserving transparency - AC 20%, AB 16%, Other 5% - UPDATED"""
+    """Apply pattern enhancement while TRULY preserving transparency - AC 20%, AB 16%, Other 5% - BRIGHTNESS 1.12"""
     # CRITICAL: Ensure RGBA mode
     if image.mode != 'RGBA':
         logger.warning(f"⚠️ Converting {image.mode} to RGBA in pattern enhancement")
@@ -1505,7 +1505,7 @@ def apply_pattern_enhancement_transparent(image: Image.Image, pattern_type: str)
         logger.info("✅ AB Pattern enhancement applied with 16% white overlay")
         
     else:
-        logger.info("🔍 Other Pattern - Applying 5% white overlay with brightness 1.09")
+        logger.info("🔍 Other Pattern - Applying 5% white overlay with brightness 1.12")
         # NEW: Apply 5% white overlay for other patterns
         white_overlay = 0.05
         img_array = img_array * (1 - white_overlay) + 255 * white_overlay
@@ -1514,9 +1514,9 @@ def apply_pattern_enhancement_transparent(image: Image.Image, pattern_type: str)
         # Convert back to image
         rgb_image = Image.fromarray(img_array.astype(np.uint8))
         
-        # UPDATED: Brightness increased by 0.01
+        # BRIGHTNESS INCREASED TO 1.12
         brightness = ImageEnhance.Brightness(rgb_image)
-        rgb_image = brightness.enhance(1.09)  # Changed from 1.08
+        rgb_image = brightness.enhance(1.12)  # Increased from 1.09
         
         color = ImageEnhance.Color(rgb_image)
         rgb_image = color.enhance(0.99)
@@ -1525,7 +1525,7 @@ def apply_pattern_enhancement_transparent(image: Image.Image, pattern_type: str)
         sharpness = ImageEnhance.Sharpness(rgb_image)
         rgb_image = sharpness.enhance(1.5)
         
-        logger.info("✅ Other Pattern enhancement applied with 5% white overlay")
+        logger.info("✅ Other Pattern enhancement applied with 5% white overlay and brightness 1.12")
     
     # UPDATED: Apply common enhancements with contrast 1.1
     contrast = ImageEnhance.Contrast(rgb_image)
@@ -1570,7 +1570,7 @@ def image_to_base64(image, keep_transparency=True):
     return base64_str
 
 def handler(event):
-    """Optimized thumbnail handler - New Neo V3 Shadow Fix Ultra Enhanced Refined"""
+    """Optimized thumbnail handler - New Neo V3 Shadow Fix Ultra Enhanced Refined - BRIGHTNESS 1.12"""
     try:
         logger.info(f"=== Thumbnail {VERSION} Started ===")
         logger.info("🎯 NEW NEO V3 REFINED: Enhanced Background Removal with Advanced Edge Processing")
@@ -1586,7 +1586,7 @@ def handler(event):
         logger.info("  - Feathered shadow removal based on distance")
         logger.info("🔧 AC PATTERN: 20% white overlay, brightness 1.03, contrast 1.1")
         logger.info("🔧 AB PATTERN: 16% white overlay, brightness 1.03, contrast 1.1")
-        logger.info("✨ OTHER PATTERNS: 5% white overlay, brightness 1.09, contrast 1.1")
+        logger.info("✨ OTHER PATTERNS: 5% white overlay, brightness 1.12, contrast 1.1")
         logger.info("🎨 COLORS: Yellow/Rose/White/Antique Gold only")
         logger.info("🔄 PROCESSING ORDER: 1.Pattern Enhancement → 2.Resize → 3.SwinIR → 4.Ring Holes")
         logger.info("📌 BASE64 PADDING: ALWAYS INCLUDED for Google Script compatibility")
@@ -1703,13 +1703,13 @@ def handler(event):
                     "011": "COLOR section"
                 },
                 "contrast_brightness_update": {
-                    "contrast": "1.1 (updated from 1.06)",
-                    "brightness_ac_ab": "1.03 (increased from 1.02)",
-                    "brightness_other": "1.09 (increased from 1.08)",
+                    "contrast": "1.1",
+                    "brightness_ac_ab": "1.03",
+                    "brightness_other": "1.12 (increased from 1.09)",
                     "white_overlay_ac": "20%",
                     "white_overlay_ab": "16%",
-                    "white_overlay_other": "5% (NEW)",
-                    "reason": "User requested 5% white overlay for other patterns"
+                    "white_overlay_other": "5%",
+                    "reason": "Brightness increased to 1.12 for better visibility"
                 },
                 "refined_background_removal_features": [
                     "✅ ADAPTIVE CONTRAST: Dynamic adjustment based on image statistics",
@@ -1737,14 +1737,15 @@ def handler(event):
                 "output_format": "PNG with full transparency",
                 "transparency_info": "Full RGBA transparency preserved - NO background or shadows",
                 "white_overlay": "AC: 20% | AB: 16% | Other: 5%",
-                "brightness_adjustments": "AC/AB: 1.03 | Other: 1.09",
+                "brightness_adjustments": "AC/AB: 1.03 | Other: 1.12",
                 "contrast_final": "1.1",
                 "sharpness_final": "Other: 1.5 → Final: 1.8",
                 "quality": "95",
                 "google_script_compatibility": "Base64 WITH padding - FIXED",
                 "metal_colors": "Yellow Gold, Rose Gold, White Gold, Antique Gold",
                 "enhancement_matching": "FULLY MATCHED with Enhancement Handler V3 Enhanced",
-                "shadow_elimination": "REFINED with feathering and multi-level detection"
+                "shadow_elimination": "REFINED with feathering and multi-level detection",
+                "brightness_update": "Other pattern brightness increased to 1.12 for better visibility"
             }
         }
         
