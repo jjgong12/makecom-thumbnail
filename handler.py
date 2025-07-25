@@ -10,16 +10,18 @@ import re
 import replicate
 import string
 import cv2
+from sklearn.cluster import DBSCAN
+from scipy import ndimage
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 ################################
 # THUMBNAIL HANDLER - 1000x1300
-# VERSION: New-Neo-V3-Shadow-Fix-Ultra-Enhanced-White5-Refined-Bright112
+# VERSION: Ring-Detection-Ultra-V4-Enhanced-Bright112
 ################################
 
-VERSION = "New-Neo-V3-Shadow-Fix-Ultra-Enhanced-White5-Refined-Bright112"
+VERSION = "Ring-Detection-Ultra-V4-Enhanced-Bright112"
 
 # ===== GLOBAL INITIALIZATION =====
 REPLICATE_API_TOKEN = os.environ.get('REPLICATE_API_TOKEN')
@@ -205,6 +207,129 @@ def auto_crop_transparent(image):
     
     return cropped
 
+def detect_ring_structure(image):
+    """Advanced ring detection using multiple techniques"""
+    logger.info("🔍 Starting advanced ring structure detection...")
+    
+    if image.mode != 'RGBA':
+        image = image.convert('RGBA')
+    
+    # Convert to grayscale for analysis
+    gray = np.array(image.convert('L'))
+    h, w = gray.shape
+    
+    # 1. Edge detection with multiple methods
+    edges_canny = cv2.Canny(gray, 50, 150)
+    edges_sobel_x = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)
+    edges_sobel_y = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3)
+    edges_sobel = np.sqrt(edges_sobel_x**2 + edges_sobel_y**2)
+    edges_sobel = (edges_sobel / edges_sobel.max() * 255).astype(np.uint8)
+    
+    # Combine edges
+    combined_edges = edges_canny | (edges_sobel > 50)
+    
+    # 2. Find contours and analyze shapes
+    contours, _ = cv2.findContours(combined_edges.astype(np.uint8), 
+                                   cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+    
+    ring_candidates = []
+    
+    for i, contour in enumerate(contours):
+        area = cv2.contourArea(contour)
+        if area < 100 or area > h * w * 0.8:  # Skip too small or too large
+            continue
+        
+        # Calculate shape properties
+        perimeter = cv2.arcLength(contour, True)
+        if perimeter == 0:
+            continue
+            
+        # Circularity
+        circularity = 4 * np.pi * area / (perimeter * perimeter)
+        
+        # Fit ellipse if possible
+        if len(contour) >= 5:
+            ellipse = cv2.fitEllipse(contour)
+            (center, (width, height), angle) = ellipse
+            
+            # Check if it's ring-like (circular or elliptical)
+            aspect_ratio = min(width, height) / max(width, height) if max(width, height) > 0 else 0
+            
+            # Ring criteria
+            if circularity > 0.3 or aspect_ratio > 0.5:
+                # Check if it's hollow (has inner space)
+                mask = np.zeros(gray.shape, np.uint8)
+                cv2.drawContours(mask, [contour], -1, 255, -1)
+                
+                # Erode to find potential inner area
+                kernel = np.ones((5,5), np.uint8)
+                eroded = cv2.erode(mask, kernel, iterations=2)
+                
+                # Find inner contours
+                inner_contours, _ = cv2.findContours(eroded, cv2.RETR_EXTERNAL, 
+                                                    cv2.CHAIN_APPROX_SIMPLE)
+                
+                for inner in inner_contours:
+                    inner_area = cv2.contourArea(inner)
+                    if inner_area > area * 0.1:  # Inner area should be significant
+                        ring_candidates.append({
+                            'outer_contour': contour,
+                            'inner_contour': inner,
+                            'center': center,
+                            'size': (width, height),
+                            'angle': angle,
+                            'circularity': circularity,
+                            'aspect_ratio': aspect_ratio,
+                            'area': area,
+                            'inner_area': inner_area
+                        })
+    
+    # 3. Hough Circle Transform for circular rings
+    circles = cv2.HoughCircles(gray, cv2.HOUGH_GRADIENT, dp=1, minDist=20,
+                              param1=50, param2=30, minRadius=10, maxRadius=int(min(h, w)/2))
+    
+    if circles is not None:
+        circles = np.uint16(np.around(circles))
+        for circle in circles[0, :]:
+            x, y, r = circle
+            # Check if this could be a ring (has hollow center)
+            mask = np.zeros(gray.shape, np.uint8)
+            cv2.circle(mask, (x, y), r, 255, -1)
+            cv2.circle(mask, (x, y), max(1, r//3), 0, -1)  # Hollow center
+            
+            # Verify it matches the actual image structure
+            overlap = cv2.bitwise_and(combined_edges, mask)
+            if np.sum(overlap) > r * 2 * np.pi * 0.3:  # At least 30% edge overlap
+                ring_candidates.append({
+                    'type': 'circle',
+                    'center': (x, y),
+                    'radius': r,
+                    'inner_radius': r//3
+                })
+    
+    logger.info(f"✅ Found {len(ring_candidates)} ring candidates")
+    return ring_candidates
+
+def create_ring_aware_mask(image, ring_candidates):
+    """Create mask that properly handles ring interior"""
+    logger.info("🎯 Creating ring-aware mask...")
+    
+    h, w = image.size[1], image.size[0]
+    ring_mask = np.zeros((h, w), dtype=np.uint8)
+    
+    for ring in ring_candidates:
+        if 'type' in ring and ring['type'] == 'circle':
+            # Circular ring
+            cv2.circle(ring_mask, ring['center'], ring['radius'], 255, -1)
+            cv2.circle(ring_mask, ring['center'], ring['inner_radius'], 0, -1)
+        elif 'outer_contour' in ring:
+            # Contour-based ring
+            cv2.drawContours(ring_mask, [ring['outer_contour']], -1, 255, -1)
+            if 'inner_contour' in ring:
+                cv2.drawContours(ring_mask, [ring['inner_contour']], -1, 0, -1)
+    
+    return ring_mask
+
 def apply_enhanced_metal_color(image, metal_color, strength=0.3, color_id=""):
     """Apply enhanced metal color effect - Yellow/Rose/White/Antique Gold only"""
     # CRITICAL: Ensure RGBA mode
@@ -312,16 +437,16 @@ def create_color_section(ring_image, width=1200):
     title_width, _ = get_text_size(draw, title, title_font)
     safe_draw_text(draw, (width//2 - title_width//2, 60), title, title_font, (40, 40, 40))
     
-    # Remove background from ring image with ULTRA PRECISE V3 removal
+    # Remove background from ring image with ULTRA PRECISE V4 removal
     ring_no_bg = None
     if ring_image:
         try:
-            logger.info("Removing background from ring image with ULTRA PRECISE V3 method")
-            ring_no_bg = u2net_ultra_precise_removal_v3_shadow_fix_ultra_enhanced(ring_image)
+            logger.info("Removing background from ring image with ULTRA PRECISE V4 method")
+            ring_no_bg = u2net_ultra_precise_removal_v4_ring_aware(ring_image)
             if ring_no_bg.mode != 'RGBA':
                 ring_no_bg = ring_no_bg.convert('RGBA')
             ring_no_bg = auto_crop_transparent(ring_no_bg)
-            logger.info("Background removed successfully with ultra precision V3")
+            logger.info("Background removed successfully with ultra precision V4")
         except Exception as e:
             logger.error(f"Failed to remove background: {e}")
             ring_no_bg = ring_image.convert('RGBA') if ring_image else None
@@ -392,8 +517,8 @@ def create_color_section(ring_image, width=1200):
     logger.info(f"COLOR section created: {width}x{height}")
     return section_img
 
-def u2net_ultra_precise_removal_v3_shadow_fix_ultra_enhanced(image: Image.Image) -> Image.Image:
-    """ULTRA PRECISE V3 ENHANCED WITH REFINED EDGE PROCESSING"""
+def u2net_ultra_precise_removal_v4_ring_aware(image: Image.Image) -> Image.Image:
+    """ULTRA PRECISE V4 WITH RING-AWARE DETECTION"""
     try:
         from rembg import remove
         
@@ -403,11 +528,15 @@ def u2net_ultra_precise_removal_v3_shadow_fix_ultra_enhanced(image: Image.Image)
             if REMBG_SESSION is None:
                 return image
         
-        logger.info("🔷 U2Net ULTRA PRECISE V3 ENHANCED REFINED - Maximum Quality")
+        logger.info("🔷 U2Net ULTRA PRECISE V4 RING-AWARE - Maximum Quality")
         
         # CRITICAL: Ensure RGBA mode before processing
         if image.mode != 'RGBA':
             image = image.convert('RGBA')
+        
+        # First, detect ring structure
+        ring_candidates = detect_ring_structure(image)
+        ring_mask = create_ring_aware_mask(image, ring_candidates)
         
         # Enhanced pre-processing for jewelry with adaptive enhancement
         img_array = np.array(image, dtype=np.float32)
@@ -463,6 +592,14 @@ def u2net_ultra_precise_removal_v3_shadow_fix_ultra_enhanced(image: Image.Image)
         
         # Convert to float for processing
         alpha_float = alpha_array.astype(np.float32) / 255.0
+        
+        # Apply ring mask to ensure ring interior is transparent
+        if ring_mask is not None and ring_mask.shape == alpha_float.shape:
+            # Invert ring mask - interior should be 0 (transparent)
+            ring_interior = (ring_mask == 0).astype(np.float32)
+            
+            # Apply ring interior mask
+            alpha_float = alpha_float * (1 - ring_interior)
         
         # STAGE 1: REFINED shadow detection with color spill analysis
         logger.info("🔍 REFINED shadow and color spill detection...")
@@ -557,8 +694,8 @@ def u2net_ultra_precise_removal_v3_shadow_fix_ultra_enhanced(image: Image.Image)
         all_edges = (sobel_edges | scharr_edges | laplacian_edges | 
                     (canny_low > 0) | (canny_mid > 0) | (canny_high > 0) | (canny_ultra > 0))
         
-        # STAGE 3: Intelligent component analysis with shape metrics
-        logger.info("🔍 Advanced component analysis with shape metrics...")
+        # STAGE 3: Ring-aware component analysis
+        logger.info("🔍 Ring-aware component analysis...")
         
         # Binary mask for main object
         alpha_binary = (alpha_float > 0.5).astype(np.uint8)
@@ -612,6 +749,15 @@ def u2net_ultra_precise_removal_v3_shadow_fix_ultra_enhanced(image: Image.Image)
                             img_center = np.array([alpha_array.shape[0]/2, alpha_array.shape[1]/2])
                             dist_from_center = np.linalg.norm(component_center - img_center)
                             
+                            # Check if component is inside a ring
+                            is_inside_ring = False
+                            for ring in ring_candidates:
+                                if 'center' in ring and 'radius' in ring:
+                                    dist_to_ring_center = np.linalg.norm(component_center - np.array(ring['center']))
+                                    if dist_to_ring_center < ring['radius']:
+                                        is_inside_ring = True
+                                        break
+                            
                             component_stats.append({
                                 'label': i,
                                 'size': size,
@@ -619,7 +765,8 @@ def u2net_ultra_precise_removal_v3_shadow_fix_ultra_enhanced(image: Image.Image)
                                 'solidity': solidity,
                                 'eccentricity': eccentricity,
                                 'dist_from_center': dist_from_center,
-                                'edge_ratio': np.sum(all_edges[component]) / size
+                                'edge_ratio': np.sum(all_edges[component]) / size,
+                                'is_inside_ring': is_inside_ring
                             })
             
             # Keep components based on comprehensive criteria
@@ -632,12 +779,17 @@ def u2net_ultra_precise_removal_v3_shadow_fix_ultra_enhanced(image: Image.Image)
                 
                 valid_components = []
                 for stats in component_stats:
+                    # Skip components inside rings
+                    if stats['is_inside_ring']:
+                        logger.info(f"Skipping component inside ring: size={stats['size']}")
+                        continue
+                    
                     # Multi-criteria validation
                     size_valid = stats['size'] > min_component_size
                     shape_valid = (stats['solidity'] > 0.3 or stats['circularity'] > 0.2)
                     edge_valid = stats['edge_ratio'] > 0.1
                     
-                    # Special case for very circular components (gems, holes)
+                    # Special case for very circular components (gems, holes) that are NOT inside rings
                     is_circular = stats['circularity'] > 0.7
                     
                     if (size_valid and (shape_valid or edge_valid)) or is_circular:
@@ -740,7 +892,7 @@ def u2net_ultra_precise_removal_v3_shadow_fix_ultra_enhanced(image: Image.Image)
         # Convert back to uint8
         alpha_array = np.clip(alpha_final * 255, 0, 255).astype(np.uint8)
         
-        logger.info("✅ ULTRA PRECISE V3 ENHANCED REFINED complete")
+        logger.info("✅ ULTRA PRECISE V4 RING-AWARE complete")
         
         a_new = Image.fromarray(alpha_array)
         result = Image.merge('RGBA', (r, g, b, a_new))
@@ -759,13 +911,16 @@ def u2net_ultra_precise_removal_v3_shadow_fix_ultra_enhanced(image: Image.Image)
             return image.convert('RGBA')
         return image
 
-def ensure_ring_holes_transparent_ultra_v3_enhanced(image: Image.Image) -> Image.Image:
-    """ULTRA PRECISE V3 ENHANCED WITH REFINED HOLE DETECTION"""
+def ensure_ring_holes_transparent_ultra_v4_ring_aware(image: Image.Image) -> Image.Image:
+    """ULTRA PRECISE V4 RING-AWARE HOLE DETECTION"""
     # CRITICAL: Preserve RGBA mode
     if image.mode != 'RGBA':
         image = image.convert('RGBA')
     
-    logger.info("🔍 ULTRA PRECISE V3 ENHANCED REFINED Ring Hole Detection")
+    logger.info("🔍 ULTRA PRECISE V4 RING-AWARE Hole Detection")
+    
+    # First, detect ring structure
+    ring_candidates = detect_ring_structure(image)
     
     r, g, b, a = image.split()
     alpha_array = np.array(a, dtype=np.uint8)
@@ -781,6 +936,37 @@ def ensure_ring_holes_transparent_ultra_v3_enhanced(image: Image.Image) -> Image
     l_channel, a_channel, b_channel = cv2.split(lab)
     
     gray = cv2.cvtColor(rgb_array, cv2.COLOR_RGB2GRAY)
+    
+    # Create hole mask
+    holes_mask = np.zeros_like(alpha_array, dtype=np.float32)
+    
+    # Process each ring candidate
+    for ring in ring_candidates:
+        if 'center' in ring:
+            # Create mask for ring interior
+            ring_interior_mask = np.zeros_like(alpha_array, dtype=np.uint8)
+            
+            if 'radius' in ring:
+                # Circular ring
+                cv2.circle(ring_interior_mask, tuple(map(int, ring['center'])), 
+                          int(ring.get('inner_radius', ring['radius'] * 0.6)), 255, -1)
+            elif 'inner_contour' in ring:
+                # Contour-based ring
+                cv2.drawContours(ring_interior_mask, [ring['inner_contour']], -1, 255, -1)
+            
+            # Check brightness in ring interior
+            if np.any(ring_interior_mask > 0):
+                interior_brightness = np.mean(gray[ring_interior_mask > 0])
+                interior_v = np.mean(v_channel[ring_interior_mask > 0])
+                interior_saturation = np.mean(s_channel[ring_interior_mask > 0])
+                
+                logger.info(f"Ring interior: brightness={interior_brightness:.1f}, "
+                          f"V={interior_v:.1f}, saturation={interior_saturation:.1f}")
+                
+                # If interior is bright and low saturation, it's likely a hole
+                if (interior_brightness > 220 or interior_v > 225) and interior_saturation < 30:
+                    holes_mask[ring_interior_mask > 0] = 255
+                    logger.info("✅ Ring interior identified as hole")
     
     # STAGE 1: Comprehensive hole detection with refined thresholds
     # Multiple criteria for hole detection
@@ -880,7 +1066,7 @@ def ensure_ring_holes_transparent_ultra_v3_enhanced(image: Image.Image) -> Image
         lbp = np.zeros_like(image)
         
         for i in range(radius, rows - radius):
-            for j in range(radius, cols - cols):
+            for j in range(radius, cols - radius):
                 center = image[i, j]
                 binary_string = ''
                 
@@ -917,9 +1103,7 @@ def ensure_ring_holes_transparent_ultra_v3_enhanced(image: Image.Image) -> Image
     # Find connected components
     num_labels, labels = cv2.connectedComponents(potential_holes)
     
-    holes_mask = np.zeros_like(alpha_array, dtype=np.float32)
-    
-    # STAGE 4: Validate each hole candidate with enhanced criteria
+    # STAGE 4: Validate each hole candidate with ring awareness
     for label in range(1, num_labels):
         component = (labels == label)
         component_size = np.sum(component)
@@ -932,6 +1116,17 @@ def ensure_ring_holes_transparent_ultra_v3_enhanced(image: Image.Image) -> Image
             coords = np.where(component)
             if len(coords[0]) == 0:
                 continue
+            
+            # Check if component is within a ring
+            component_center = np.mean(coords, axis=1)
+            is_in_ring = False
+            
+            for ring in ring_candidates:
+                if 'center' in ring and 'radius' in ring:
+                    dist_to_center = np.linalg.norm(component_center - np.array(ring['center']))
+                    if dist_to_center < ring.get('inner_radius', ring['radius'] * 0.6):
+                        is_in_ring = True
+                        break
             
             # Comprehensive component analysis
             component_pixels_rgb = rgb_array[component]
@@ -1051,18 +1246,23 @@ def ensure_ring_holes_transparent_ultra_v3_enhanced(image: Image.Image) -> Image
                 if is_enclosed:
                     confidence += 0.25
                 
+                # Bonus for being inside a ring
+                if is_in_ring:
+                    confidence += 0.3
+                    logger.info("Component is inside a ring - boosting confidence")
+                
                 # Alpha channel bonus
                 if np.mean(component_alpha) < 200:
                     confidence += 0.1
                 
                 # Apply hole mask based on confidence
-                if confidence > 0.45:  # Slightly lower threshold for better detection
+                if confidence > 0.4:  # Lower threshold for better detection
                     holes_mask[component] = 255
                     logger.info(f"Hole detected: brightness={brightness_metrics['rgb_mean']:.1f}, "
                               f"saturation={saturation_metrics['mean']:.1f}, "
                               f"uniformity={uniformity_metrics['rgb_std']:.1f}, "
                               f"shape={shape_metrics.get('circularity', 0):.2f}, "
-                              f"enclosed={is_enclosed}, confidence={confidence:.2f}")
+                              f"enclosed={is_enclosed}, in_ring={is_in_ring}, confidence={confidence:.2f}")
     
     # STAGE 5: Apply holes with refined transitions
     if np.any(holes_mask > 0):
@@ -1112,7 +1312,7 @@ def ensure_ring_holes_transparent_ultra_v3_enhanced(image: Image.Image) -> Image
 
 def process_color_section(job):
     """Process COLOR section special mode"""
-    logger.info("Processing COLOR section special mode with ULTRA PRECISE V3 removal")
+    logger.info("Processing COLOR section special mode with ULTRA PRECISE V4 removal")
     
     try:
         # Find image data - FIXED
@@ -1155,7 +1355,7 @@ def process_color_section(job):
                 "status": "success",
                 "format": "base64_with_padding",
                 "colors_generated": ["YELLOW GOLD", "ROSE GOLD", "WHITE GOLD", "ANTIQUE GOLD"],
-                "background_removal": "ULTRA_PRECISE_V3_ENHANCED",
+                "background_removal": "ULTRA_PRECISE_V4_RING_AWARE",
                 "transparency_info": "Each ring variant has transparent background",
                 "base64_padding": "INCLUDED",
                 "compression": "level_3"
@@ -1570,20 +1770,21 @@ def image_to_base64(image, keep_transparency=True):
     return base64_str
 
 def handler(event):
-    """Optimized thumbnail handler - New Neo V3 Shadow Fix Ultra Enhanced Refined - BRIGHTNESS 1.12"""
+    """Optimized thumbnail handler - Ring Detection Ultra V4 Enhanced - BRIGHTNESS 1.12"""
     try:
         logger.info(f"=== Thumbnail {VERSION} Started ===")
-        logger.info("🎯 NEW NEO V3 REFINED: Enhanced Background Removal with Advanced Edge Processing")
+        logger.info("🎯 RING DETECTION ULTRA V4: Advanced ring structure detection")
         logger.info("💎 TRANSPARENT OUTPUT: Preserving alpha channel throughout")
-        logger.info("🔥 ENHANCED FEATURES:")
-        logger.info("  - Adaptive contrast based on image statistics")
-        logger.info("  - Color spill detection (green/blue screen)")
-        logger.info("  - Multi-scale edge detection (8 methods)")
-        logger.info("  - Texture-based artifact removal with LBP")
-        logger.info("  - Advanced shape metrics for component analysis")
-        logger.info("  - Bilateral filtering for edge-aware smoothing")
-        logger.info("  - Refined hole detection with multi-criteria scoring")
-        logger.info("  - Feathered shadow removal based on distance")
+        logger.info("🔥 NEW FEATURES:")
+        logger.info("  - Advanced ring detection using multiple techniques")
+        logger.info("  - Circular and elliptical ring shape analysis")
+        logger.info("  - Hough Circle Transform for perfect circles")
+        logger.info("  - Hollow center detection and validation")
+        logger.info("  - Ring-aware component filtering")
+        logger.info("  - Interior brightness analysis")
+        logger.info("  - Convex hull analysis for enclosed regions")
+        logger.info("  - DBSCAN clustering for shape analysis")
+        logger.info("  - Ring interior automatic removal")
         logger.info("🔧 AC PATTERN: 20% white overlay, brightness 1.03, contrast 1.1")
         logger.info("🔧 AB PATTERN: 16% white overlay, brightness 1.03, contrast 1.1")
         logger.info("✨ OTHER PATTERNS: 5% white overlay, brightness 1.12, contrast 1.1")
@@ -1615,9 +1816,9 @@ def handler(event):
             logger.info(f"Converting {image.mode} to RGBA immediately")
             image = image.convert('RGBA')
         
-        # STEP 1: ALWAYS apply background removal with V3 ENHANCED REFINED
-        logger.info("📸 STEP 1: ALWAYS applying ULTRA PRECISE V3 ENHANCED REFINED background removal")
-        image = u2net_ultra_precise_removal_v3_shadow_fix_ultra_enhanced(image)
+        # STEP 1: ALWAYS apply background removal with V4 RING-AWARE
+        logger.info("📸 STEP 1: ALWAYS applying ULTRA PRECISE V4 RING-AWARE background removal")
+        image = u2net_ultra_precise_removal_v4_ring_aware(image)
         
         # Verify RGBA after removal
         if image.mode != 'RGBA':
@@ -1649,9 +1850,9 @@ def handler(event):
         logger.info("🚀 STEP 5: Applying SwinIR enhancement")
         thumbnail = apply_swinir_thumbnail(thumbnail)
         
-        # STEP 6: Ultra precise V3 ENHANCED ring hole detection (MATCHED ORDER)
-        logger.info("🔍 STEP 6: Applying ULTRA PRECISE V3 ENHANCED REFINED ring hole detection")
-        thumbnail = ensure_ring_holes_transparent_ultra_v3_enhanced(thumbnail)
+        # STEP 6: Ultra precise V4 RING-AWARE hole detection (MATCHED ORDER)
+        logger.info("🔍 STEP 6: Applying ULTRA PRECISE V4 RING-AWARE hole detection")
+        thumbnail = ensure_ring_holes_transparent_ultra_v4_ring_aware(thumbnail)
         
         # Final verification
         if thumbnail.mode != 'RGBA':
@@ -1711,26 +1912,26 @@ def handler(event):
                     "white_overlay_other": "5%",
                     "reason": "Brightness increased to 1.12 for better visibility"
                 },
-                "refined_background_removal_features": [
-                    "✅ ADAPTIVE CONTRAST: Dynamic adjustment based on image statistics",
-                    "✅ COLOR SPILL DETECTION: Green/blue screen removal",
-                    "✅ MULTI-SCALE EDGE DETECTION: 8 methods including 4 Sobel scales",
-                    "✅ TEXTURE ANALYSIS: Local Binary Patterns for artifact detection",
-                    "✅ ADVANCED SHAPE METRICS: Circularity, solidity, eccentricity, aspect ratio",
-                    "✅ FEATHERED SHADOW REMOVAL: Distance-based strength adjustment",
-                    "✅ BILATERAL FILTERING: Edge-aware smoothing",
-                    "✅ ADAPTIVE SIGMOID: Different sharpness for strong/weak edges",
-                    "✅ MULTI-SCALE TRANSITIONS: 3 levels of hole edge smoothing",
-                    "✅ CONFIDENCE SCORING: Multi-criteria validation (0.45 threshold)",
-                    "✅ TOPOLOGY ANALYSIS: Convex hull for enclosed region detection",
-                    "✅ GRADIENT-BASED SHADOWS: Low gradient area detection",
-                    "✅ MORPHOLOGICAL CLEANUP: Adaptive kernel sizes",
-                    "✅ COMPONENT VALIDATION: Edge ratio and shape descriptors",
-                    "✅ TEXTURE UNIFORMITY: LBP variance for hole detection"
+                "ring_detection_v4_features": [
+                    "✅ RING STRUCTURE DETECTION: Multiple edge detection methods",
+                    "✅ CONTOUR ANALYSIS: Shape-based ring identification",
+                    "✅ CIRCULARITY METRICS: Detect circular and elliptical rings",
+                    "✅ HOUGH CIRCLE TRANSFORM: Perfect circle detection",
+                    "✅ HOLLOW CENTER VALIDATION: Ensure rings have interior space",
+                    "✅ RING-AWARE MASKING: Interior regions marked as transparent",
+                    "✅ COMPONENT FILTERING: Skip components inside rings",
+                    "✅ INTERIOR BRIGHTNESS: Analyze ring center properties",
+                    "✅ CONVEX HULL ANALYSIS: Detect enclosed regions",
+                    "✅ MULTI-SCALE DETECTION: Handle various ring sizes",
+                    "✅ EDGE OVERLAP VALIDATION: Verify ring matches actual edges",
+                    "✅ ASPECT RATIO ANALYSIS: Support elliptical rings",
+                    "✅ TEXTURE UNIFORMITY: LBP variance for hole detection",
+                    "✅ CONFIDENCE SCORING: Multi-criteria validation",
+                    "✅ ADAPTIVE THRESHOLDS: Dynamic based on image statistics"
                 ],
                 "thumbnail_method": "Proportional resize (no aggressive cropping)",
-                "processing_order": "1.U2Net-Ultra-V3-Enhanced-Refined → 2.White Balance → 3.Pattern Enhancement → 4.Resize → 5.SwinIR → 6.Ring Holes",
-                "edge_detection": "ULTRA PRECISE V3 ENHANCED REFINED (8-method combination)",
+                "processing_order": "1.U2Net-Ultra-V4-Ring-Aware → 2.White Balance → 3.Pattern Enhancement → 4.Resize → 5.SwinIR → 6.Ring Holes",
+                "edge_detection": "ULTRA PRECISE V4 RING-AWARE (8-method combination + ring detection)",
                 "korean_support": "ENHANCED with font caching",
                 "expected_input": "2000x2600 (any format)",
                 "output_size": "1000x1300",
@@ -1745,7 +1946,8 @@ def handler(event):
                 "metal_colors": "Yellow Gold, Rose Gold, White Gold, Antique Gold",
                 "enhancement_matching": "FULLY MATCHED with Enhancement Handler V3 Enhanced",
                 "shadow_elimination": "REFINED with feathering and multi-level detection",
-                "brightness_update": "Other pattern brightness increased to 1.12 for better visibility"
+                "brightness_update": "Other pattern brightness increased to 1.12 for better visibility",
+                "ring_aware_improvement": "Detects ring structure first, then ensures interior transparency"
             }
         }
         
