@@ -17,10 +17,11 @@ logger = logging.getLogger(__name__)
 
 ################################
 # THUMBNAIL HANDLER - 1000x1300
-# VERSION: Thumbnail-V4-SafeExtraction
+# VERSION: Thumbnail-V5-Complete
 ################################
 
-VERSION = "Thumbnail-V4-SafeExtraction"
+VERSION = "Thumbnail-V5-Complete"
+logger.info(f"🚀 Module loaded: {VERSION}")
 
 # Global rembg session with U2Net
 REMBG_SESSION = None
@@ -33,19 +34,18 @@ def init_rembg_session():
             from rembg import new_session
             # Use U2Net for faster processing
             REMBG_SESSION = new_session('u2net')
-            logger.info("✅ U2Net session initialized")
+            logger.info("✅ U2Net session initialized successfully")
         except Exception as e:
             logger.error(f"❌ Failed to initialize rembg: {e}")
             REMBG_SESSION = None
     return REMBG_SESSION
 
 # Initialize on module load
+logger.info("🔧 Initializing U2Net session on module load...")
 init_rembg_session()
 
 def safe_ring_detection_phase1(image: Image.Image, max_candidates=10):
-    """
-    PHASE 1: Safe Ring Detection - Conservative approach to avoid cutting rings
-    """
+    """PHASE 1: Safe Ring Detection - Conservative approach to avoid cutting rings"""
     try:
         logger.info("🎯 PHASE 1: Safe Ring Detection Started")
         start_time = time.time()
@@ -62,9 +62,9 @@ def safe_ring_detection_phase1(image: Image.Image, max_candidates=10):
         h, w = gray.shape
         logger.info(f"Image size: {w}x{h}")
         
-        # More conservative parameters - wider range to catch all rings
-        min_radius = int(min(h, w) * 0.05)  # 5% of image (smaller minimum)
-        max_radius = int(min(h, w) * 0.5)   # 50% of image (larger maximum)
+        # More conservative parameters
+        min_radius = int(min(h, w) * 0.05)
+        max_radius = int(min(h, w) * 0.5)
         
         # Apply slight blur to reduce noise
         gray_blurred = cv2.GaussianBlur(gray, (5, 5), 1.0)
@@ -75,10 +75,10 @@ def safe_ring_detection_phase1(image: Image.Image, max_candidates=10):
         circles = cv2.HoughCircles(
             gray_blurred, 
             cv2.HOUGH_GRADIENT,
-            dp=1.2,             # More sensitive
-            minDist=min_radius * 1.5,  # Allow closer circles
-            param1=50,          # Lower threshold for edge detection
-            param2=30,          # Lower threshold for center detection
+            dp=1.2,
+            minDist=min_radius * 1.5,
+            param1=50,
+            param2=30,
             minRadius=min_radius,
             maxRadius=max_radius
         )
@@ -91,31 +91,29 @@ def safe_ring_detection_phase1(image: Image.Image, max_candidates=10):
             
             for i, (x, y, r) in enumerate(circles[0][:max_candidates]):
                 # Very conservative bounds checking
-                margin = int(r * 0.3)  # 30% margin
+                margin = int(r * 0.3)
                 y1 = max(0, y - r - margin)
                 y2 = min(h, y + r + margin)
                 x1 = max(0, x - r - margin)
                 x2 = min(w, x + r + margin)
                 
-                # Skip if too close to edge (might be cut off)
+                # Skip if too close to edge
                 edge_margin = 20
                 if x1 < edge_margin or y1 < edge_margin or x2 > w - edge_margin or y2 > h - edge_margin:
-                    logger.warning(f"Skipping circle too close to edge: center=({x},{y}), radius={r}")
+                    logger.warning(f"Skipping circle too close to edge")
                     continue
                 
                 region = gray[y1:y2, x1:x2]
                 
-                # Check if it looks like a ring (has hole in center)
+                # Check if it looks like a ring
                 center_mask = np.zeros_like(region)
                 cv2.circle(center_mask, 
                           (x - x1, y - y1), 
-                          int(r * 0.3),  # Inner 30% 
+                          int(r * 0.3),
                           255, -1)
                 
                 if np.any(center_mask > 0):
                     center_brightness = np.mean(region[center_mask > 0])
-                    
-                    # Simple scoring based on center brightness
                     score = center_brightness / 255.0
                     
                     ring_candidates.append({
@@ -124,7 +122,7 @@ def safe_ring_detection_phase1(image: Image.Image, max_candidates=10):
                         'radius': int(r),
                         'score': float(score),
                         'bbox': (x1, y1, x2, y2),
-                        'inner_radius': max(1, int(r * 0.25)),  # Conservative inner radius
+                        'inner_radius': max(1, int(r * 0.25)),
                         'type': 'circle'
                     })
         
@@ -153,9 +151,7 @@ def safe_ring_detection_phase1(image: Image.Image, max_candidates=10):
         }
 
 def conservative_ring_removal_phase2(image: Image.Image, detection_result: dict):
-    """
-    PHASE 2: Conservative Background Removal - Preserve ring integrity
-    """
+    """PHASE 2: Conservative Background Removal - Preserve ring integrity"""
     try:
         from rembg import remove
         
@@ -171,10 +167,10 @@ def conservative_ring_removal_phase2(image: Image.Image, detection_result: dict)
         if REMBG_SESSION is None:
             REMBG_SESSION = init_rembg_session()
         
-        # First, apply general background removal with conservative settings
+        # Apply conservative background removal
         logger.info("🔧 Applying conservative background removal...")
         
-        # Enhance contrast slightly before removal
+        # Light enhancement
         contrast = ImageEnhance.Contrast(image)
         image_enhanced = contrast.enhance(1.2)
         
@@ -212,12 +208,12 @@ def conservative_ring_removal_phase2(image: Image.Image, detection_result: dict)
             rgb_array = np.array(result_image.convert('RGB'))
             
             # Process each ring candidate for holes only
-            for i, candidate in enumerate(candidates[:5]):  # Limit to top 5
+            for i, candidate in enumerate(candidates[:5]):
                 cx, cy = candidate['center']
                 radius = candidate['radius']
                 inner_radius = candidate['inner_radius']
                 
-                # Check if center is bright (likely a hole)
+                # Check if center is bright
                 center_region_size = 10
                 y1 = max(0, cy - center_region_size)
                 y2 = min(rgb_array.shape[0], cy + center_region_size)
@@ -304,11 +300,11 @@ def safe_fallback_removal(image: Image.Image) -> Image.Image:
             buffered.getvalue(),
             session=REMBG_SESSION,
             alpha_matting=True,
-            alpha_matting_foreground_threshold=230,  # Very low - keep almost everything
-            alpha_matting_background_threshold=20,   # Higher - remove very little
+            alpha_matting_foreground_threshold=230,
+            alpha_matting_background_threshold=20,
             alpha_matting_erode_size=0,
             only_mask=False,
-            post_process_mask=False  # No post processing
+            post_process_mask=False
         )
         
         result_image = Image.open(BytesIO(output))
@@ -370,7 +366,7 @@ def create_thumbnail_safe(image, target_width=1000, target_height=1300):
             min_x, max_x = non_transparent[1].min(), non_transparent[1].max()
             
             # Add safety margin
-            margin = 50  # pixels
+            margin = 50
             min_x = max(0, min_x - margin)
             min_y = max(0, min_y - margin)
             max_x = min(original_width, max_x + margin)
@@ -423,45 +419,96 @@ def create_thumbnail_safe(image, target_width=1000, target_height=1300):
     
     return result
 
-def find_input_data_fast(data):
+def find_input_data_fast(data, depth=0, max_depth=10):
     """Fast input data extraction"""
+    if depth > max_depth:
+        return None
+    
     if isinstance(data, str) and len(data) > 50:
-        return data
+        # Check if it looks like base64
+        sample = data[:100].strip()
+        if all(c in string.ascii_letters + string.digits + '+/=' for c in sample):
+            return data
     
     if isinstance(data, dict):
-        priority_keys = ['image', 'image_base64', 'enhanced_image', 'base64', 'img']
+        priority_keys = ['image', 'image_base64', 'enhanced_image', 'base64', 'img', 'thumbnail']
         
         for key in priority_keys:
             if key in data and isinstance(data[key], str) and len(data[key]) > 50:
                 return data[key]
         
-        for key in ['input', 'data']:
-            if key in data and isinstance(data[key], dict):
-                result = find_input_data_fast(data[key])
+        # Recursive search
+        for key, value in data.items():
+            if isinstance(value, str) and len(value) > 1000:
+                sample = value[:100].strip()
+                if all(c in string.ascii_letters + string.digits + '+/=' for c in sample):
+                    logger.info(f"✅ Found potential image data at key: {key}")
+                    return value
+            elif isinstance(value, (dict, list)):
+                result = find_input_data_fast(value, depth + 1, max_depth)
                 if result:
                     return result
-            elif key in data and isinstance(data[key], str) and len(data[key]) > 50:
-                return data[key]
-        
-        for i in range(10):
-            if str(i) in data and isinstance(data[str(i)], str) and len(data[str(i)]) > 50:
-                return data[str(i)]
+    
+    elif isinstance(data, list):
+        for item in data:
+            result = find_input_data_fast(item, depth + 1, max_depth)
+            if result:
+                return result
     
     return None
 
-def find_filename_fast(data):
+def find_filename_fast(data, depth=0, max_depth=10):
     """Fast filename extraction"""
+    if depth > max_depth:
+        return None
+    
     if isinstance(data, dict):
-        for key in ['filename', 'file_name', 'name']:
+        for key in ['filename', 'file_name', 'name', 'fileName']:
             if key in data and isinstance(data[key], str):
                 return data[key]
         
-        if 'input' in data and isinstance(data['input'], dict):
-            for key in ['filename', 'file_name', 'name']:
-                if key in data['input']:
-                    return data['input'][key]
+        # Recursive search
+        for key, value in data.items():
+            if isinstance(value, (dict, list)):
+                result = find_filename_fast(value, depth + 1, max_depth)
+                if result:
+                    return result
+    
+    elif isinstance(data, list):
+        for item in data:
+            result = find_filename_fast(item, depth + 1, max_depth)
+            if result:
+                return result
     
     return None
+
+def find_image_index(data, depth=0, max_depth=10):
+    """Find image index in nested data"""
+    if depth > max_depth:
+        return 1
+    
+    if isinstance(data, dict):
+        for key in ['image_index', 'imageIndex', 'index']:
+            if key in data:
+                try:
+                    return int(data[key])
+                except:
+                    pass
+        
+        # Recursive search
+        for key, value in data.items():
+            if isinstance(value, (dict, list)):
+                result = find_image_index(value, depth + 1, max_depth)
+                if result != 1:
+                    return result
+    
+    elif isinstance(data, list):
+        for item in data:
+            result = find_image_index(item, depth + 1, max_depth)
+            if result != 1:
+                return result
+    
+    return 1
 
 def generate_thumbnail_filename(original_filename, image_index):
     """Generate thumbnail filename with fixed numbers"""
@@ -483,23 +530,28 @@ def generate_thumbnail_filename(original_filename, image_index):
     return new_filename
 
 def decode_base64_fast(base64_str: str) -> bytes:
-    """Fast base64 decode"""
+    """Fast base64 decode with padding support"""
     try:
         if not base64_str or len(base64_str) < 50:
             raise ValueError("Invalid base64 string")
         
+        # Remove data URI prefix if present
         if 'base64,' in base64_str:
             base64_str = base64_str.split('base64,')[-1]
         
+        # Remove whitespace
         base64_str = ''.join(base64_str.split())
         
+        # Remove invalid characters
         valid_chars = set(string.ascii_letters + string.digits + '+/=')
         base64_str = ''.join(c for c in base64_str if c in valid_chars)
         
+        # Try with existing padding first
         try:
             decoded = base64.b64decode(base64_str, validate=True)
             return decoded
         except Exception:
+            # Add proper padding if needed
             no_pad = base64_str.rstrip('=')
             padding_needed = (4 - len(no_pad) % 4) % 4
             padded = no_pad + ('=' * padding_needed)
@@ -520,7 +572,7 @@ def base64_to_image_fast(base64_string):
         raise ValueError(f"Invalid image data: {str(e)}")
 
 def image_to_base64(image, keep_transparency=True):
-    """Convert to base64 WITH padding"""
+    """Convert to base64 WITH padding - ALWAYS"""
     buffered = BytesIO()
     
     if image.mode != 'RGBA' and keep_transparency:
@@ -532,30 +584,37 @@ def image_to_base64(image, keep_transparency=True):
         image.save(buffered, format='PNG', optimize=True, compress_level=3)
     
     buffered.seek(0)
+    # ALWAYS include padding
     base64_str = base64.b64encode(buffered.getvalue()).decode('utf-8')
     return base64_str
 
 def handler(event):
-    """Thumbnail handler - V4 with Safe Extraction"""
+    """Thumbnail handler - V5 Complete with fixes"""
     try:
-        logger.info(f"=== Thumbnail {VERSION} Started ===")
-        logger.info("🛡️ V4 - Safe Extraction Mode")
-        logger.info("✅ Conservative ring detection")
-        logger.info("✅ Minimal background removal")
-        logger.info("✅ Smart content-aware cropping")
-        logger.info("✅ Safety margins to prevent cutting")
+        logger.info("=" * 60)
+        logger.info(f"🚀 {VERSION} Handler Started")
+        logger.info("=" * 60)
+        logger.info("✅ Improvements in V5:")
+        logger.info("  - Conservative ring detection")
+        logger.info("  - Safe background removal")
+        logger.info("  - Smart content-aware cropping")
+        logger.info("  - Base64 padding always included")
+        logger.info("  - Proper return structure for Make.com")
         
         # Get image index
-        image_index = event.get('image_index', 1)
-        if isinstance(event.get('input'), dict):
-            image_index = event.get('input', {}).get('image_index', image_index)
+        image_index = find_image_index(event)
+        logger.info(f"📷 Image index: {image_index}")
         
         # Find input data
+        logger.info("🔍 Searching for input data...")
         filename = find_filename_fast(event)
         image_data_str = find_input_data_fast(event)
         
         if not image_data_str:
+            logger.error("❌ No input data found")
             raise ValueError("No input data found")
+        
+        logger.info(f"✅ Found image data, length: {len(image_data_str)}")
         
         # Load image
         start_time = time.time()
@@ -566,6 +625,7 @@ def handler(event):
         
         decode_time = time.time() - start_time
         logger.info(f"⏱️ Image decode: {decode_time:.2f}s")
+        logger.info(f"📐 Original size: {image.size}")
         
         # STEP 1 & 2: Apply safe 2-phase processing
         start_time = time.time()
@@ -580,7 +640,7 @@ def handler(event):
         
         # STEP 3: Create safe thumbnail
         start_time = time.time()
-        logger.info("📏 STEP 3: Creating safe thumbnail")
+        logger.info("📏 Creating safe thumbnail (1000x1300)")
         thumbnail = create_thumbnail_safe(image, 1000, 1300)
         
         resize_time = time.time() - start_time
@@ -589,11 +649,12 @@ def handler(event):
         if thumbnail.mode != 'RGBA':
             thumbnail = thumbnail.convert('RGBA')
         
-        # Convert to base64
+        # Convert to base64 WITH padding
         start_time = time.time()
         thumbnail_base64 = image_to_base64(thumbnail, keep_transparency=True)
         encode_time = time.time() - start_time
         logger.info(f"⏱️ Base64 encode: {encode_time:.2f}s")
+        logger.info(f"📊 Base64 length: {len(thumbnail_base64)}")
         
         # Total time
         total_time = decode_time + removal_time + resize_time + encode_time
@@ -601,9 +662,12 @@ def handler(event):
         
         output_filename = generate_thumbnail_filename(filename, image_index)
         
-        return {
+        # Build response with proper structure for Make.com
+        # CRITICAL: {"output": {...}} structure
+        result = {
             "output": {
                 "thumbnail": thumbnail_base64,
+                "thumbnail_with_prefix": f"data:image/png;base64,{thumbnail_base64}",
                 "size": list(thumbnail.size),
                 "filename": output_filename,
                 "original_filename": filename,
@@ -631,20 +695,6 @@ def handler(event):
                     "encode": f"{encode_time:.2f}s",
                     "total": f"{total_time:.2f}s"
                 },
-                "v4_improvements": [
-                    "✅ Conservative ring detection with safety margins",
-                    "✅ Minimal background removal to preserve rings",
-                    "✅ Smart content-aware cropping",
-                    "✅ Edge detection to prevent cutting",
-                    "✅ Fallback mechanisms for safety"
-                ],
-                "safety_features": {
-                    "edge_margin": "20px minimum from edges",
-                    "detection_sensitivity": "Lower thresholds",
-                    "removal_threshold": "Conservative (230/20)",
-                    "content_margin": "50px safety buffer",
-                    "scale_factor": "90% to ensure fit"
-                },
                 "thumbnail_method": "Content-aware safe cropping",
                 "expected_input": "Any size image with rings",
                 "output_size": "1000x1300",
@@ -652,8 +702,11 @@ def handler(event):
             }
         }
         
+        logger.info("✅ Processing complete, returning result")
+        return result
+        
     except Exception as e:
-        logger.error(f"Error: {str(e)}")
+        logger.error(f"❌ Handler error: {str(e)}")
         import traceback
         
         return {
@@ -664,6 +717,13 @@ def handler(event):
                 "traceback": traceback.format_exc()
             }
         }
+
+# Start message
+logger.info("=" * 60)
+logger.info(f"🚀 RunPod Serverless Worker Starting")
+logger.info(f"📦 Version: {VERSION}")
+logger.info(f"📅 Date: {time.strftime('%Y-%m-%d %H:%M:%S')}")
+logger.info("=" * 60)
 
 # RunPod handler
 runpod.serverless.start({"handler": handler})
